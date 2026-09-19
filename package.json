@@ -14,6 +14,7 @@
   },
   "files": [
     "dist",
+    "skills",
     "src/capability/models.json",
     "src/core/instructions/ponytail.md",
     "src/core/instructions/ponytail.lock.json"
@@ -25,7 +26,8 @@
     "lint": "oxlint src tests",
     "sync:ponytail": "node scripts/sync-ponytail.mjs",
     "bench:skills": "vitest run --config vitest.bench.config.ts",
-    "bench": "tsc -p tsconfig.json && node dist/bench/lane.js"
+    "bench": "tsc -p tsconfig.json && node dist/bench/lane.js",
+    "sync:skills": "node scripts/sync-skills.mjs"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "^0.73.1",

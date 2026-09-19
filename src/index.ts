@@ -37,6 +37,7 @@ import { resolveCostConfig } from "./telemetry/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { defaultSkillRoots, scanSkills, createSkillControl } from "./capabilities/skills.js";
+import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
 import { resolveRole } from "./core/roles.js";
@@ -184,7 +185,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// session being activated replaces the previous one's set rather than stacking.
 	clearCapabilityProviders();
 	const skillRoots = config.capabilities.skillRoots.length > 0
-		? config.capabilities.skillRoots.map((path) => ({ path, class: path.includes(".claude/plugins") ? ("plugin" as const) : ("user" as const) }))
+		? [
+				...config.capabilities.skillRoots.map((path) => ({ path, class: path.includes(".claude/plugins") ? ("plugin" as const) : ("user" as const) })),
+				// The bundled pack is always last, even when the user configures
+				// roots explicitly: PRD-026's floor must not be configurable away by
+				// omission, only by disabling individual skills.
+				{ path: bundledRoot(), class: "bundled" as const },
+			]
 		: defaultSkillRoots(cwd);
 	const scan = () => scanSkills(cwd, { roots: skillRoots });
 	const skillRecords = scan();
@@ -501,6 +508,7 @@ export type { ScanOptions, ScanStats, SkillControl, SkillRecord, SkillRoot, Skil
 export { lexicalSelect, registerSkillSite, selectSkills, SKILL_SITE_ID, DEFAULT_TOP_K } from "./capabilities/skill-select.js";
 export type { SelectSkillsInput, SelectSkillsResult, SkillDisclosureDecision } from "./capabilities/skill-select.js";
 export { registerSkillsCommands } from "./commands/skills.js";
+export { bundledRoot, BundledIntegrityError, clearPackCache, isBundledPath, packEntries, packLock, packVersion, verifyBundledFile, type PackEntry, type PackFile, type PackLock } from "./skills/pack.js";
 export type { SkillsCommandDeps } from "./commands/skills.js";
 export { ArtifactNotFoundError, createArtifactStore, renderCompactRecord, sha256 } from "./context/artifacts.js";
 export type { ArtifactStore, CaptureInput, CaptureResult, CompactRecord } from "./context/artifacts.js";

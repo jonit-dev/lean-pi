@@ -10,8 +10,10 @@ import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { bundledRoot, packVersion, verifyBundledFile } from "../skills/pack.js";
 
-export type SourceClass = "project" | "user" | "plugin";
+/** Precedence order: project > user global > plugin > bundled (PRD-026). */
+export type SourceClass = "project" | "user" | "plugin" | "bundled";
 
 export interface SkillRecord {
 	name: string;
@@ -57,6 +59,9 @@ export function defaultSkillRoots(cwd: string, home: string = homedir()): SkillR
 		{ path: join(home, ".codex/skills"), class: "user" },
 	];
 	for (const pluginRoot of pluginSkillRoots(home)) roots.push({ path: pluginRoot, class: "plugin" });
+	// Last: the pack that ships inside the package, so a user's own copy of a
+	// skill always wins. The bundled pack is a floor, not an override.
+	roots.push({ path: bundledRoot(), class: "bundled" });
 	return roots;
 }
 
@@ -122,7 +127,9 @@ function toRecord(name: string, root: SkillRoot, path: string, head: string): Sk
 		capabilities: [],
 		risk: null,
 		cost_hint: null,
-		version: root.class === "plugin" ? versionFromPath(path) : null,
+		// A bundled row reports the lock's pin (an upstream version, or a content
+		// pin for a skill that declares none), so `/skills` never shows it blank.
+		version: root.class === "plugin" ? versionFromPath(path) : root.class === "bundled" ? packVersion(name, root.path) : null,
 		source: { class: root.class, path, root: root.path },
 		status: "ok",
 	};
@@ -181,8 +188,13 @@ function resolveConfiguredRoots(cwd: string, home?: string): SkillRoot[] {
 	return defaultSkillRoots(cwd, home ?? homedir());
 }
 
-/** Full body, read only for skills that were actually selected. */
+/**
+ * Full body, read only for skills that were actually selected. A `bundled`
+ * source is hash-checked against `pack.lock.json` first: the check runs here,
+ * on selection, because the registry scan deliberately never reads a body.
+ */
 export function loadSkillBody(record: SkillRecord): string {
+	if (record.source.class === "bundled") verifyBundledFile(record.source.path, record.source.root);
 	if (!existsSync(record.source.path)) return "";
 	const head = readHead(record.source.path);
 	const frontmatter = frontmatterOf(head);

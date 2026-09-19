@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "i-have-adhd",
+      "source": "$HOME/.claude/plugins/cache/i-have-adhd/i-have-adhd/0.3.0/skills/i-have-adhd",
+      "version": "0.3.0",
+      "files": [
+        {
+          "path": "i-have-adhd/agents/gemini.toml",
+          "sha256": "5108a6123beb9df24846e0dd3f902c652d18522dfbc56e5762032ea383041c62",
+          "bytes": 2157
+        },
+        {
+          "path": "i-have-adhd/agents/openai.yaml",
+          "sha256": "2c51291283dcefdca43ca6b0c08172f225c7c26a9783ec444d6bdfa51ca96f8f",
+          "bytes": 238
+        },
+        {
+          "path": "i-have-adhd/LICENSE",
+          "sha256": "8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c",
+          "bytes": 1069
+        },
+        {
+          "path": "i-have-adhd/SKILL.md",
+          "sha256": "3170b16ace00aecb0dd7feb54c0b5aa642e7502acda06ecd24fd89a11c7127e9",
+          "bytes": 7207
+        }
+      ],
+      "licence": "MIT",
+      "attribution": "Ayoub Ghriss",
+      "syncedAt": "2026-09-19T09:40:52.381Z"
+    },
+    {
+      "name": "ponytail-audit",
+      "source": "$HOME/.claude/plugins/cache/ponytail/ponytail/4.9.0/skills/ponytail-audit",
+      "version": "4.9.0",
+      "files": [
+        {
+          "path": "ponytail-audit/LICENSE",
+          "sha256": "fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab",
+          "bytes": 1071
+        },
+        {
+          "path": "ponytail-audit/SKILL.md",
+          "sha256": "5560b8e383dbe2ddfddc873a1e2bf2e586e23e0cd7d995537482b2315331f6d1",
+          "bytes": 1652
+        }
+      ],
+      "licence": "MIT",
+      "attribution": "DietrichGebert",
+      "syncedAt": "2026-09-19T09:40:52.382Z"
+    },
+    {
+      "name": "ponytail-debt",
+      "source": "$HOME/.claude/plugins/cache/ponytail/ponytail/4.9.0/skills/ponytail-debt",
+      "version": "4.9.0",
+      "files": [
+        {
+          "path": "ponytail-debt/LICENSE",
+          "sha256": "fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab",
+          "bytes": 1071
+        },
+        {
+          "path": "ponytail-debt/SKILL.md",
+          "sha256": "c84fba75f0ca12bfe83f9a78ea02fd125c5dd3f1fbb18124105a489937f284e6",
+          "bytes": 1703
+        }
+      ],
+      "licence": "MIT",
+      "attribution": "DietrichGebert",
+      "syncedAt": "2026-09-19T09:40:52.382Z"
+    },
+    {
+      "name": "ponytail-review",
+      "source": "$HOME/.claude/plugins/cache/ponytail/ponytail/4.9.0/skills/ponytail-review",
+      "version": "4.9.0",
+      "files": [
+        {
+          "path": "ponytail-review/LICENSE",
+          "sha256": "fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab",
+          "bytes": 1071
+        },
+        {
+          "path": "ponytail-review/SKILL.md",
+          "sha256": "40df33b58fc6ef889b93585733feb9566b76e9586efa7f376785c1e995197ac0",
+          "bytes": 2383
+        }
+      ],
+      "licence": "MIT",
+      "attribution": "DietrichGebert",
+      "syncedAt": "2026-09-19T09:40:52.381Z"
+    },
+    {
+      "name": "prd-creator",
+      "source": "$HOME/.claude/skills/prd-creator",
+      "version": "sha256-4f393e0c05ec",
+      "files": [
+        {
+          "path": "prd-creator/SKILL.md",
+          "sha256": "4f393e0c05ec1c34ced5a4779467123c13bdbac8a349e50385d974f0d318cce8",
+          "bytes": 27516
+        }
+      ],
+      "licence": "First-party (LeanPi repository owner)",
+      "attribution": "joao",
+      "syncedAt": "2026-09-19T09:40:52.377Z"
+    },
+    {
+      "name": "prd-executor",
+      "source": "$HOME/.claude/skills/prd-executor",
+      "version": "sha256-4de8ab44a2ff",
+      "files": [
+        {
+          "path": "prd-executor/SKILL.md",
+          "sha256": "4de8ab44a2ff4147eb8d8afd4ffe3888d893daa30757fca1667c3daf8b27ffb0",
+          "bytes": 4265
+        }
+      ],
+      "licence": "First-party (LeanPi repository owner)",
+      "attribution": "joao",
+      "syncedAt": "2026-09-19T09:40:52.380Z"
+    },
+    {
+      "name": "prd-manager",
+      "source": "$HOME/.claude/skills/prd-manager",
+      "version": "sha256-8789f05c32f9",
+      "files": [
+        {
+          "path": "prd-manager/scripts/prd-audit.mjs",
+          "sha256": "f27960d118f03e5c8ae647b1fd9978893909d26c6e601214bce18cb9260a0cee",
+          "bytes": 7925
+        },
+        {
+          "path": "prd-manager/scripts/prd-board.mjs",
+          "sha256": "1cfaeeb13d7c68d2e815bf5f12f0cae1cec9ae7d407d5b730ebd14ef3eafbd2a",
+          "bytes": 4395
+        },
+        {
+          "path": "prd-manager/scripts/prd-body.mjs",
+          "sha256": "34a96e2d6418786ce6d1afe8762beff2c92caa55ca93d0f0f2010185fab93285",
+          "bytes": 6400
+        },
+        {
+          "path": "prd-manager/scripts/prd-close.mjs",
+          "sha256": "fe5e729c82e90dc1d25bdc697862f99833e9634bbda74744b94df8680f82ffe3",
+          "bytes": 7474
+        },
+        {
+          "path": "prd-manager/scripts/prd-lib.mjs",
+          "sha256": "54ad138b855148812631ca1a939b8eb771cb109671390803d92dd23f367786df",
+          "bytes": 9671
+        },
+        {
+          "path": "prd-manager/scripts/prd-pr.mjs",
+          "sha256": "4e4a82629e622c517d16a68bb4ac3820a2db0d00307a21a37fe3b1cc7dfe52fd",
+          "bytes": 6588
+        },
+        {
+          "path": "prd-manager/scripts/prd-status.mjs",
+          "sha256": "8d291a865ff2bf6f98502b0681f9269de2846c983da160ed9a708a43511b24c9",
+          "bytes": 4511
+        },
+        {
+          "path": "prd-manager/SKILL.md",
+          "sha256": "8789f05c32f974994dcb0a30347e37ee68ffaa33fd6c3a88cd0c699cd8880024",
+          "bytes": 9682
+        }
+      ],
+      "licence": "First-party (LeanPi repository owner)",
+      "attribution": "joao",
+      "syncedAt": "2026-09-19T09:40:52.380Z"
+    }
+  ]
+}

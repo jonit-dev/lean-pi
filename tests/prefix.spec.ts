@@ -100,6 +100,10 @@ describe("PRD-001 Phase 3 — static Ponytail prefix", () => {
 		mkdirSync(join(tree, "scripts"), { recursive: true });
 		mkdirSync(join(tree, "src/core/instructions"), { recursive: true });
 		cpSync(script, join(tree, "scripts/sync-ponytail.mjs"));
+		// The script is an argv wrapper over the shared vendoring core (PRD-026),
+		// so the isolated tree needs that module too.
+		mkdirSync(join(tree, "src/skills"), { recursive: true });
+		cpSync(resolve(PACKAGE_ROOT, "src/skills/vendor.mjs"), join(tree, "src/skills/vendor.mjs"));
 		cpSync(resolve(PACKAGE_ROOT, "src/core/instructions/ponytail.md"), join(tree, "src/core/instructions/ponytail.md"));
 		cpSync(resolve(PACKAGE_ROOT, "src/core/instructions/ponytail.lock.json"), join(tree, "src/core/instructions/ponytail.lock.json"));
 		const mutated = readFileSync(join(tree, "src/core/instructions/ponytail.md"));
