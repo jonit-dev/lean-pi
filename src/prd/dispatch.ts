@@ -32,7 +32,8 @@ export interface PrdLaneOptions {
 	config: LeanPiConfig;
 	cwd: string;
 	artifactStore: ArtifactStore;
-	jev?: JevClient;
+	/** The JEV seam the lane asks through; it never manages credentials. */
+	jev?: Pick<JevClient, "ask" | "getMode">;
 	hashWorkspace?: () => string;
 	selectModel?: ModelSelector;
 }

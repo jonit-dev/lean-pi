@@ -7,14 +7,17 @@
  * `executor` is the only thing that consumes it.
  */
 import { BackendRegistry } from "../backends/index.js";
-import { compileTask } from "../compiler/index.js";
+import { compileRecordOf, compileTask } from "../compiler/index.js";
 import type { JevClient } from "../jev/client.js";
 import type { LeanPiConfig, ModelRole } from "../core/types.js";
 import { runExecutor, type ExecutorDeps } from "../executor/index.js";
 import { createFileSearch } from "../exploration/gather.js";
 import { explore, type ContextSelection } from "../exploration/governor.js";
 import { createGoalStore, evaluateGoal, prdGoalSource } from "../goal/index.js";
+import { openPrdLane } from "../prd/dispatch.js";
 import { readPrdState } from "../prd/state.js";
+import { evaluateProofGate } from "../proof/gate.js";
+import { criteriaOf } from "../proof/packet.js";
 import { scoutTask } from "../scout/index.js";
 import { itemsOf, remainingWork, type TodoCarrier } from "../todo/index.js";
 import { workspaceHash } from "../verify/hash.js";
@@ -23,7 +26,12 @@ import { registerLane, type Lane, type TurnContext } from "./session.js";
 export interface TurnLaneDeps {
 	cwd: string;
 	config: LeanPiConfig;
-	jev?: Pick<JevClient, "ask" | "fallbackCount">;
+	/**
+	 * The JEV seam every consumer here needs: `ask` plus the mode and the fallback
+	 * counter. A caller that has not built a client omits it and every site answers
+	 * deterministically.
+	 */
+	jev?: Pick<JevClient, "ask" | "getMode" | "fallbackCount">;
 	/** PRD-014's store: the executor writes diff and diagnostic artifacts against it. */
 	artifacts?: ExecutorDeps["artifacts"];
 	/** PRD-025's list, the "useful work remains" input PRD-013's boundary reads. */
@@ -34,6 +42,8 @@ export interface TurnLaneDeps {
 	worker?: ExecutorDeps["worker"];
 	exec?: ExecutorDeps["exec"];
 	verifyCommands?: ExecutorDeps["verifyCommands"];
+	/** Test seam: replaces the PRD-011 reviewer worker. */
+	reviewRunner?: ExecutorDeps["reviewRunner"];
 	/** Skip the executor for turns the session only wants compiled (e.g. `/route`). */
 	execute?: boolean;
 }
@@ -57,11 +67,27 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 	return {
 		name: "executor",
 		async run(turn, context) {
-			if (!context.contract || deps.execute === false) return;
+			const contract = context.contract;
+			if (!contract || deps.execute === false) return;
 			// PRD-023's pre-generation hook: the governor picks the files that enter
 			// the executor's context, and the excerpts travel on the packet below.
 			context.exploration = await exploreContext(deps, turn.text, context.packet);
-			context.executor = await runExecutor(context.contract, {
+			// PRD-012's dispatch: the compiler's `next_stage` is the decision, and the
+			// lane is opened only when it says `prd_lane` — `openPrdLane` reads the
+			// record before its dynamic import, so the quick path never loads the PRD
+			// machinery (FR-032/AC-7), and `laneLoads` is where that is observable.
+			const record = compileRecordOf(contract);
+			if (record && deps.artifacts) {
+				context.prd =
+					(await openPrdLane(record, {
+						config: deps.config,
+						cwd: deps.cwd,
+						artifactStore: deps.artifacts,
+						...(deps.jev ? { jev: deps.jev } : {}),
+						hashWorkspace: () => workspaceHash(deps.cwd),
+					})) ?? undefined;
+			}
+			context.executor = await runExecutor(contract, {
 				registry: new BackendRegistry(deps.config),
 				cwd: deps.cwd,
 				config: deps.config,
@@ -71,6 +97,49 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 				...(deps.worker ? { worker: deps.worker } : {}),
 				...(deps.exec ? { exec: deps.exec } : {}),
 				...(deps.verifyCommands ? { verifyCommands: deps.verifyCommands } : {}),
+				...(deps.reviewRunner ? { reviewRunner: deps.reviewRunner } : {}),
+			});
+			// PRD-010's gate: the contract's criteria against the evidence this turn
+			// actually produced. The decision is what "done" means from here on; a turn
+			// whose executor was blocked is gated like any other, because the gate's
+			// question is what the evidence proves, not what the executor claimed.
+			//
+			// The contract carries per-criterion attribution when the compiler could
+			// name a surface; a direct task has none, and its single criterion is the
+			// request itself (PRD-004), so the gate's criteria fall back to that with
+			// the kinds the contract declares required.
+			const review = context.executor.review;
+			const attributed = criteriaOf(contract);
+			const criteria =
+				attributed.length > 0
+					? attributed
+					: contract.task.acceptance_criteria.map((criterion) => ({ id: criterion.id, text: criterion.text, required: [...contract.verification.required] }));
+			context.proof = await evaluateProofGate(criteria, {
+				// The hash the verifier stamped the records with, not a fresh one: a
+				// recomputed hash would read every record as stale and the gate could
+				// never be satisfied.
+				workspaceHash: context.executor.workspaceHash ?? workspaceHash(deps.cwd, context.executor.changedFiles),
+				evidence: context.executor.evidence,
+				changedFiles: context.executor.changedFiles,
+				summary: context.executor.blockedReason ?? null,
+			}, {
+				contract,
+				config: deps.config,
+				...(deps.jev ? { jev: deps.jev } : {}),
+				// PRD-011's verdict for this turn is the review the gate asks for;
+				// without it a reviewer that already passed still reads as
+				// "the required review has not passed".
+				...(review.verdict
+					? {
+							reviewVerdicts: [
+								{
+									level: review.level,
+									verdict: { decision: review.verdict.decision },
+									...(review.independence ? { independence: review.independence } : {}),
+								},
+							],
+						}
+					: {}),
 			});
 			// PRD-013's boundary, after the executor's work: a session with no active
 			// goal pays nothing, and one with a goal gets the stop condition decided

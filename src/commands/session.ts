@@ -17,6 +17,7 @@ import type { ExecutorOutcome } from "../executor/lane.js";
 import type { ProofGateResult } from "../proof/gate.js";
 import type { ContextSelection } from "../exploration/governor.js";
 import type { GoalEvaluation } from "../goal/index.js";
+import type { PrdManager } from "../prd/manager.js";
 import type { TaskPacket } from "../scout/index.js";
 import { itemsOf, withTodo, type TodoCarrier } from "../todo/index.js";
 import { lspSelectionOf } from "../lsp/provider.js";
@@ -43,6 +44,8 @@ export interface TurnContext {
 	proof?: ProofGateResult;
 	/** PRD-013's boundary verdict for the active goal, when one was active. */
 	goal?: GoalEvaluation;
+	/** PRD-012's lane, opened by the executor lane when the gate dispatched to it. */
+	prd?: PrdManager;
 	/** PRD-003's packet, kept so the exploration hook seeds from it (PRD-023). */
 	packet?: TaskPacket;
 	/** PRD-023's selection: the files and excerpts that enter the executor's context. */

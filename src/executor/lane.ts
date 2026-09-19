@@ -72,6 +72,13 @@ export interface ExecutorReviewOutcome {
 export interface ExecutorOutcome {
 	status: "completed" | "blocked";
 	changedFiles: string[];
+	/**
+	 * The workspace hash PRD-009 stamped this turn's records with. A gate reading
+	 * those records has to use this hash, not a fresh one: verification recomputes
+	 * it after the verifiers ran, so an independently computed hash would make
+	 * every record read as stale.
+	 */
+	workspaceHash?: string;
 	evidence: EvidenceRecord[];
 	/** The verification command lines this turn resolved, in execution order. */
 	commands: string[];
@@ -243,6 +250,8 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 	let nextDirective: NextAttempt | null = null;
 	/** Reviewers that returned a non-`PASS` verdict, against `limits.semantic_review_rounds`. */
 	let reviewRounds = 0;
+	/** The hash the verifier stamped its records with, carried on the outcome. */
+	let verifiedHash: string | undefined;
 
 	// PRD-020 (F1): the identity this turn dispatches at is the router's, decided
 	// once from the frozen contract. Nothing below re-derives a model: the routed
@@ -281,6 +290,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 	const blocked = (reason: string, review?: ExecutorReviewOutcome): ExecutorOutcome => ({
 		status: "blocked",
 		changedFiles: [],
+		...(verifiedHash ? { workspaceHash: verifiedHash } : {}),
 		evidence,
 		commands,
 		retryHistory,
@@ -365,6 +375,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 			});
 			evidence.push(...result.records);
 			commands.push(...result.commands);
+			verifiedHash = result.workspaceHash;
 
 			if (result.status === "pass") {
 				const ranBackend = outcome.backend ? deps.registry.byName(outcome.backend) : undefined;
@@ -381,6 +392,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 					return {
 						status: "completed",
 						changedFiles: outcome.result.changedFiles,
+						...(verifiedHash ? { workspaceHash: verifiedHash } : {}),
 						evidence,
 						commands,
 						retryHistory,

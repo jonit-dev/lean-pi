@@ -177,7 +177,8 @@ export interface PrdManagerOptions {
 	artifactStore: ArtifactStore;
 	/** Explicit state wins; otherwise the active PRD is read from `.leanpi/prd/`. */
 	state?: PrdState;
-	jev?: JevClient;
+	/** The JEV seam this lane asks through; it never manages credentials. */
+	jev?: Pick<JevClient, "ask" | "getMode">;
 	/** PRD-009's workspace hash; without it nothing can be fresh, so nothing verifies. */
 	hashWorkspace?: () => string;
 	selectModel?: ModelSelector;

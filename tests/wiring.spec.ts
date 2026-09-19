@@ -4,7 +4,7 @@
  * calling the module by hand. A registration that only works in a unit test
  * cannot pass any of these.
  */
-import { globSync, readFileSync } from "node:fs";
+import { globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -18,8 +18,13 @@ import {
 	scoutTask,
 	writeUserDefault,
 } from "../src/index.js";
-import { registerLane } from "../src/commands/session.js";
-import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "./helpers/fixtures.js";
+import { registerLane, runTurn } from "../src/commands/session.js";
+import { clearRoutePins, setRoutePins } from "../src/compiler/pins.js";
+import { laneLoads, resetLaneLoads } from "../src/prd/dispatch.js";
+import { registerTurnLanes } from "../src/commands/turn-lanes.js";
+import { fakeExec, VERIFY_COMMANDS } from "./executor/helpers.js";
+import { artifactStoreFor, prdConfig, stagedPrd } from "./prd/helpers.js";
+import { bootSession, fixtureRepo, gitCommitAll, gitInit, nativeBackend, tempDir, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubStep } from "./helpers/stub-backend.js";
 
 async function booted(steps: Parameters<typeof startStubBackend>[0] = [{ text: "ok" }]) {
@@ -115,6 +120,92 @@ describe("activation wiring", () => {
 		} finally {
 			session.session.dispose();
 			await backend.close();
+		}
+	});
+
+	it("opens the PRD lane when the compiler dispatches to it, and nothing when it does not (PRD-012)", async () => {
+		const { cwd, agentDir } = fixtureRepo();
+		const config = prdConfig(cwd);
+		const artifacts = artifactStoreFor(agentDir);
+		stagedPrd(cwd, { artifactStore: artifacts });
+		const worker = async () => ({ status: "completed", backend: "local", result: { status: "ok", changedFiles: [], summary: "done" }, attempts: [] }) as never;
+		const lanes = { cwd, config, artifacts, worker, exec: fakeExec({ pass: true }), verifyCommands: VERIFY_COMMANDS, reviewRunner: async () => ({ status: "ok", changedFiles: [], summary: JSON.stringify({ decision: "PASS", findings: [] }) }) };
+		try {
+			// The quick path first: a direct-execution gate must not load the lane.
+			clearLanes();
+			resetLaneLoads();
+			setRoutePins({ prd_required: false }, "wiring-spec");
+			registerTurnLanes(lanes);
+			const direct = await runTurn({ text: "do the thing" }, { config, cwd });
+			expect(direct.contract?.task.prd_required).toBe(false);
+			expect(direct.prd).toBeUndefined();
+			expect(laneLoads).toEqual([]);
+
+			// The same turn with the gate answering PRD_REQUIRED opens the lane.
+			clearLanes();
+			resetLaneLoads();
+			setRoutePins({ prd_required: true }, "wiring-spec");
+			registerTurnLanes(lanes);
+			const prd = await runTurn({ text: "do the thing" }, { config, cwd });
+			expect(prd.contract?.task.prd_required).toBe(true);
+			expect(prd.prd?.state.prdId).toBe("PRD-101");
+			expect(prd.prd?.nextUnit()?.id).toBeDefined();
+			expect(laneLoads).toContain("manager");
+		} finally {
+			clearRoutePins();
+			clearLanes();
+		}
+	});
+
+	it("evaluates the proof gate over the contract's criteria (PRD-010)", async () => {
+		const { cwd, agentDir } = fixtureRepo();
+		mkdirSync(join(cwd, "src"), { recursive: true });
+		mkdirSync(join(cwd, "tests"), { recursive: true });
+		writeFileSync(join(cwd, "src", "parse.ts"), "export const parse = () => 1;\n");
+		writeFileSync(join(cwd, "tests", "parse.spec.ts"), "it('parses', () => {});\n");
+		gitInit(cwd);
+		gitCommitAll(cwd);
+		// A dirty test file is what names AC-1's surface, which is what PRD-009
+		// attributes its records to (FR-124) and therefore what the gate gates on.
+		writeFileSync(join(cwd, "tests", "parse.spec.ts"), "it('parses', () => expect(1).toBe(1));\n");
+
+		const config = prdConfig(cwd);
+		const artifacts = artifactStoreFor(agentDir);
+		const worker = async () => ({
+			status: "completed",
+			backend: "local",
+			result: { status: "ok", changedFiles: ["src/parse.ts"], summary: "done" },
+			attempts: [],
+		}) as never;
+		const review = async () => ({ status: "ok", changedFiles: [], summary: JSON.stringify({ decision: "PASS", findings: [] }) });
+		const lanes = (pass: boolean) => ({ cwd, config, artifacts, worker, exec: fakeExec({ pass }), verifyCommands: VERIFY_COMMANDS, reviewRunner: review });
+		try {
+			clearLanes();
+			resetLaneLoads();
+			setRoutePins({ prd_required: false }, "wiring-spec");
+			registerTurnLanes(lanes(true));
+			const passing = await runTurn({ text: "fix the parse bug" }, { config, cwd });
+			expect(passing.contract!.verification.criteria).toEqual([{ id: "AC-1", verifiers: ["affected_tests"], scope: "tests/parse.spec.ts" }]);
+			expect(passing.proof!.criteria.map((criterion) => criterion.id)).toEqual(["AC-1"]);
+			// The gate reads this turn's own evidence: the verifier the executor ran
+			// reported `targeted_test` pass, and AC-1's packet carries it.
+			expect(passing.proof!.criteria[0]!.coverage.satisfied).toBe(true);
+			expect(passing.proof!.criteria[0]!.coverage.unsatisfied).toEqual([]);
+			// Whatever the verdict, it is one of PRD-010's four and never a fabricated
+			// pass: this fixture cannot run the `runtime_smoke` its MEDIUM contract
+			// requires, so the turn is gated as unproved.
+			expect(["PASS", "MISSING_PROOF", "BLOCKED", "FAILED"]).toContain(passing.proof!.decision);
+			expect(passing.proof!.decision).not.toBe("PASS");
+
+			// The negative control: a failing verifier cannot satisfy the criterion.
+			clearLanes();
+			registerTurnLanes(lanes(false));
+			const failing = await runTurn({ text: "fix the parse bug" }, { config, cwd });
+			expect(failing.proof!.criteria[0]!.coverage.satisfied).toBe(false);
+			expect(failing.proof!.criteria[0]!.coverage.unsatisfied).toContain("targeted_test");
+		} finally {
+			clearRoutePins();
+			clearLanes();
 		}
 	});
 
