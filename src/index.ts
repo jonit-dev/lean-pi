@@ -332,6 +332,8 @@ export {
 	type TurnInput,
 } from "./commands/session.js";
 export { LEANPI_EXTENSION_NAME, LEANPI_VERSION, PACKAGE_ROOT } from "./core/package-info.js";
+export { SCOUT_PACKET_MAX_BYTES, scoutTask } from "./scout/index.js";
+export type { TaskPacket } from "./scout/index.js";
 export { createJevClient, JEV_ENDPOINT_DEFAULT, JEV_INPUT_COST_PER_MILLION, JEV_MODEL_DEFAULT } from "./jev/client.js";
 export type { JevClient, JevStatus, JevTestResult, JevTransport, JevTransportRequest, JevTransportResponse } from "./jev/client.js";
 export { CONFIDENCE_THRESHOLDS, accept } from "./jev/confidence.js";
