@@ -4,7 +4,8 @@
 **Complexity:** 5 (MEDIUM)
 **Risk override:** none — no security boundary, no destructive migration; artifact storage is local, append-only and reversible.
 **Owner:** joao
-**Depends on:** PRD-001; Phases 2 and 4 additionally require PRD-009 (evidence store, `workspaceHash`) and PRD-013 (goal state), supplied through the `WorkingStateSources` provider interface declared here
+**Depends on:** PRD-001
+**Runtime prerequisites (not slicing dependencies):** PRD-009 (evidence store, `workspaceHash`) and PRD-013 (goal state), consumed in Phases 2 and 4 through the `WorkingStateSources` provider interface declared here. Kept off the `Depends on` line deliberately: PRD-013 depends on PRD-012, which depends on this PRD, so declaring them as hard dependencies would close the cycle 012 → 014 → 013 → 012.
 
 ## Context
 

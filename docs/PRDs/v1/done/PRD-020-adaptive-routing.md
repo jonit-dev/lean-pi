@@ -76,7 +76,7 @@ All three sites register with PRD-002's decision-site registry (id, question set
 
 | Capability | Reachable consumer/trigger | Replaces / disposition | Evidence |
 |---|---|---|---|
-| Predicted route-cost scoring | Task dispatch → `selectRoute()` in `src/compiler/router.ts` (created in PRD-004, scoring wired in Phase 1) → `predictRouteCost()` in `src/compiler/route-cost.ts` (created in Phase 1) | Replaces the bare §14 matrix lookup as the selection rule; the matrix becomes the fallback default, not a parallel path. Measured cost stays PRD-015's `effective_cost` — this is a second *quantity*, not a second implementation of the same one | AC-1, AC-2 |
+| Predicted route-cost scoring | Task dispatch → `selectRoute()` in `src/compiler/route.ts` (created in PRD-004, scoring wired in Phase 1) → `predictRouteCost()` in `src/compiler/route-cost.ts` (created in Phase 1) | Replaces the bare §14 matrix lookup as the selection rule; the matrix becomes the fallback default, not a parallel path. Measured cost stays PRD-015's `effective_cost` — this is a second *quantity*, not a second implementation of the same one | AC-1, AC-2 |
 | Quota shadow configuration | Session config load → `cost.quota_shadow_usd[quota_class]` in `src/core/config.ts` (created in PRD-001, the key PRD-015 already prices from; this PRD becomes its writer in Phase 1) | Single scarcity setting shared with telemetry; no per-backend shadow field is introduced | AC-2 |
 | Capability-filtered candidates | `selectRoute()` → `selectCheapestClearing()` in `src/capability/select.ts` (created in PRD-024, consumed in Phase 1) over the bundled `src/capability/models.json` ranking, against the contract's `required_capability` (created in PRD-004) | Replaces unrestricted candidate sets; no ranking, fetch or cache is designed here, and the below-bar case returns a `capability_gap` rather than a selection | AC-5 |
 | Specialist role binding | `selectRoute()` → `models.specialists` map in `src/core/config.ts` (field added in Phase 2) | Replaces language-blind role selection; generic roles remain the fallback | AC-3 |
@@ -86,34 +86,34 @@ All three sites register with PRD-002's decision-site registry (id, question set
 
 ## Execution Phases
 
-#### Phase 1: Effective cost, quota shadow pricing, capability filter
-**Status:** DONE
+#### Phase 1: Predicted route cost, quota shadow pricing, capability filter
+**Status:** DONE (verified 2026-09-19)
 **ACs:** AC-1, AC-2
-**Files:** `src/compiler/route-cost.ts` (new — the five-term predicted scorer and its inputs); `src/compiler/router.ts` (edit — take the clearing set from `selectCheapestClearing()`, then select minimum `route_cost`); `src/core/config.ts` (edit — `cost.quota_shadow_usd[quota_class]` writer side, latency-to-cost weight, tie-band width); `src/telemetry/record.ts` (edit — persist the `route_cost` block PRD-015 declares for this PRD on the run record); `tests/routing-cost.test.ts` (new); `tests/fixtures/telemetry/` (new — recorded LeanPi runs used as the calibration/fixture set).
+**Files:** `src/compiler/route-cost.ts` (new — the five-term predicted scorer and its inputs); `src/compiler/route.ts` (edit — take the clearing set from `selectCheapestClearing()`, then select minimum `route_cost`); `src/core/config.ts` (edit — `cost.quota_shadow_usd[quota_class]` writer side, latency-to-cost weight, tie-band width); `src/telemetry/record.ts` (edit — persist the `route_cost` block PRD-015 declares for this PRD on the run record); `tests/routing-cost.test.ts` (new); `tests/fixtures/telemetry/` (new — recorded LeanPi runs used as the calibration/fixture set).
 **Implementation:** Terms are computed from the bundled ranking's price, the configured `quota_shadow_usd` class price, measured local compute, observed latency, and the calibrated retry rate (Phase 4 supplies the calibrated value; Phase 1 consumes the matrix default through the same accessor so no literal is introduced twice). Candidates come only from `selectCheapestClearing()`, so a below-bar model is never in the scored set at all; when that call returns a `capability_gap` the router escalates per §34 and records the gap — it never downgrades. Nothing here writes `cost.effective_cost`: the record's measured block stays PRD-015's.
 **Verification:** E1 — vitest through `selectRoute()` on the fixture telemetry set: assert the persisted `route_cost` block's five terms sum to its recorded predicted total, and that `cost.effective_cost` on the same record is PRD-015's measured value and is unchanged by this path (AC-1); assert baseline config selects the scarce-premium backend, that raising `cost.quota_shadow_usd['scarce-premium']` selects the cheaper clearing backend, and that restoring the baseline restores the first choice (AC-2). The both-directions assertion is the negative control — a scorer ignoring the shadow term fails the middle case.
 **Checkpoint:** done
 
 #### Phase 2: Specialist model roles
-**Status:** DONE
+**Status:** DONE (verified 2026-09-19)
 **ACs:** AC-3
-**Files:** `src/core/config.ts` (edit — `models.specialists` keyed by language/task type onto roles); `src/compiler/router.ts` (edit — apply specialist preference inside the clearing candidate set).
+**Files:** `src/core/config.ts` (edit — `models.specialists` keyed by language/task type onto roles); `src/compiler/route.ts` (edit — apply specialist preference inside the clearing candidate set).
 **Implementation:** Specialists are a preference within the set `selectCheapestClearing()` returned, never an override of it: a specialist model absent from that set (below `min_coding_index` on its `coding_score`, or unlisted in the ranking) is skipped and the generic role is used. Unknown languages fall through to the §14 matrix role with no error.
 **Verification:** E2 — vitest through `selectRoute()` with two same-complexity contracts in different languages: assert each dispatches to its bound specialist model id, assert removing the entries makes both dispatch to the generic role, and assert a specialist bound to a below-bar ranking entry is skipped in favor of a clearing generic model (AC-3).
 **Checkpoint:** done
 
 #### Phase 3: Adaptive reasoning effort and the JEV routing sites
-**Status:** DONE
+**Status:** DONE (verified 2026-09-19)
 **ACs:** AC-4, AC-5
-**Files:** `src/compiler/router.ts` (edit — complexity→effort default table, tie-band consultation of `routing.quota_preference`, `routing.delegation_worth` gate); `src/backends/` worker request builders (edit — translate effort to each backend's parameter, omit where unsupported); `src/core/config.ts` (edit — per-site enable flags and `consequence` classes).
+**Files:** `src/compiler/route.ts` (edit — complexity→effort default table, tie-band consultation of `routing.quota_preference`, `routing.delegation_worth` gate); `src/backends/` worker request builders (edit — translate effort to each backend's parameter, omit where unsupported); `src/core/config.ts` (edit — per-site enable flags and `consequence` classes).
 **Implementation:** Effort feeds predicted tokens back into `predictRouteCost()` so a higher effort must justify itself. All three sites go through PRD-002's registry with their non-null fallbacks declared at registration; the router calls the registry, never the JEV client directly. Site answers may reorder candidates only inside the configured `route_cost` tie band and only among candidates already returned by `selectCheapestClearing()`.
 **Verification:** E3 — vitest asserting the effort parameter present in the request the PRD-008 worker actually builds for low and high complexity contracts, and absent (with successful dispatch) for a backend declaring no effort support (AC-4). E4 — same entry point with all sites disabled: assert decisions equal the deterministic fallbacks and the JEV client received zero calls; then with `routing.quota_preference` enabled and a confident stubbed answer inside the tie band, assert the dispatched candidate changes; with the answer naming a candidate outside the clearing set, assert it is ignored; and with a contract no model clears, assert the recorded `capability_gap`, the escalation, and that no dispatch occurred (AC-5).
 **Checkpoint:** done
 
 #### Phase 4: Historical calibration and semantic retry classification
-**Status:** DONE
+**Status:** DONE (verified 2026-09-19)
 **ACs:** AC-6, AC-7
-**Files:** `src/compiler/calibration.ts` (new — bucketed retry-rate and latency derivation from the telemetry store, failure-signature classification, next-route adjustment); `src/compiler/router.ts` (edit — consume calibrated values and the retry class); `tests/routing-calibration.test.ts` (new).
+**Files:** `src/compiler/calibration.ts` (new — bucketed retry-rate and latency derivation from the telemetry store, failure-signature classification, next-route adjustment); `src/compiler/route.ts` (edit — consume calibrated values and the retry class); `tests/routing-calibration.test.ts` (new).
 **Implementation:** Buckets are (role, complexity, backend) over completed runs in PRD-015's store; below the configured minimum sample count the matrix default is returned with `calibration: insufficient-history` recorded on the run. Failure signatures are normalized deterministically (command, exit status, first failing assertion/location) before comparison; a repeated signature yields a class that maps to a route change (switch backend or raise effort, per §34's escalation categories), while a new signature leaves the route to the ordinary scorer. The retry ceiling and loop control stay in PRD-007.
 **Verification:** E5 — vitest over the fixture telemetry set: assert the derived retry rate for a bucket matches the fixture's observed outcomes, assert mutating those outcomes changes the predicted value and flips the selected backend for a borderline task, assert a thin bucket returns the matrix default with the recorded reason, and grep the source to assert no retry-rate literal exists (AC-6). E6 — drive two attempts with a matching failure signature through the router: assert the second dispatch differs from the first configuration and the run record carries the failure class; then drive an unrelated new signature and assert the route is unchanged (AC-7).
 **Checkpoint:** done

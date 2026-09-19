@@ -4,7 +4,7 @@
 **Complexity:** 4 (MEDIUM)
 **Risk override:** none — read-mostly command handlers over facilities owned elsewhere; session persistence delegates to Pi rather than introducing new durable state.
 **Owner:** joao
-**Depends on:** PRD-002, PRD-004, PRD-015
+**Depends on:** PRD-002, PRD-004, PRD-015, PRD-024
 
 ## Context
 
@@ -27,7 +27,7 @@ Consumed contracts (owned elsewhere, read not re-implemented):
 
 One registry plus twelve thin handlers. The commands this PRD owns are `/help`, `/status`, `/model`, `/models`, `/route`, `/context`, `/compact`, `/tree`, `/config`, `/doctor`, `/new`, `/resume`. `/goal`, `/review`, `/prd`, `/skills`, `/mcp`, `/permissions`, `/jev` and `/cost` are owned by PRD-013, PRD-011, PRD-012, PRD-005, PRD-006, PRD-017, PRD-002 and PRD-015 respectively: they **register** through this registry — the one in `src/commands/registry.ts`, which every PRD extends rather than standing up a second dispatcher — and appear in `/help`, but this PRD neither defines their behavior nor claims their FRs.
 
-**Registry.** `src/commands/registry.ts` is a `Map<string, Command>` where `Command = { name, summary, usage, run(args, session) }`, plus `register()` and `dispatch(line, session)`. It is deliberately a map and not a plugin framework: no lifecycle hooks, no middleware chain, no per-command permission layer (permissions are PRD-017's, enforced at the tool boundary where they belong). Dispatch splits on whitespace, looks up the name, and on a miss returns "unknown command `/x` — did you mean `/y`?" using the nearest registered name by Levenshtein distance over the registry keys. `src/commands/index.ts` performs registration of the owned handlers and exposes the registry to the other PRDs' modules.
+**Registry.** `src/commands/registry.ts` is created by PRD-002 as a minimal `Map<string, Command>` with `register()` and `dispatch(line, session)`, where `Command = { name, summary, usage, run(args, session) }`. This PRD **extends that file** — it does not stand up a second dispatcher: it adds the nearest-name suggestion on a miss ("unknown command `/x` — did you mean `/y`?", plain Levenshtein over the registry keys, no fuzzy-search dependency) and the rendered-string/status contract `/help` folds over. It stays deliberately a map and not a plugin framework: no lifecycle hooks, no middleware chain, no per-command permission layer (permissions are PRD-017's, enforced at the tool boundary where they belong). `src/commands/index.ts` performs registration of this PRD's handlers and exposes the same registry to the other PRDs' modules, so `/jev`, `/cost`, `/goal` and the rest land in one dispatch table.
 
 **Session surface — retain Pi, do not rebuild it (FR-150).** `/new`, `/resume`, `/tree` and `/compact` are wrappers over Pi's session tree: `/new [name]` creates a Pi session, `/resume <name|id>` reattaches to one, `/tree` renders Pi's existing parent/child structure (id, name, created-at, message count, current marker) and `/tree fork [name]` creates a child session from the current head so a branch inherits the prefix. `/compact` invokes Pi's compaction with PRD-014's custom compactor and then prints the before/after context accounting. LeanPi stores no session records of its own — no second id space, no mirrored history, nothing to keep in sync. `ponytail:` if Pi's session-name lookup turns out to be id-only, `/resume <name>` resolves names by scanning the session list; replace with an index only if the list ever gets big enough to notice.
 
@@ -87,7 +87,7 @@ Site ids, question sets, return types and thresholds are read from the registry,
 
 | Capability | Reachable consumer/trigger | Replaces / disposition | Evidence |
 |---|---|---|---|
-| Slash-command dispatch | User types `/<name>` in the session → `dispatch()` in `src/commands/registry.ts` (created in Phase 1) | New capability; single registration point for every LeanPi command, including other PRDs' handlers | AC-1 |
+| Slash-command dispatch | User types `/<name>` in the session → `dispatch()` in `src/commands/registry.ts` (created in PRD-002, extended in Phase 1 with nearest-name suggestion and the full handler set) | Extends the existing registry; single registration point for every LeanPi command, including other PRDs' handlers — no second dispatcher | AC-1 |
 | Session/route/cost status readout | `/status` → `src/commands/status.ts` (created in Phase 1) composing PRD-004 contract, PRD-008 registry and PRD-015 store | New capability; no parallel accounting of its own | AC-2 |
 | Model switching and listing | `/model`, `/models` → `src/commands/model.ts` (created in Phase 2) over PRD-001's role resolver, annotated from PRD-024's bundled ranking via `capabilityRows()` | New capability; satisfies FR-141 | AC-4 |
 | Backend/capability diagnostics | `/doctor` → `src/commands/doctor.ts` (created in Phase 2) probing PRD-008 backends and PRD-005/006 registries | New capability; satisfies FR-151 | AC-5 |
@@ -102,10 +102,10 @@ Site ids, question sets, return types and thresholds are read from the registry,
 **Status:** DONE
 **ACs:** AC-1, AC-2, AC-3
 **Files:**
-- `src/commands/registry.ts` (new) — `Command` type, `register()`, `dispatch()`, nearest-name suggestion.
+- `src/commands/registry.ts` (edited; created in PRD-002) — nearest-name suggestion on an unknown command, plus the `summary`/`usage` fields `/help` renders; `Command`, `register()` and `dispatch()` already exist.
 - `src/commands/index.ts` (new) — registers this PRD's handlers; exported for other PRDs to register theirs.
 - `src/commands/help.ts` (new) — renders the registry.
-- `src/commands/status.ts` (new) — composed session/model/backend/cost readout.
+- `src/commands/status.ts` (new) — composed session/model/backend/cost readout, keyed on PRD-015's `session_id`.
 - `src/commands/config.ts` (new) — resolved config with winning source and file path.
 - `tests/commands/surface.spec.ts` (new) — live-session fixture driving `/help`, `/status`, `/config`.
 

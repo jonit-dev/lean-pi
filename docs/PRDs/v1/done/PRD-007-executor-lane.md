@@ -12,7 +12,7 @@
 
 LeanPi is greenfield; the only file in the repository is `docs/PRDs/v1/ROADMAP.md`. Every path named below is created by the phases of this PRD or by the PRD it is attributed to.
 
-Current behavior: none. PRD-004 produces an `ExecutionContract` (`src/compiler/contract.ts`) describing the route for a turn; PRD-008 provides backend workers that turn a task packet into workspace changes plus a structured result. Nothing today consumes the contract and drives implementation work, so a routed turn dies at the compiler.
+Current behavior: none. PRD-004 produces an `ExecutionContract` (`src/compiler/contract.ts`) describing the route for a turn; PRD-008 provides backend workers that turn a task packet into workspace changes plus a structured result; PRD-009 provides `verifyTask` and the `EvidenceRecord` store, wired into `runTurn` until this lane takes the call over; PRD-011 provides `classifyReview`/`review`, the only review-or-not decision in the product. Nothing today consumes the contract and drives implementation work, so a routed turn dies at the compiler.
 
 Three requirements from the ROADMAP are unmet and cannot be satisfied by prompt text alone:
 

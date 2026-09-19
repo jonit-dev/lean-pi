@@ -4,7 +4,7 @@
 **Complexity:** 4 (MEDIUM)
 **Risk override:** none — no security boundary, no destructive migration, no compatibility break. Score 4 comes from 1 (1–5 implementation files) + 2 (new module) + 1 (external API integration: language servers over LSP/JSON-RPC).
 **Owner:** joao
-**Depends on:** PRD-002, PRD-004
+**Depends on:** PRD-002, PRD-004, PRD-009 (AC-4 asserts the `typecheck` verifier actually ran and produced an `EvidenceRecord`; PRD-009 depends only on PRD-001, so no cycle)
 
 ## Context
 
@@ -93,7 +93,7 @@ This PRD consumes no installed skill or plugin. Its external dependencies are *l
 |---|---|---|---|---|
 | `lsp.usefulness` — break a tie between candidate LSP modes when the deterministic table is ambiguous (mixed-language change set with an unclear task type) | Given the changed-language set, task summary, and the candidate modes the table could not separate: which mode is worth its cost for this task? | `Choice` over `{LSP_OFF, LSP_DIAGNOSTICS, LSP_NAVIGATION, LSP_FULL}` restricted to the tied candidates | Pick the cheapest tied candidate (ordering `LSP_OFF < LSP_DIAGNOSTICS < LSP_NAVIGATION < LSP_FULL`). Non-null, always available, no error path | ★★★☆☆ |
 
-Registered in PRD-002's decision-site registry as site id `lsp.usefulness` with its question set, `Choice` return type, confidence threshold, the fallback above, and telemetry tag `lsp.usefulness` (so PRD-015 records the per-site row and PRD-016's `/route` shows whether it fired or fell back).
+Registered in PRD-002's decision-site registry as site id `lsp.usefulness` with its question set, `Choice` return type, `consequence: low`, the non-null fallback above, and telemetry tag `lsp.usefulness` (so PRD-015 records the per-site row and PRD-016's `/route` shows whether it fired or fell back); the numeric confidence threshold lives in `src/jev/confidence.ts`, not in the registry row.
 
 The ★★★☆☆ rating is binding on the design: **the deterministic rule is primary and JEV is only the tie-breaker.** The site is reached only after project config, language availability, task type, and the FR-094 override have all failed to produce a single answer. Below the confidence threshold the answer is discarded and the cheapest-candidate fallback is used. Both roadmap anchor cases resolve deterministically and never reach the site — AC-1 and AC-2 assert byte-identical outcomes with JEV enabled and disabled, which is the concrete guarantee that LSP does not depend on JEV.
 
