@@ -48,7 +48,7 @@ export const SUITE_CATEGORIES: readonly { id: string; label: string }[] = [
 ];
 
 const CATEGORY_IDS: Record<string, true> = Object.fromEntries(SUITE_CATEGORIES.map((category) => [category.id, true]));
-const ADAPTERS: Record<string, true> = { leanpi: true, "stock-pi": true, external: true };
+const ADAPTERS: Record<string, true> = { leanpi: true, "stock-pi": true, external: true, omp: true };
 const JEV_MODES: Record<string, true> = { enabled: true, disabled: true, "metadata-only": true, redacted: true };
 const VENDORS: Record<string, true> = { claude: true, codex: true };
 

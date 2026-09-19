@@ -16,6 +16,6 @@ golden:
   files:
     - test/res.send.js
   command: "npx mocha --require test/support/env --check-leaks test/res.send.js"
-  validated_at: null
+  validated_at: "2026-09-19"
 notes: >
   The change spans lib/response.js and its test; the golden runs the upstream test file at the fix commit.

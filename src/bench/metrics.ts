@@ -223,7 +223,7 @@ function configMetricsOf(
 	};
 }
 
-const BASELINE_PREFERENCE = ["claude-code", "codex", "stock-pi"];
+const BASELINE_PREFERENCE = ["claude-code", "codex", "omp", "stock-pi"];
 
 export interface FoldInput {
 	run_id: string;

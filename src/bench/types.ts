@@ -58,7 +58,7 @@ export interface BenchTask {
 	notes: string;
 }
 
-export type BenchAdapterKind = "leanpi" | "stock-pi" | "external";
+export type BenchAdapterKind = "leanpi" | "stock-pi" | "external" | "omp";
 
 /** One row of `bench/configs/*.yaml`: which adapter, which model, which features are on. */
 export interface BenchConfigRow {

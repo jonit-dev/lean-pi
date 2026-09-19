@@ -17,6 +17,6 @@ golden:
     - compat/test/browser/suspense.test.jsx
     - compat/test/browser/suspense-hydration.test.jsx
   command: "npx vitest run compat/test/browser/suspense.test.jsx"
-  validated_at: null
+  validated_at: "2026-09-19"
 notes: >
   Browser-path test file; the golden covers the suspense test and its hydration sibling.

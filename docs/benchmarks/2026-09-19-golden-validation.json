@@ -1,0 +1,94 @@
+[
+  {
+    "task": "chalk-numeric-force-color-level",
+    "setup_ok": true,
+    "fails_before": true,
+    "passes_after": false,
+    "note": "",
+    "before_log": "file:///tmp/benchprep/work/chalk-numeric-force-color-level/node_modules/emittery/index.js:780\n\t\t\t.filter(result => result.status === 'rejected')\n\t\t\t ^\n\nTypeError: results.values(...).filter is not a function\n    at Api.emit \u001b[90m(file:///tmp/benchprep/work/chalk-numeric-force-color-level/\u001b[39mnode_modules/\u001b[4memittery\u001b[24m/index.js:780:5\u001b[90m)\u001b[39m\n\nNode.js v20.19.6\n",
+    "after_log": "file:///tmp/benchprep/work/chalk-numeric-force-color-level/node_modules/emittery/index.js:780\n\t\t\t.filter(result => result.status === 'rejected')\n\t\t\t ^\n\nTypeError: results.values(...).filter is not a function\n    at Api.emit \u001b[90m(file:///tmp/benchprep/work/chalk-numeric-force-color-level/\u001b[39mnode_modules/\u001b[4memittery\u001b[24m/index.js:780:5\u001b[90m)\u001b[39m\n\nNode.js v20.19.6\n",
+    "seconds": 15.6
+  },
+  {
+    "task": "express-send-transfer-encoding-etag",
+    "setup_ok": true,
+    "fails_before": true,
+    "passes_after": true,
+    "note": "",
+    "before_log": "t._assertHeader (node_modules/supertest/lib/test.js:224:47)\n      at /tmp/benchprep/work/express-send-transfer-encoding-etag/node_modules/supertest/lib/test.js:308:13\n      at Test._assertFunction (node_modules/supertest/lib/test.js:285:13)\n      at Test.assert (node_modules/supertest/lib/test.js:164:23)\n      at Server.localAssert (node_modules/supertest/lib/test.js:120:14)\n      at Object.onceWrapper (node:events:638:28)\n      at Server.emit (node:events:524:28)\n      at emitCloseNT (node:net:2344:8)\n      at process.processTicksAndRejections (node:internal/process/task_queues:81:21)\n\u001b[0m\n\n\n",
+    "after_log": "0m should not add Content-Length header if Transfer-Encoding header is equal to chunked\u001b[0m\n    \u001b[32m  \u001b[32m\u2714\u001b[39m\u001b[0m\u001b[90m should not add Content-Length header if Transfer-Encoding header is equal to compress\u001b[0m\n    \u001b[32m  \u001b[32m\u2714\u001b[39m\u001b[0m\u001b[90m should not add Content-Length header if Transfer-Encoding header is equal to deflate\u001b[0m\n    \u001b[32m  \u001b[32m\u2714\u001b[39m\u001b[0m\u001b[90m should not add Content-Length header if Transfer-Encoding header is equal to gzip\u001b[0m\n    \u001b[32m  \u001b[32m\u2714\u001b[39m\u001b[0m\u001b[90m should still generate an ETag\u001b[0m\n\n\n\u001b[92m \u001b[0m\u001b[32m 75 passing\u001b[0m\u001b[90m (118ms)\u001b[0m\n\u001b[36m \u001b[0m\u001b[36m 1 pending\u001b[0m\n\n",
+    "seconds": 9.8
+  },
+  {
+    "task": "flask-ipv6-server-name-parsing",
+    "setup_ok": false,
+    "fails_before": null,
+    "passes_after": null,
+    "note": "setup `python -m pip install -e . pytest` failed: /usr/bin/python: No module named pip\n",
+    "seconds": 1.7
+  },
+  {
+    "task": "hono-jsx-dom-matching-head-lookup",
+    "setup_ok": false,
+    "fails_before": null,
+    "passes_after": null,
+    "note": "setup `npm install` failed: ild\nnpm error > sharp@0.34.5 build\nnpm error > node install/build.js\nnpm error\nnpm error sharp: Attempting to build from source via node-gyp\nnpm error sharp: See https://sharp.pixelplumbing.com/install#building-from-source\nnpm error sharp: Please add node-addon-api to your dependencies\nnpm error A complete log of this run can be found in: /home/joao/.npm/_logs/2026-09-19T12_40_43_307Z-debug-0.log\n",
+    "seconds": 26.5
+  },
+  {
+    "task": "nlohmann-bjdata-default-draft-marker",
+    "setup_ok": true,
+    "fails_before": false,
+    "passes_after": true,
+    "note": "",
+    "before_log": "Test project /tmp/benchprep/work/nlohmann-bjdata-default-draft-marker/build\nNo tests were found!!!\n",
+    "after_log": "Test project /tmp/benchprep/work/nlohmann-bjdata-default-draft-marker/build\nNo tests were found!!!\n",
+    "seconds": 5.2
+  },
+  {
+    "task": "preact-suspense-hook-state-loss",
+    "setup_ok": true,
+    "fails_before": true,
+    "passes_after": true,
+    "note": "",
+    "before_log": "iv>Hello from LazyComp</div\u001b[27m></div>\"\u001b[39m\nReceived: \u001b[31m\"<div><\u001b[7mp>hi</p\u001b[27m></div>\"\u001b[39m\n\n\u001b[36m \u001b[2m\u276f\u001b[22m compat/test/browser/suspense.test.jsx:\u001b[2m439:13\u001b[22m\u001b[39m\n    \u001b[90m437|\u001b[39m     resolve = () => {\n    \u001b[90m438|\u001b[39m      res({ default: LazyComp });\n    \u001b[90m439|\u001b[39m      return p;\n    \u001b[90m   |\u001b[39m             \u001b[31m^\u001b[39m\n    \u001b[90m440|\u001b[39m     };\n    \u001b[90m441|\u001b[39m    });\n\u001b[90m \u001b[2m\u276f\u001b[22m node_modules/.vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/deps/plugins.Cigb0uSy-DC4WGVsO.js?v=b7388ea4:\u001b[2m4951:20\u001b[22m\u001b[39m\n\n\u001b[31m\u001b[2m\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/2]\u23af\u001b[22m\u001b[39m\n\n",
+    "after_log": "22m\u001b[2msuspense\u001b[2m > \u001b[22m\u001b[2mshould handle lazy component that rejects without returning a component\n\u001b[22m\u001b[39mcaught [Error: import failed]\n \u001b[32m\u2713\u001b[39m \u001b[30m\u001b[43m 1 (chromium) \u001b[49m\u001b[39m compat/test/browser/suspense.test.jsx \u001b[2m(\u001b[22m\u001b[2m58 tests\u001b[22m\u001b[2m | \u001b[22m\u001b[33m3 skipped\u001b[39m\u001b[2m)\u001b[22m\u001b[32m 33\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m55 passed\u001b[39m\u001b[22m\u001b[2m | \u001b[22m\u001b[33m3 skipped\u001b[39m\u001b[90m (58)\u001b[39m\n\u001b[2m   Start at \u001b[22m 05:41:05\n\u001b[2m   Duration \u001b[22m 1.03s\u001b[2m (worker 45%, import 22%, setup 17%, tests 16%)\u001b[22m\n\n",
+    "seconds": 23.8
+  },
+  {
+    "task": "slugify-counter-duplicate-slug",
+    "setup_ok": true,
+    "fails_before": true,
+    "passes_after": true,
+    "note": "",
+    "before_log": "ounter() is not vulnerable to ReDoS\n  \u001b[90m\u2500\u001b[39m\n\n  \u001b[1mslugifyWithCounter() never returns the same slug twice\u001b[22m\n\n  \u001b[90mtest.js:270\u001b[39m\n\n   \u001b[90m269:\u001b[39m   t.is(slugify('foo'), 'foo-2');    \n  \u001b[41m\u001b[1m 270:   t.is(slugify('foo 2'), 'foo-2-2');\u001b[22m\u001b[49m\n   \u001b[90m271:\u001b[39m                                     \n\n  Difference (\u001b[31m-\u001b[39m \u001b[31mactual\u001b[39m, \u001b[32m+\u001b[39m \u001b[32mexpected\u001b[39m):\n\n  \u001b[31m-\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2\u001b[39m\u001b[34m'\u001b[39m\n  \u001b[32m+\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2\u001b[39m\u001b[42m\u001b[30m-2\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n\n  \u001b[90m\u203a file://test.js:270:4\u001b[39m\n\n  \u001b[90m\u2500\u001b[39m\n\n  \u001b[31m1 test failed\u001b[39m\n",
+    "after_log": "pports Arabic\n  \u001b[32m\u2714\u001b[39m supports Persian / Farsi\n  \u001b[32m\u2714\u001b[39m supports Urdu\n  \u001b[32m\u2714\u001b[39m supports Pashto\n  \u001b[32m\u2714\u001b[39m supports Russian\n  \u001b[32m\u2714\u001b[39m supports Romanian\n  \u001b[32m\u2714\u001b[39m supports Turkish\n  \u001b[32m\u2714\u001b[39m supports Armenian\n  \u001b[32m\u2714\u001b[39m leading underscore\n  \u001b[32m\u2714\u001b[39m trailing dash\n  \u001b[32m\u2714\u001b[39m counter\n  \u001b[32m\u2714\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m\u2714\u001b[39m preserve characters\n  \u001b[32m\u2714\u001b[39m locale option\n  \u001b[32m\u2714\u001b[39m transliterate option disabled\n  \u001b[32m\u2714\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m\u2500\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n",
+    "seconds": 10.9
+  },
+  {
+    "task": "undici-decompress-backpressure",
+    "setup_ok": true,
+    "fails_before": true,
+    "passes_after": false,
+    "note": "",
+    "before_log": "rep/work/undici-decompress-backpressure/\u001b[39mtest/interceptors/decompress.js:10:93\u001b[90m)\u001b[39m\n\u001b[90m    at Module._compile (node:internal/modules/cjs/loader:1521:14)\u001b[39m\n\nNode.js v20.19.6\n\u2716 /tmp/benchprep/work/undici-decompress-backpressure/test/interceptors/decompress.js (70.475235ms)\n  \u001b[32m'test failed'\u001b[39m\n\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 0\n\u2139 fail 1\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 72.261362\n\n\u2716 failing tests:\n\ntest at test/interceptors/decompress.js:1:1\n\u2716 /tmp/benchprep/work/undici-decompress-backpressure/test/interceptors/decompress.js (70.475235ms)\n  \u001b[32m'test failed'\u001b[39m\n",
+    "after_log": "rep/work/undici-decompress-backpressure/\u001b[39mtest/interceptors/decompress.js:10:93\u001b[90m)\u001b[39m\n\u001b[90m    at Module._compile (node:internal/modules/cjs/loader:1521:14)\u001b[39m\n\nNode.js v20.19.6\n\u2716 /tmp/benchprep/work/undici-decompress-backpressure/test/interceptors/decompress.js (73.690052ms)\n  \u001b[32m'test failed'\u001b[39m\n\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 0\n\u2139 fail 1\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 75.531129\n\n\u2716 failing tests:\n\ntest at test/interceptors/decompress.js:1:1\n\u2716 /tmp/benchprep/work/undici-decompress-backpressure/test/interceptors/decompress.js (73.690052ms)\n  \u001b[32m'test failed'\u001b[39m\n",
+    "seconds": 10.0
+  },
+  {
+    "task": "vite-code-frame-crlf-positions",
+    "setup_ok": false,
+    "fails_before": null,
+    "passes_after": null,
+    "note": "setup `npm install` failed: npm error code EUNSUPPORTEDPROTOCOL\nnpm error Unsupported URL Type \"workspace:\": workspace:*\nnpm error A complete log of this run can be found in: /home/joao/.npm/_logs/2026-09-19T12_41_00_967Z-debug-0.log\n",
+    "seconds": 6.2
+  },
+  {
+    "task": "zod-instanceof-properties-shape",
+    "setup_ok": false,
+    "fails_before": null,
+    "passes_after": null,
+    "note": "setup `npm install` failed:  supported config options.\nnpm warn Unknown project config \"link-workspace-packages\". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.\nnpm error code EUNSUPPORTEDPROTOCOL\nnpm error Unsupported URL Type \"workspace:\": workspace:*\nnpm error A complete log of this run can be found in: /home/joao/.npm/_logs/2026-09-19T12_41_01_061Z-debug-0.log\n",
+    "seconds": 8.1
+  }
+]

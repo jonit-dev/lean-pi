@@ -90,11 +90,16 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig): void {
 		if (typeof backend.baseUrl !== "string" || backend.baseUrl.length === 0) {
 			throw new ConfigError("baseUrl is required for native backends", `backends.${name}`);
 		}
+		// Providers that require a routing header (OpenCode Go wants
+		// `x-opencode-session`) are reachable without a code change: Pi resolves each
+		// value through the same env-name / `!command` rule it uses for the key.
+		const headers = backend.headers;
 		pi.registerProvider(name, {
 			name: backend.name ?? name,
 			baseUrl: backend.baseUrl,
 			apiKey: backend.apiKey ?? "LEANPI_BACKEND_API_KEY",
 			api: backend.api ?? "openai-completions",
+			...(headers !== null && typeof headers === "object" && !Array.isArray(headers) ? { headers: headers as Record<string, string> } : {}),
 			models: [...declared].map((id) => ({
 				id,
 				name: id,
@@ -160,7 +165,11 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// guarded `execute` wins the name, and registered before any lane can run.
 	// The guard reads only path-ish variables from `env`, which is the same
 	// credential environment the rest of the session resolves against.
-	const permissions = loadPermissionState(cwd, env as NodeJS.ProcessEnv);
+	// The role map travels with the session: a session booted on an injected
+	// config (the bench, the SDK) runs in a directory that has no
+	// `leanpi.config.yaml`, and re-reading one there would fail on the
+	// "no model roles configured" check for a file the caller never used.
+	const permissions = loadPermissionState(cwd, env as NodeJS.ProcessEnv, { models: config.models, backends: config.backends });
 	installPermissionGuard(pi, { cwd, state: permissions, env });
 	registerPermissionsCommand(commands, { cwd, state: permissions, env });
 	// Cost telemetry (PRD-015): `/cost` reads the same store `/status` will read.

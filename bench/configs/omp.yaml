@@ -1,0 +1,10 @@
+id: omp
+label: omp (oh-my-pi) on the same model, with its own default surface
+adapter: omp
+jev: disabled
+executor_model: deepseek-v4.1-flash
+features:
+  - own-system-prompt
+  - own-tool-surface
+  - own-skill-discovery
+budget_usd: 6.0

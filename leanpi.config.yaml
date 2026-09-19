@@ -1,0 +1,48 @@
+# Operator configuration for the omp comparison benchmark.
+#
+# One backend: OpenCode Go's OpenAI-compatible endpoint, the same provider and
+# model omp runs on, so the two harnesses are measured over the same model and
+# priced from the same rate card (catalog list price, USD per million tokens).
+# The API key is resolved from the environment by name; no secret lives here.
+backends:
+  opencode-go:
+    type: native
+    baseUrl: https://opencode.ai/zen/go/v1
+    api: openai-completions
+    apiKey: OPENCODE_API_KEY
+    reasoning: true
+    # OpenCode Go refuses a request with no session header and keys its prompt
+    # cache off it, so the value must stay stable for the whole session: Pi
+    # re-resolves a `!command` on every request, an env name only once per run.
+    headers:
+      x-opencode-session: LEANPI_OPENCODE_SESSION
+    contextWindow: 1000000
+    maxTokens: 32000
+    cost:
+      input: 0.15
+      output: 0.6
+      cacheRead: 0.003
+
+models:
+  quick:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  balanced:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  strong:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  specialist:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  review_quick:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  review_strong:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+
+jev:
+  mode: enabled
+  usd_per_mtok: 0.042

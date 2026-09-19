@@ -1,0 +1,13 @@
+id: leanpi-flash
+label: LeanPi on the same model as the omp baseline
+adapter: leanpi
+jev: enabled
+executor_model: deepseek-v4.1-flash
+features:
+  - jev
+  - context-engine
+  - skill-selection
+  - mcp-disclosure
+  - lsp
+  - verification
+budget_usd: 6.0

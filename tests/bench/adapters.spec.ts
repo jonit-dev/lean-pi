@@ -195,35 +195,54 @@ describe("PRD-021 LeanPi adapter", () => {
 		expect(["pass", "incomplete", "deterministic_failure"]).toContain(record.result.verification);
 	});
 
-	it("fails loudly when no lane produced a contract, instead of reporting a phantom run", async () => {
+	it("records what the session did when no lane compiled a contract, instead of losing the attempt", async () => {
 		const root = tempDir();
 		const config = fixtureConfig(root);
 		const workspace = join(root, "workspace");
-		writeFileSync(join(root, "placeholder"), "");
+		const storePath = join(root, "run", "telemetry.jsonl");
 		execFileSync("git", ["init", "-q", workspace], { stdio: "ignore" });
+		// Native executor roles (PRD-007's ownership rule): no lane registers, so
+		// Pi's own loop is what ran and the record comes from its message list.
 		clearLanes();
-		const session = { setModel: async () => undefined, prompt: async () => undefined, modelRegistry: { find: () => ({ id: "x" }) } } as unknown as AgentSession;
-		await expect(
-			leanPiAttempt({ config, session: async () => ({ session }) })({
-				task: TASK,
-				config: {
-					id: "leanpi-jev",
-					label: "LeanPi + JEV",
-					adapter: "leanpi",
-					vendor: null,
-					jev: "enabled",
-					executor_model: "qwen3-coder-480b-a35b",
-					reviewer_model: null,
-					features: [],
-					owner_gated: false,
-					subscription: false,
-					budget_usd: 0,
-				},
-				workspace,
-				session_id: "session-2",
-				telemetry_task_id: "clone-me@leanpi-jev",
-				telemetry_path: join(root, "run", "telemetry.jsonl"),
-			}),
-		).rejects.toThrow(/produced no contract/);
+		const session = {
+			setModel: async () => undefined,
+			prompt: async () => undefined,
+			modelRegistry: { find: () => ({ id: "x" }) },
+			messages: [
+				{ role: "assistant", usage: { input: 1200, cacheRead: 400, output: 60, reasoning: 0 }, content: [{ type: "toolCall" }, { type: "text" }] },
+				{ role: "assistant", usage: { input: 1300, cacheRead: 800, output: 40, reasoning: 0 }, content: [{ type: "toolCall" }] },
+			],
+		} as unknown as AgentSession;
+		const result = await leanPiAttempt({ config, session: async () => ({ session }) })({
+			task: TASK,
+			config: {
+				id: "leanpi-jev",
+				label: "LeanPi + JEV",
+				adapter: "leanpi",
+				vendor: null,
+				jev: "enabled",
+				executor_model: "qwen3-coder-480b-a35b",
+				reviewer_model: null,
+				features: [],
+				owner_gated: false,
+				subscription: false,
+				budget_usd: 0,
+			},
+			workspace,
+			session_id: "session-2",
+			telemetry_task_id: "clone-me@leanpi-jev",
+			telemetry_path: storePath,
+		});
+		expect(result.note).toContain("no contract");
+		const record = JSON.parse(readFileSync(storePath, "utf8").trim()) as {
+			usage: { input_tokens: number; cached_input_tokens: number; output_tokens: number };
+			execution: { tool_calls: number };
+			result: { success: boolean; proof_gate: string };
+		};
+		expect(record.usage).toMatchObject({ input_tokens: 2500, cached_input_tokens: 1200, output_tokens: 100 });
+		expect(record.execution.tool_calls).toBe(2);
+		// The turn returning is never a success claim; the held-out golden decides.
+		expect(record.result.success).toBe(false);
+		expect(record.result.proof_gate).toBe("not_run");
 	});
 });

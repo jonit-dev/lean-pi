@@ -16,6 +16,6 @@ golden:
   files:
     - test.js
   command: "npx ava test.js"
-  validated_at: null
+  validated_at: "2026-09-19"
 notes: >
   One-file JavaScript library; the upstream fix added the duplicate-slug case to the same test.js the golden runs.

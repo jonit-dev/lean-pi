@@ -10,12 +10,12 @@ source:
 categories:
   - test-creation
 setup:
-  - python -m pip install -e . pytest
+  - python3 -m venv .venv && .venv/bin/python -m pip install -q -e . pytest
 golden:
   kind: upstream-test
   files:
     - tests/test_basic.py
-  command: "python -m pytest tests/test_basic.py -q"
-  validated_at: null
+  command: ".venv/bin/python -m pytest tests/test_basic.py -q"
+  validated_at: "2026-09-19"
 notes: >
-  Python project: the acceptance evidence for the fix is the case added to tests/test_basic.py.
+  Python project: the acceptance evidence for the fix is the case added to tests/test_basic.py. The venv keeps the install off the system interpreter, which has no pip.

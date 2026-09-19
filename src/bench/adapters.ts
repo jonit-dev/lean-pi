@@ -25,6 +25,7 @@
  * lane entry's (`bench/cli.ts`, which may import the package entry) so the bench
  * module itself stays free of the barrel.
  */
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -183,15 +184,43 @@ export function leanPiAttempt(options: LeanPiAttemptOptions): BenchAttemptExecut
 		const config = configForRow(options.config, attempt.config);
 		const booted = await options.session(attempt, config);
 		const collector = createRunCollector({ taskId: attempt.telemetry_task_id, sessionId: attempt.session_id });
+		const started = Date.now();
 		const context = await runTurn(
 			{ text: attempt.task.prompt },
 			{ config, cwd: attempt.workspace, session: booted.session, registry: booted.session.modelRegistry },
 		);
+		const wallMs = Date.now() - started;
 		if (!context.contract) {
-			throw new BenchError(
-				`the LeanPi turn for task "${attempt.task.id}" produced no contract, so no §52 record was written; the executor lane (PRD-007) registers the lane that compiles one`,
-				"telemetry-join",
-			);
+			// PRD-007's ownership rule: with native executor roles Pi's own agent
+			// loop is the executor, so no lane compiles a contract. The turn still
+			// ran under LeanPi's prefix, tool surface and permission guard, so the
+			// attempt is recorded from what the session did — and claims nothing,
+			// exactly as the contract path does without a §8 ladder verdict.
+			const tokens = messageTokens(booted.session);
+			appendedRecord(attempt, config, {
+				backend: context.modelRef.backend,
+				model: context.modelRef.model,
+				calls: tokens.input + tokens.output > 0 ? 1 : 0,
+				usage: {
+					input_tokens: tokens.input,
+					cached_input_tokens: tokens.cached,
+					output_tokens: tokens.output,
+					reasoning_tokens: tokens.reasoning,
+					jev_tokens: 0,
+					local_gpu_seconds: 0,
+					external_harness_calls: 0,
+					subscription_usage: 0,
+				},
+				wallMs,
+				toolCalls: tokens.toolCalls,
+				result: { verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: false },
+			});
+			return {
+				extensions: ["leanpi"],
+				operator: "leanpi",
+				subscription_usage: 0,
+				note: "native executor roles: Pi's loop ran the turn under LeanPi's prefix and tools, so no contract was compiled and no success is claimed",
+			};
 		}
 		const verdict = await (options.verdict ?? verdictFromVerification)(context, attempt);
 		emitRunTelemetry(collector, context.contract, verdict, {
@@ -414,6 +443,179 @@ export function externalAttempt(options: ExternalAttemptOptions): BenchAttemptEx
 }
 
 // ---------------------------------------------------------------------------
+// omp (oh-my-pi) — the harness LeanPi is measured against
+// ---------------------------------------------------------------------------
+
+/** The omp CLI, driven non-interactively. */
+export const OMP_COMMAND_DEFAULT = "omp";
+/** Per-attempt ceiling for one omp turn; `bench.ompTimeoutMs` overrides it. */
+export const OMP_TIMEOUT_MS_DEFAULT = 2_700_000;
+
+/** What omp's `--mode json` stream reports about a finished turn. */
+export interface OmpTurn {
+	input: number;
+	cached: number;
+	output: number;
+	toolCalls: number;
+	/** omp's own priced cost, kept for the cross-check against this harness's rate card. */
+	reportedCost: number;
+	assistantMessages: number;
+	/** `true` when the stream carried omp's terminal `agent_end`; `false` for a killed turn. */
+	terminal: boolean;
+}
+
+/** A JSON value that is an object, or null. The one narrowing this parser needs. */
+function objectOf(value: unknown): Record<string, unknown> | null {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function numberAt(record: Record<string, unknown>, key: string): number {
+	const value = record[key];
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Fold omp's newline-delimited JSON stream into one turn's numbers.
+ *
+ * The terminal `agent_end` event carries the whole message list and is used
+ * when present. A turn killed at the attempt ceiling never emits it, so the
+ * fallback is the streamed `message_end` events — one per completed message,
+ * each carrying that message's final usage. The `message_start` events are
+ * always skipped: they repeat the same message with a zeroed usage block.
+ */
+export function parseOmpStream(stdout: string): OmpTurn | null {
+	let finalMessages: unknown[] | null = null;
+	const streamed: unknown[] = [];
+	for (const line of stdout.split("\n")) {
+		if (!line.startsWith("{")) continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		const event = objectOf(parsed);
+		if (event === null) continue;
+		if (event.type === "agent_end" && Array.isArray(event.messages)) finalMessages = event.messages;
+		else if (event.type === "message_end" && event.message !== undefined) streamed.push(event.message);
+	}
+	const turn: OmpTurn = { input: 0, cached: 0, output: 0, toolCalls: 0, reportedCost: 0, assistantMessages: 0, terminal: finalMessages !== null };
+	for (const entry of finalMessages ?? streamed) {
+		const message = objectOf(entry);
+		if (message === null || message.role !== "assistant") continue;
+		turn.assistantMessages += 1;
+		const usage = objectOf(message.usage);
+		if (usage !== null) {
+			turn.input += numberAt(usage, "input");
+			turn.output += numberAt(usage, "output");
+			turn.cached += numberAt(usage, "cacheRead");
+			const cost = objectOf(usage.cost);
+			if (cost !== null) turn.reportedCost += numberAt(cost, "total");
+		}
+		if (Array.isArray(message.content)) {
+			for (const part of message.content) {
+				const content = objectOf(part);
+				if (content !== null && content.type === "toolCall") turn.toolCalls += 1;
+			}
+		}
+	}
+	return turn.terminal || turn.assistantMessages > 0 ? turn : null;
+}
+
+export interface OmpAttemptOptions {
+	config: LeanPiConfig;
+	env?: NodeJS.ProcessEnv;
+	/** Test seam / override for the CLI name. */
+	command?: string;
+	timeoutMs?: number;
+}
+
+/**
+ * One omp turn in the task's workspace, priced from the *same* rate card the
+ * LeanPi row bills against so the two arms are comparable: omp's own priced
+ * cost is recorded alongside as the cross-check, never as the measured value.
+ *
+ * `--auto-approve` is omp's equivalent of the permissive permission profile the
+ * LeanPi row runs under; without it a headless turn cannot edit a file and the
+ * comparison would measure approval prompts rather than harnesses.
+ */
+export function ompAttempt(options: OmpAttemptOptions): BenchAttemptExecutor {
+	return async (attempt: BenchAttempt): Promise<BenchAttemptResult> => {
+		const command = options.command ?? OMP_COMMAND_DEFAULT;
+		const backend = options.config.models.balanced?.backend ?? Object.keys(options.config.backends)[0];
+		if (backend === undefined) {
+			throw new BenchError(`config "${attempt.config.id}" needs a backend in leanpi.config.yaml to price omp's tokens against`, "config");
+		}
+		const started = Date.now();
+		const run = spawnSync(
+			command,
+			[
+				"--print",
+				"--mode",
+				"json",
+				"--no-session",
+				"--auto-approve",
+				"--model",
+				attempt.config.executor_model,
+				"--cwd",
+				attempt.workspace,
+				attempt.task.prompt,
+			],
+			{
+				cwd: attempt.workspace,
+				encoding: "utf8",
+				env: options.env ?? process.env,
+				timeout: options.timeoutMs ?? timeoutOf(options.config, "ompTimeoutMs", OMP_TIMEOUT_MS_DEFAULT),
+				maxBuffer: 256 * 1024 * 1024,
+			},
+		);
+		const wallMs = Date.now() - started;
+		if (run.error && "code" in run.error && run.error.code === "ENOENT") {
+			throw new BenchError(`the omp baseline could not start: "${command}" is not on PATH. Install it before running this row.`, "adapter");
+		}
+		const turn = parseOmpStream(run.stdout ?? "");
+		if (turn === null) {
+			const tail = `${run.stderr ?? ""}`.trim().split("\n").slice(-3).join(" ");
+			throw new BenchError(
+				`omp produced no message at all for task "${attempt.task.id}" (exit ${run.status ?? "signal"}): ${tail || "no diagnostic"}`,
+				"adapter",
+			);
+		}
+		// A turn killed at the ceiling is an attempt, not a broken run: its tokens
+		// are spent and its workspace is judged by the held-out golden like any
+		// other. Only a turn that never produced a message is an adapter failure.
+		const returned = run.status === 0 && turn.terminal;
+		appendedRecord(attempt, options.config, {
+			backend,
+			model: attempt.config.executor_model,
+			calls: turn.assistantMessages,
+			usage: {
+				input_tokens: turn.input,
+				cached_input_tokens: turn.cached,
+				output_tokens: turn.output,
+				reasoning_tokens: 0,
+				jev_tokens: 0,
+				local_gpu_seconds: 0,
+				external_harness_calls: 0,
+				subscription_usage: 0,
+			},
+			wallMs,
+			toolCalls: turn.toolCalls,
+			// omp claims nothing beyond "the turn returned"; the held-out golden decides.
+			result: { verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: returned },
+		});
+		return {
+			extensions: ["omp"],
+			operator: "omp",
+			subscription_usage: 0,
+			note: `omp priced this turn at $${turn.reportedCost.toFixed(6)} over ${turn.assistantMessages} assistant message(s)${
+				turn.terminal ? "" : `; the turn was killed at the ${Math.round((options.timeoutMs ?? timeoutOf(options.config, "ompTimeoutMs", OMP_TIMEOUT_MS_DEFAULT)) / 60_000)}-minute attempt ceiling`
+			}${returned || !turn.terminal ? "" : `; the CLI exited ${run.status ?? "on a signal"}`}`,
+		};
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Selection
 // ---------------------------------------------------------------------------
 
@@ -439,6 +641,7 @@ export function attemptExecutorFor(row: BenchConfigRow, deps: AdapterDeps): Benc
 		return leanPiAttempt({ config: deps.config, session: deps.session });
 	}
 	if (row.adapter === "stock-pi") return stockPiAttempt({ config: deps.config, env: deps.env, agentDir: deps.agentDir });
+	if (row.adapter === "omp") return ompAttempt({ config: deps.config, env: deps.env });
 	return externalAttempt({ config: deps.config, env: deps.env, ...(deps.spawn ? { spawn: deps.spawn } : {}) });
 }
 
