@@ -1,0 +1,133 @@
+# PRD-002 — JEV Control Plane
+
+**Status:** NOT STARTED
+**Complexity:** 5 (HIGH)
+**Owner:** joao
+**Depends on:** PRD-001
+
+Risk override: promoted 5 → HIGH. Two security boundaries live here: outbound JEV requests are a data-egress boundary (§48 requires that secrets never leave the machine in `metadata-only`/`redacted` modes) and the JEV API key is a stored credential. Both need evidence beyond the MEDIUM process.
+
+## Context
+
+**Covers:** FR-010, FR-011, FR-020; ROADMAP §5, §48, §49, §50, §51 (JEV).
+
+Current behaviour: none. The repository contains only `docs/PRDs/v1/ROADMAP.md`; PRD-001 creates the package, the config loader and the session entry point this PRD extends. Every path named here is created by this PRD's phases unless attributed to PRD-001.
+
+Files inspected: `docs/PRDs/v1/ROADMAP.md` §5 (JEV accepts shared state plus atomic typed questions and returns `Choice`, `Score` or `Noul` rather than prose; multiple questions share one request; Jev 1.13 costs $0.042 per million input tokens with free output), §48 (project trust, secrets must not enter LLM context, JEV egress configurable as `enabled` / `disabled` / `metadata-only` / `redacted`, complete-local-privacy projects must be able to disable JEV), §49 (JEV must never be a single point of failure — every decision degrades to a deterministic heuristic and execution continues), §50 (confidence is used asymmetrically; high-consequence actions need higher thresholds), §51 JEV FR block.
+
+LeanPi's whole cost thesis rests on a cheap semantic control plane. This PRD builds the plane itself — transport, batching, typed results, the decision-site registry, the decision log, privacy, credentials and failure behaviour. It deliberately owns **no semantic decision**: the PRD gate, complexity, skill/MCP disclosure, proof sufficiency, review level and the rest are registered by their owning PRDs against the registry defined here.
+
+## Solution
+
+`src/jev/client.ts` exposes one function, `ask(siteId, questions, state)`, which posts the shared state plus every question in the batch as a single JEV request and returns a discriminated result array (`Choice` / `Score` / `Noul`) in question order. One request per decision point, never one per question (FR-011, §5). JEV is constructed during PRD-001's `activate()` and handed to lanes by reference; it is never registered as a tool, so no executor model can call it (FR-010). The baseline tool surface from PRD-001 stays exactly the five entries in §44.
+
+**Decision-site registry** (`src/jev/registry.ts`) is the unifying mechanism every other PRD plugs into. A site is declared once at startup with `{ id, questions, returnType, confidenceThreshold, fallback, telemetryTag }`. `ask()` refuses an unregistered id, and registration refuses a site whose `fallback` is null — §49 is enforced structurally rather than remembered per call site. Enumerating the registry is therefore a complete, machine-checkable inventory of LeanPi's semantic surface.
+
+**Decision log** (`src/jev/log.ts`) appends one JSONL row per resolved site: site id, telemetry tag, JEV model version, typed answer, confidence, `fallbackUsed`, token counts, timestamp (FR-020). PRD-015 reads this file for its telemetry record and PRD-021 computes §56 per-site accuracy from it; neither re-instruments the call sites. PRD-016's `/route` reads the current run's rows to show which sites fired and which fell back.
+
+**Privacy (§48).** `src/jev/privacy.ts` applies the configured mode at one choke point inside `ask()`, so no call site can bypass it. `enabled` sends the payload as built; `metadata-only` strips all file and command content, sending only counts, kinds, extensions and path hashes; `redacted` sends content with secret-shaped tokens (API keys, bearer tokens, private-key blocks, `.env` assignment values) replaced by `[REDACTED]`; `disabled` performs no network call at all and every site resolves through its fallback. Redaction runs on the serialized payload immediately before transmission, and the same redactor is applied to the decision log so a secret cannot leak through the record either.
+
+**Credentials.** The JEV API key is a first-run feature, not an environment-variable afterthought. Resolution order is explicit config (`jev.apiKey` slot declared by PRD-001) > stored credential > `JEV_API_KEY` environment variable > not configured. `src/jev/credentials.ts` persists the key in the user credential/config store outside the repository (`$XDG_CONFIG_HOME/leanpi/credentials.json`, mode `0600`, falling back to `$HOME/.config/...`); it is never written into project files, never committed, never echoed into LLM context, and always redacted in logs, telemetry and decision records. The first session without a resolved key prompts once; declining is a first-class path that leaves the harness fully working on deterministic fallback with a message naming the degraded capabilities. An invalid key produces one clear error and no retry loop.
+
+**Command surface: `/jev`** (single surface form, subcommands — there is no `/jev-setup` alias). Behaviour is defined here; registration goes through PRD-016's command registry.
+
+| Command | Behaviour |
+|---|---|
+| `/jev` | Status: configured or not, key source (`config` \| `credential store` \| `env`), privacy mode, JEV model version in use, decision-site fallback count for the session, service reachability. This is the `jevStatus` field PRD-016 renders in `/doctor` and `/status`. |
+| `/jev setup` | Interactive prompt capturing the key, validating it with one cheap live typed question, persisting it in the credential store. |
+| `/jev key set` \| `/jev key clear` | Rotate or remove the stored key; `clear` leaves the harness fully working on deterministic fallback. |
+| `/jev mode <enabled\|disabled\|metadata-only\|redacted>` | Switch privacy mode at runtime; the next request reflects it. |
+| `/jev test` | One round trip answering a trivial typed question; prints latency and cost. |
+
+**Confidence policy (§50).** `src/jev/confidence.ts` exports `accept(result, consequence)` — one reusable helper, not per-site copies. Thresholds rise with consequence class (`low` / `normal` / `high`); a rejected result means the caller takes its conservative branch, which is the same branch its deterministic fallback produces. PRD-004, PRD-005 and PRD-010 consume it.
+
+**Consumer flow:** user turn → PRD-001 `src/commands/session.ts` `runTurn()` → a lane calls `jev.ask(siteId, …)` → registry validates the site → privacy filter → HTTP request (or fallback) → typed results + confidence gate → decision log row → lane behaviour changes → user sees the differing outcome, and `/jev` reports the run's fallback count.
+
+**Restated non-goals (§58):** no generative router replaces JEV — decisions stay typed classifications, not prose completions; JEV is never required for basic operation; no correctness claim is made without evidence; no vendor limit is bypassed; no cloud model is mandatory, and a fully local project can run with `privacy: disabled` and lose only optimization quality.
+
+**Risks.** (1) A leaked secret is unrecoverable, so redaction is a single choke point with an artifact-scanning AC rather than a per-call-site convention. (2) A site added later without a fallback would reintroduce the single point of failure §49 forbids — hence registration-time enforcement. (3) A key-validation retry loop would burn quota and block the user; validation is exactly one attempt.
+
+## External Skill Dependencies
+
+None. JEV is a hosted typed-classification service, not an installed skill or plugin; this PRD reads nothing from the global skill roots. The skill/plugin registry that indexes those roots is PRD-005, and the Ponytail bundle vendored by PRD-001 is unrelated to this control plane.
+
+## JEV Decision Sites
+
+None — PRD-002 owns the registry, transport, privacy, credentials and failure policy; every semantic decision site is registered by its owning PRD (PRD-004, PRD-005, PRD-006, PRD-007, PRD-009, PRD-010, PRD-011, PRD-012, PRD-013, PRD-014, PRD-018, PRD-019, PRD-020, PRD-023). The registry row each of those PRDs must supply is exactly:
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable decision-site identifier, unique across LeanPi |
+| `questions` | The atomic typed question set sent as one batch |
+| `returnType` | `Choice` \| `Score` \| `Noul` per question |
+| `confidenceThreshold` | Consequence class consumed by `accept()` (§50) |
+| `fallback` | Deterministic function used when JEV is off, unreachable, or below threshold — MUST be non-null |
+| `telemetryTag` | Key under which PRD-015 records the decision and PRD-021 measures per-site accuracy |
+
+## Acceptance Criteria
+
+- [ ] AC-1 [local; actor: agent]: A decision site asking three atomic questions (one `Choice`, one `Score`, one `Noul`) resolves them against a stub JEV endpoint in exactly one HTTP request carrying the shared state once, and the caller receives three typed results in question order whose discriminants match the declared return types. — Evidence: pending.
+- [ ] AC-2 [local; actor: agent]: JEV is not reachable by the executor: in a live session the tool list offered to the model contains no `jev*` entry (still exactly PRD-001's five baseline tools), and a model-issued tool call named `jev` is rejected as an unknown tool without any outbound JEV request. — Evidence: pending.
+- [ ] AC-3 [local; actor: agent]: Enumerating the decision-site registry in a booted session lists every registered site with its id, question set, return type, confidence threshold and telemetry tag, and every listed site has a non-null fallback; registering a site with a null fallback aborts startup naming the site id, and `ask()` with an unregistered id throws without issuing a request. — Evidence: pending.
+- [ ] AC-4 [local; actor: agent]: After a fixture task that resolves two decision sites, the decision log contains exactly two rows, each carrying site id, telemetry tag, JEV model version, typed answer, confidence, `fallbackUsed` and token counts — readable by a consumer without re-running the session. — Evidence: pending.
+- [ ] AC-5 [local; actor: agent]: On a fresh profile (empty config/credential dir) `/jev setup` prompts once, validates the key with a single live typed question, and persists it outside the repository — `git status` stays clean and the credential file is mode `0600`; `/jev` then reports configured, source `credential store`, reachable, and the JEV model version. With both a stored credential and `JEV_API_KEY` present the stored credential is used, and an explicit `jev.apiKey` config value overrides both. — Evidence: pending.
+- [ ] AC-6 [local; actor: agent]: Declining the first-run prompt completes a fixture task end to end through heuristic fallback: no hard failure, no blocked turn, and `/jev` reports not configured and names the degraded capabilities. An invalid key produces one clear error after exactly one validation attempt — the stub records a single request, not a retry loop. — Evidence: pending.
+- [ ] AC-7 [local; actor: agent]: `/jev key clear` removes the stored credential, and the same fixture task still completes via deterministic fallback afterwards; `/jev` then reports not configured with a session fallback count greater than zero. — Evidence: pending.
+- [ ] AC-8 [local; actor: agent]: In `metadata-only` mode, with a workspace containing `API_KEY=sk-live-…` in a tracked file, the payload captured at the stub contains no file contents and no occurrence of the secret substring — only counts, kinds, extensions and path hashes. — Evidence: pending.
+- [ ] AC-9 [local; actor: agent]: In `redacted` mode the captured payload contains the file's prose content but every secret-shaped token replaced by `[REDACTED]`, and `/jev mode metadata-only` at runtime makes the next request follow AC-8's shape without restarting the session. — Evidence: pending.
+- [ ] AC-10 [local; actor: agent]: After a fixture task run with a configured key, scanning every produced artifact — session transcript, telemetry record, decision log and the artifact store — finds zero occurrences of the key literal; injecting the key into a log line makes the same scan fail, proving the scan is sensitive. — Evidence: pending.
+- [ ] AC-11 [local; actor: agent]: A decision changes observable behaviour and survives JEV loss: with the stub answering, a fixture site drives the session down branch A; with the stub returning 503 (mode `enabled`) the site's deterministic fallback drives it down branch B, the task still completes, and the log rows carry `fallbackUsed: true` with the failure reason. With mode `disabled` the stub records zero requests and the run matches the fallback outcome. — Evidence: pending.
+- [ ] AC-12 [local; actor: agent]: The asymmetric confidence helper changes outcomes by consequence class: a result at confidence 0.55 registered with `consequence: high` is rejected and the caller takes its conservative branch, while the same confidence with `consequence: low` is accepted — asserted through two registered fixture sites whose session-visible outcomes differ. — Evidence: pending.
+
+## Integration Ledger
+
+| Capability | Reachable consumer/trigger | Replaces / disposition | Evidence |
+|---|---|---|---|
+| Atomic typed JEV batching | any lane during `src/commands/session.ts` `runTurn()` (PRD-001) → `src/jev/client.ts` `ask()` (created in Phase 1) | New internal service; deliberately absent from PRD-001's executor tool registration | AC-1, AC-2 |
+| Decision-site registry | startup registration by every owning PRD → `src/jev/registry.ts` `registerSite()` / `listSites()` (created in Phase 2) | New; the single mechanism replacing ad-hoc per-lane JEV calls and per-lane fallback conventions | AC-3, AC-11 |
+| Decision log | end of each resolved site → `src/jev/log.ts` `appendDecision()` writing `.leanpi/decisions.jsonl` (created in Phase 2) | New; PRD-015 telemetry and PRD-021 §56 metrics consume this file instead of re-instrumenting call sites | AC-4 |
+| JEV credentials and `/jev` command | user runs `/jev`, `/jev setup`, `/jev key set\|clear`, `/jev mode`, `/jev test` → `src/commands/jev.ts` → `src/jev/credentials.ts` (created in Phase 3), registered through PRD-016's command registry | New; replaces an implicit `JEV_API_KEY`-only path, which remains supported as the third resolution step. Exposes `jevStatus` for PRD-016's `/doctor` and `/status` | AC-5, AC-6, AC-7, AC-9 |
+| Privacy filter on outbound payloads | every `ask()` call → `src/jev/privacy.ts` `applyPrivacy()` (created in Phase 4) | New single choke point; no call site may serialize its own payload | AC-8, AC-9, AC-10 |
+| Deterministic fallback and confidence policy | `ask()` failure/off/below-threshold path → registry `fallback` + `src/jev/confidence.ts` `accept()` (created in Phase 5) | New; §49/§50 policy lives in one helper rather than per-lane copies | AC-11, AC-12 |
+
+## Execution Phases
+
+#### Phase 1: Typed batched client, unreachable from the executor
+**Status:** NOT STARTED
+**ACs:** AC-1, AC-2
+**Files:** `src/jev/types.ts` (`Question`, `Choice`, `Score`, `Noul`, `JevResult` union); `src/jev/client.ts` (`ask()`, transport, error mapping); `src/index.ts` (construct the client in `activate()` and hand it to lanes by reference — PRD-001 file, additive edit); `tests/jev-client.spec.ts`.
+**Implementation:** `ask(siteId, questions, state)` serializes shared state once plus the question batch, POSTs to the configured JEV endpoint, and maps each answer back onto its question as a discriminated union member; a type mismatch between declared and returned kind is an error, not a silent cast. Non-2xx and transport errors surface as a typed `JevUnavailable` for Phase 5 to handle. Construction happens inside PRD-001's `activate()`, and the client is passed to lanes as a value — no tool registration, no global.
+**Verification:** E1 — `npx vitest run tests/jev-client.spec.ts`: a stub JEV server asserts exactly one received request containing one state object and three questions, and the spec asserts the three discriminants and their ordering (AC-1); a live session asserts the model-facing tool list equals PRD-001's five baseline entries and that a fabricated `jev` tool call is rejected with zero stub requests (AC-2, which is its own negative control — the assertion fails if JEV were registered). Distinct risks covered: per-question request fan-out, untyped result leakage, JEV exposed to the executor.
+**Checkpoint:** pending
+
+#### Phase 2: Decision-site registry and per-site decision log
+**Status:** NOT STARTED
+**ACs:** AC-3, AC-4
+**Files:** `src/jev/registry.ts` (`registerSite()`, `listSites()`, id uniqueness, null-fallback rejection); `src/jev/log.ts` (`appendDecision()`, JSONL writer, reader used by tests and PRD-015); `src/jev/client.ts` (route `ask()` through the registry and emit a log row); `tests/jev-registry.spec.ts`.
+**Implementation:** Registration is startup-time and total: id must be unique, `fallback` must be a function, `returnType` must match the questions, `telemetryTag` must be present. `ask()` looks the site up first and throws for unknown ids. Every resolved site — JEV-answered or fallback — writes exactly one row to `.leanpi/decisions.jsonl` with the fields listed in Solution; the row is written after the result is produced so `fallbackUsed` is accurate. Two fixture sites registered in the test harness stand in for real lanes until their PRDs land.
+**Verification:** E2 — `npx vitest run tests/jev-registry.spec.ts`: enumerate the registry of a booted session and assert every field plus non-null fallback on each site, then assert startup aborts naming the site id when a null-fallback site is registered and that `ask()` on an unknown id issues no request (AC-3); run a fixture task resolving two sites and parse the log asserting two rows with all required fields (AC-4). Distinct risks covered: a site shipping without a fallback, silent unregistered calls, telemetry rows missing the fields PRD-015/PRD-021 need.
+**Checkpoint:** pending
+
+#### Phase 3: Credentials and the `/jev` command surface
+**Status:** NOT STARTED
+**ACs:** AC-5, AC-6, AC-7
+**Files:** `src/jev/credentials.ts` (resolution order, store read/write at `$XDG_CONFIG_HOME/leanpi/credentials.json` mode `0600`, clear); `src/commands/jev.ts` (`/jev`, `setup`, `key set|clear`, `mode`, `test`, and the `jevStatus` object PRD-016 renders); `src/jev/client.ts` (consume the resolved key, single-attempt validation); `tests/jev-credentials.spec.ts`.
+**Implementation:** Resolution order explicit config > credential store > `JEV_API_KEY` > not configured, computed once per session and recomputed after `key set`/`key clear`. First run without a resolved key prompts once; the answer is either a key (validated with one cheap typed question, then persisted) or a decline, which is recorded so the user is not prompted every turn. Validation is exactly one attempt — an invalid key yields one actionable error and the session continues unconfigured. `jevStatus` returns `{ configured, source, mode, modelVersion, fallbackCount, reachable }`, with the key itself never included. No absolute machine paths in code; the store location comes from the environment with a documented default.
+**Verification:** E3 — `npx vitest run tests/jev-credentials.spec.ts`: drive the real `/jev` command handlers against a temp `XDG_CONFIG_HOME` and a stub JEV server — `setup` on an empty profile asserts one prompt, one validation request, file mode `0600`, a clean `git status` in the fixture repo, and the subsequent `/jev` status fields; precedence cases assert which source wins (AC-5); decline and invalid-key cases assert task completion, the degraded-capability message, and a single recorded validation request (AC-6); `key clear` then asserts the fixture task still completes and status reports not configured with `fallbackCount > 0` (AC-7). Distinct risks covered: credential landing in the repository, prompt loop, retry loop on an invalid key, a missing key blocking work.
+**Checkpoint:** pending
+
+#### Phase 4: Privacy modes and secret non-egress
+**Status:** NOT STARTED
+**ACs:** AC-8, AC-9, AC-10
+**Files:** `src/jev/privacy.ts` (`applyPrivacy()`, secret-shape redactor shared with the log writer); `src/jev/client.ts` (apply at the single pre-transmission choke point); `src/jev/log.ts` (redact rows through the same function); `src/commands/jev.ts` (`/jev mode` runtime switch); `tests/jev-privacy.spec.ts`.
+**Implementation:** One function transforms the payload by mode before transmission; `disabled` short-circuits before any socket is opened. The redactor matches API-key, bearer-token, private-key-block and `.env` assignment shapes and is applied to both outbound payloads and decision-log rows, so there is one definition of "secret" rather than two that can drift. `metadata-only` replaces content with counts, kinds, extensions and salted path hashes. Mode changes take effect on the next `ask()` without a session restart.
+**Verification:** E4 — `npx vitest run tests/jev-privacy.spec.ts`: a fixture workspace containing a live-shaped secret drives one decision per mode; the stub's captured raw request bodies are asserted for absence of the secret substring and of file contents (AC-8), for redacted-but-present prose plus a runtime `/jev mode` switch changing the next payload's shape (AC-9). AC-10 scans the transcript, telemetry record, decision log and artifact store for the key literal after a configured run, then re-runs the scan with the key deliberately injected into a log line to prove the scan detects it. Distinct risks covered: a call site bypassing the filter, redactor/logger drift, mode switch requiring a restart, a scan that would pass vacuously.
+**Checkpoint:** pending
+
+#### Phase 5: Deterministic fallback and asymmetric confidence
+**Status:** NOT STARTED
+**ACs:** AC-11, AC-12
+**Files:** `src/jev/client.ts` (catch `JevUnavailable` and below-threshold results, invoke the site fallback, record the reason); `src/jev/confidence.ts` (`accept(result, consequence)`, threshold table for `low` / `normal` / `high`); `tests/jev-fallback.spec.ts`.
+**Implementation:** Any of unreachable service, `disabled` mode, missing key, or a result failing `accept()` resolves the site through its registered fallback, with the reason recorded on the log row. Execution never aborts for a JEV failure (§49). `accept()` holds the only threshold table; consequence class comes from the site registration, so raising the bar for a high-consequence decision is a one-line registry change, not a code change in the lane. Two fixture sites with visibly different branches make the policy observable rather than internal.
+**Verification:** E5 — `npx vitest run tests/jev-fallback.spec.ts`: one fixture site is exercised three ways — stub answering (branch A), stub returning 503 with mode `enabled` (branch B via fallback, task completes, `fallbackUsed: true` plus reason in the log), and mode `disabled` (zero stub requests, outcome matches the fallback branch) — asserting the session-visible outcome differs between A and B, which is also the negative control proving the decision is wired rather than decorative (AC-11); two sites at confidence 0.55 with `high` and `low` consequence assert opposite accept/reject outcomes and correspondingly different session behaviour (AC-12). Distinct risks covered: JEV becoming a single point of failure, a decision with no observable effect, a uniform confidence threshold silently applied to high-consequence actions.
+**Checkpoint:** pending

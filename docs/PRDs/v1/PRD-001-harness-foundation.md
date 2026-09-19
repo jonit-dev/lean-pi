@@ -1,0 +1,106 @@
+# PRD-001 — Harness Foundation
+
+**Status:** NOT STARTED
+**Complexity:** 5 (MEDIUM)
+**Owner:** joao
+**Depends on:** None
+
+Risk override: none — no security boundary, no destructive migration, no compatibility surface; the repository is greenfield.
+
+## Context
+
+**Covers:** FR-001, FR-002, FR-040, FR-041, FR-042, FR-043, FR-044, FR-045; ROADMAP §5, §6.1, §6.6, §22, §23, §27, §44, §51 (Core Orchestration, Models).
+
+Current behaviour: none. `/home/joao/projects/lean-pi` contains exactly one file, `docs/PRDs/v1/ROADMAP.md`. There is no `package.json`, no `src/`, no test runner, no CI. Every path named in this PRD is created by its phases.
+
+Files inspected: `docs/PRDs/v1/ROADMAP.md` §5 (Pi is extensible through TypeScript extensions, custom providers, an SDK and session management), §6.1 (Ponytail is a versioned static instruction prefix, not a discoverable skill), §6.6 and §27 (logical model roles map onto backends in configuration), §22 (STATIC / SEMI-STABLE / VOLATILE prompt layout), §23 (a *model* is not an *execution backend*), §44 (baseline tool surface `read`/`search`/`edit`/`write`/`execute`, session features), §51 Core Orchestration and Models FR blocks. Also inspected: the installed Ponytail plugin bundle at `/home/joao/.claude/plugins/cache/ponytail/ponytail/4.9.0/skills/ponytail/SKILL.md` (6637 bytes, sha256 `1316a2f3f95741d2300b116fe0c2d81ce4a9568656ed0a62643f54aaf09957f2`), which is the upstream source of the instruction text this PRD embeds.
+
+This PRD is the floor every other LeanPi PRD stands on. It owns the npm package, the TypeScript toolchain, the Pi extension entry point, the shared types (`ModelRole`, `BackendRef`, `LeanPiConfig`), the role→backend resolver, and the versioned Ponytail prefix. It owns no routing intelligence: choosing *which* role runs a task is PRD-004 and PRD-020, backend fallback and external harness workers are PRD-008.
+
+## Solution
+
+Build LeanPi as a Pi extension package rather than a new harness (FR-001). Pi already supplies the agent loop, the session/fork/resume tree, provider plumbing and the baseline tool implementations; LeanPi contributes a bootstrap that registers itself, a config layer, and a static instruction prefix.
+
+**Consumer flow:** user runs `npx pi --extension ./dist/index.js` (or imports `createLeanPiSession()` from the package root) → `src/index.ts` `activate(pi)` → `loadConfig()` reads `leanpi.config.yaml` → `registerBaselineTools(pi)` exposes read/search/edit/write/execute → each user turn enters `src/commands/session.ts` `runTurn()`, whose executor request is prefixed by `buildStaticPrefix(config)` → the session behaves as a normal Pi session with LeanPi's prefix, roles and tools in place. `runTurn()` is the shared per-turn entry point every later lane (PRD-004 compiler, PRD-007 executor, PRD-011 reviewer) hooks into rather than each re-entering the extension.
+
+**Toolchain, chosen for the least machinery that works:**
+
+- `npm` with four scripts: `build` (`tsc -p tsconfig.json`), `typecheck` (`tsc --noEmit`), `test` (`vitest run`), `lint` (`oxlint src tests`).
+- `tsc` emits JavaScript directly — no bundler. A Pi extension loads a JS entry point; bundling buys nothing yet.
+- `oxlint` is zero-config and needs no `.eslintrc`, keeping the lint surface to one dev dependency.
+- `yaml` is the one runtime dependency: ROADMAP §27 and §8 document configuration and the execution contract as YAML, so the user-editable surface is YAML and the parser cannot come from the standard library.
+
+**Model roles (FR-041–FR-045).** `ModelRole = 'quick' | 'balanced' | 'strong' | 'specialist' | 'review_quick' | 'review_strong'`. Config maps each role to a `BackendRef { backend: string; model: string; kind: 'native' | 'harness' }`. `resolveRole(role)` returns the `BackendRef`; routing code never names a vendor. Because the map is per-role and resolution is per-call, a local self-hosted OpenAI-compatible endpoint and a metered API provider are usable in the *same* session with no reconfiguration (FR-040, FR-044, FR-045). Roles with no configured entry resolve to the nearest configured cheaper role, and `resolveRole` throws at load time — not at first call — when no role at all is configured.
+
+`BackendRef.kind` exists because ROADMAP §23 splits native model backends from external harness workers; PRD-008 consumes the discriminant. There is no backend *interface* here and no registry of one implementation: PRD-008 owns the worker abstraction when there are two implementations to abstract over.
+
+**Capability-indexed resolution.** When PRD-024's model capability catalog is present, `resolveRole()` resolves a role through it — binding the role to the cheapest catalogued model whose intelligence index clears the role's threshold — and falls back to the static `models:` mapping when the catalog is absent, stale, or unreachable. The static mapping in `leanpi.config.yaml` therefore stays authoritative for offline and local-only setups and remains the surface AC-3 and AC-4 assert. This PRD designs no catalog, no fetcher and no thresholds; it only keeps `resolveRole()` the single call site both paths pass through.
+
+**Credential slot (no secrets in the repository).** `LeanPiConfig` declares `jev.apiKey` as a *resolution slot*, not a stored value: `loadConfig()` accepts an explicit config value, otherwise leaves the slot unresolved for PRD-002's resolver (explicit config > stored credential in the user config/credential store > environment variable > not configured). `loadConfig()` never writes a credential into `leanpi.config.yaml`, never reads one from a project file other than an explicit user-supplied entry, and redacts any resolved value in its own error messages. The onboarding prompt, storage, validation and status field are PRD-002's.
+
+**Ponytail prefix (FR-002, §6.1) is vendored, not authored.** The instruction text already exists as an installed, versioned plugin (see *External Skill Dependencies*). `src/core/instructions/ponytail.md` is a pinned copy of that upstream file, accompanied by `src/core/instructions/ponytail.lock.json` recording `{ source, version, sha256, syncedAt }`. `scripts/sync-ponytail.mjs` refreshes the copy and rewrites the lock; it resolves the upstream file through a documented discovery order (`--source` flag → `LEANPI_PONYTAIL_SOURCE` → `$CLAUDE_PLUGIN_ROOT/cache/ponytail/ponytail/<version>/skills/ponytail/SKILL.md` → `$HOME/.claude/plugins/cache/ponytail/ponytail/<version>/skills/ponytail/SKILL.md`), so no absolute machine path is hard-coded in shipped code. Product code never reads the plugin directory at runtime — it reads the vendored copy, which keeps LeanPi working on a machine that has no Ponytail plugin installed.
+
+`src/core/instructions/prefix.ts` exports `PONYTAIL_VERSION` (mirroring the lock's `version`) and `buildStaticPrefix(config)`. The rendered prefix is byte-stable: it interpolates nothing task-dependent, so the same bytes head every executor request in a session and stay cacheable as the STATIC block of §22's layout. `config.instructions.ponytail: false` omits it. The vendored file is checked against an 8192-byte ceiling — upstream 4.9.0 is 6637 bytes, leaving headroom for the version marker while keeping "short enough to preserve prefix efficiency" (§6.1) a test rather than an aspiration.
+
+**Restated non-goals (§58) relevant here:** LeanPi trains no foundation model; it does not require cloud models — local/self-hosted backends are first class and a config with only local roles must work; it does not bypass vendor limits or copy vendor credentials; it exposes no capability blanket beyond the five baseline tools, and additional tooling is routed internally rather than permanently widening the model's tool surface (§44).
+
+**Risks.** (1) Pi's extension registration API shape is the one external unknown — Phase 1 exists to pin it against the real SDK before anything else is built on it. (2) A silently half-applied config would make every downstream PRD debug the wrong layer, so config validation fails the session start rather than warning. (3) A vendored copy can drift from upstream unnoticed; the lock file plus AC-8 make drift a test failure instead of a silent divergence.
+
+## External Skill Dependencies
+
+| Dependency | Verified path (discovery default, not hard-coded) | Version | How this PRD uses it |
+|---|---|---|---|
+| Ponytail instruction bundle (plugin) | `/home/joao/.claude/plugins/cache/ponytail/ponytail/4.9.0/skills/ponytail/SKILL.md` | 4.9.0, sha256 `1316a2f3f95741d2300b116fe0c2d81ce4a9568656ed0a62643f54aaf09957f2`, 6637 bytes | Source of truth for the FR-002 static instruction prefix. Vendored into `src/core/instructions/ponytail.md` at the pinned version by `scripts/sync-ponytail.mjs`; AC-8 asserts the embedded copy matches upstream. Sibling skills `ponytail-review`, `ponytail-audit`, `ponytail-debt` in the same plugin are **not** embedded — they stay ordinary discoverable skills indexed by PRD-005. |
+
+Global skill roots (`/home/joao/.claude/skills`, `/home/joao/.codex/skills`, plugin skill dirs, project-local `.claude/skills` / `.codex/skills`) are indexed by PRD-005, not by this PRD. This PRD reads exactly one file from one of them, at build/sync time only.
+
+## JEV Decision Sites
+
+None — PRD-001 owns no JEV decision site. It predates the control plane: its behaviour is deterministic configuration and static text. Every decision site is registered through the PRD-002 registry.
+
+## Acceptance Criteria
+
+- [ ] AC-1 [local; actor: agent]: Starting a Pi session with the built extension (`npm run build && npx pi --extension ./dist/index.js`) produces a session in which LeanPi is registered — the session reports the extension name `leanpi` and the package version, and a session started without the extension does not. Asserted by an integration spec driving the real bootstrap through the Pi SDK, not by importing `activate` in isolation. — Evidence: pending.
+- [ ] AC-2 [local; actor: agent]: In that session an executor turn can use all five baseline tools against a temp fixture repo: `write` creates `a.txt`, `search` finds its content, `read` returns it, `edit` changes one line, and `execute` runs a command that prints the edited bytes and exits 0. The tool list offered to the model contains exactly those five entries. — Evidence: pending.
+- [ ] AC-3 [local; actor: agent]: With a `leanpi.config.yaml` mapping `quick` to a local OpenAI-compatible endpoint and `strong` to a metered API provider, one session dispatches a call to each without reconfiguration: both stub endpoints record exactly one request, and the requests carry the distinct model ids from the config. — Evidence: pending.
+- [ ] AC-4 [local; actor: agent]: A config with an unknown role key, or a role whose backend is not defined, aborts session start with an error naming the offending config path; no partially-configured session object is returned and no backend request is made. — Evidence: pending.
+- [ ] AC-5 [local; actor: agent]: Every executor request in a session carries the Ponytail prefix: across two different tasks in the same session the captured request payloads begin with byte-identical prefix text containing the marker `ponytail@4.9.0`, where the version matches the exported `PONYTAIL_VERSION` and the lock file. — Evidence: pending.
+- [ ] AC-6 [local; actor: agent]: With `instructions.ponytail: false`, the captured executor request for the same task contains no Ponytail marker and no prefix text, while the rest of the request (tools, model, user content) is unchanged from the AC-5 capture. — Evidence: pending.
+- [ ] AC-7 [local; actor: agent]: The rendered static prefix is at most 8192 bytes; the check runs against the real vendored `ponytail.md` shipped in the package, so growing the file past the ceiling fails the suite. — Evidence: pending.
+- [ ] AC-8 [local; actor: agent]: The embedded prefix matches its upstream source at the pinned version: `node scripts/sync-ponytail.mjs --check` recomputes the sha256 of `src/core/instructions/ponytail.md`, compares it to `ponytail.lock.json`, and exits 0; mutating one byte of the vendored file makes it exit non-zero naming the mismatch. On a machine without the plugin installed the same command reports the source as unavailable and exits 0 in `--check` mode against the lock, and a session still boots with the vendored copy. — Evidence: pending.
+
+## Integration Ledger
+
+| Capability | Reachable consumer/trigger | Replaces / disposition | Evidence |
+|---|---|---|---|
+| LeanPi session bootstrap | `npx pi --extension ./dist/index.js` / `createLeanPiSession()` → `src/index.ts` `activate()` (created in Phase 1) | New — greenfield repository, no incumbent harness | AC-1 |
+| Baseline tool surface | executor turn in a LeanPi session → `src/core/tools.ts` `registerBaselineTools()` (created in Phase 1) | Delegates to Pi's built-in read/search/edit/write/execute rather than reimplementing them | AC-2 |
+| Role→backend resolution | bootstrap → `src/core/config.ts` `loadConfig()` + `src/core/roles.ts` `resolveRole()` (created in Phase 2) | New; the shared entry point every later PRD uses instead of naming vendors | AC-3, AC-4 |
+| Static Ponytail instruction prefix | every executor request → `src/core/instructions/prefix.ts` `buildStaticPrefix()` (created in Phase 3) | New; replaces the alternative of shipping Ponytail as a discoverable skill (§6.1 forbids it). Consumes the installed plugin as upstream source instead of re-authoring the text | AC-5, AC-6, AC-7 |
+| Ponytail vendor sync/pin | `npm run sync:ponytail` / `--check` in review → `scripts/sync-ponytail.mjs` + `src/core/instructions/ponytail.lock.json` (created in Phase 3) | New; the only link between the installed plugin and the repository copy | AC-8 |
+
+## Execution Phases
+
+#### Phase 1: Pi extension boots with the baseline tool surface
+**Status:** NOT STARTED
+**ACs:** AC-1, AC-2
+**Files:** `package.json`, `tsconfig.json`, `vitest.config.ts`, `.gitignore` (toolchain); `src/index.ts` (extension entry, `activate()`, `createLeanPiSession()`); `src/core/tools.ts` (baseline tool registration); `tests/bootstrap.spec.ts`.
+**Implementation:** Create the npm package with the four scripts and the `pi`/`vitest`/`typescript`/`oxlint`/`yaml` dependencies. Read Pi's extension and SDK documentation first and pin the actual registration signature — do not guess it. `activate(pi)` registers the extension name/version and calls `registerBaselineTools(pi)`, which wires Pi's existing read/search/edit/write/execute implementations and registers nothing else. `createLeanPiSession()` is the programmatic form of the same path so tests exercise the production entry point rather than a fixture. Any failure inside `activate` propagates; the extension never registers half of itself.
+**Verification:** E1 — `npm run build && npx vitest run tests/bootstrap.spec.ts`: the spec boots a session through the real SDK, asserts the registered extension name/version (AC-1) and drives all five tools against a `mkdtemp` fixture repo asserting the edited bytes and exit 0 (AC-2). Negative control for AC-1: the same spec boots a session without the extension and asserts LeanPi is absent, so the assertion cannot pass with registration bypassed. Distinct risks covered: Pi API shape mismatch, tool surface wider or narrower than the five baseline entries.
+**Checkpoint:** pending
+
+#### Phase 2: Config loader and role→backend resolution
+**Status:** NOT STARTED
+**ACs:** AC-3, AC-4
+**Files:** `src/core/types.ts` (`ModelRole`, `BackendRef`, `LeanPiConfig`); `src/core/config.ts` (`loadConfig()`, validation); `src/core/roles.ts` (`resolveRole()`); `src/index.ts` (call `loadConfig` during `activate`); `tests/config.spec.ts`.
+**Implementation:** `loadConfig(cwd)` reads `leanpi.config.yaml`, parses with `yaml`, and validates: every key under `models` is a `ModelRole`; every entry has `backend` and `model`; every referenced backend exists under `backends` with a `kind` of `native` or `harness`. Validation errors carry the dotted config path and throw before any session object exists. `resolveRole(config, role)` returns the `BackendRef`, falling back to the nearest configured cheaper role for unconfigured ones and throwing at load time if `models` is empty. Local/self-hosted backends are ordinary `native` entries with a `baseUrl` — no separate code path, so a config with only local roles is fully supported. `LeanPiConfig` also declares the `instructions` block Phase 3 reads and the path-override keys other PRDs extend (skill roots, JEV endpoint); defaults live in config, never as absolutes in code.
+**Verification:** E2 — `npx vitest run tests/config.spec.ts`: a session configured with a local stub endpoint for `quick` and a metered stub for `strong` dispatches one call per role and asserts each stub saw exactly one request with the configured model id (AC-3); invalid-config cases assert the thrown path string and that neither stub received a request (AC-4). Distinct risks covered: single-provider-per-session regression, silent acceptance of an unresolvable backend.
+**Checkpoint:** pending
+
+#### Phase 3: Vendored, versioned Ponytail prefix on every executor request
+**Status:** NOT STARTED
+**ACs:** AC-5, AC-6, AC-7, AC-8
+**Files:** `scripts/sync-ponytail.mjs` (fetch/pin/check); `src/core/instructions/ponytail.md` (vendored copy); `src/core/instructions/ponytail.lock.json` (`source`, `version`, `sha256`, `syncedAt`); `src/core/instructions/prefix.ts` (`PONYTAIL_VERSION`, `buildStaticPrefix()`); `src/index.ts` (install the prefix on the executor request path); `package.json` (`sync:ponytail` script, ship the `.md` and lock in `files`); `tests/prefix.spec.ts`.
+**Implementation:** Run `scripts/sync-ponytail.mjs` to copy the upstream plugin file into the repository and write the lock. The script resolves the source through `--source` → `LEANPI_PONYTAIL_SOURCE` → `$CLAUDE_PLUGIN_ROOT/cache/ponytail/ponytail/<version>/skills/ponytail/SKILL.md` → `$HOME/.claude/plugins/cache/...`; `--check` recomputes the vendored file's hash against the lock and, when the source resolves, also compares against upstream, reporting drift in either direction. No absolute path appears in `src/`. `buildStaticPrefix(config)` returns `''` when `config.instructions.ponytail === false`, otherwise the vendored content prefixed with a `ponytail@<PONYTAIL_VERSION>` marker line, where `PONYTAIL_VERSION` is read from the lock at build time. The file is read once at activation and cached, and the function interpolates nothing task-dependent, so the returned string is byte-identical for the life of the session and occupies the STATIC block ahead of all semi-stable and volatile content (§22). Re-running the sync with a newer plugin version is the only supported way to change the text.
+**Verification:** E3 — `npx vitest run tests/prefix.spec.ts && node scripts/sync-ponytail.mjs --check`: a stub backend captures executor requests for two different tasks in one session and asserts byte-identical prefixes containing the version marker (AC-5); the same task with `instructions.ponytail: false` asserts the marker and prefix text are absent while tools/model/user content match the enabled capture (AC-6, doubling as the negative control proving the assertion is not vacuous); a size assertion on the rendered prefix against the shipped file covers AC-7; `--check` on the pristine tree exits 0, on a temp copy with one mutated byte exits non-zero, and with the source path pointed at a nonexistent directory still exits 0 against the lock while a session boots (AC-8). Distinct risks covered: prefix omitted on later turns, prefix made task-dependent and losing cacheability, disable flag ignored, instruction text drifting from or silently diverging from upstream, runtime dependency on a machine-specific plugin directory.
+**Checkpoint:** pending
