@@ -154,6 +154,16 @@ function parseLsp(raw: unknown): LeanPiConfig["lsp"] {
 	return { mode: (mode as LeanPiConfig["lsp"]["mode"]) ?? "auto", servers };
 }
 
+function parseMcp(raw: unknown): LeanPiConfig["mcp"] {
+	const record = raw === undefined ? {} : asRecord(raw, "mcp");
+	const maxTools = record.maxTools;
+	if (maxTools !== undefined && (typeof maxTools !== "number" || !Number.isInteger(maxTools) || maxTools < 0)) {
+		throw new ConfigError(`maxTools must be a non-negative integer`, "mcp.maxTools");
+	}
+	const state = record.state === undefined ? {} : (asRecord(record.state, "mcp.state") as LeanPiConfig["mcp"]["state"]);
+	return { maxTools: (maxTools as number | undefined) ?? 6, state };
+}
+
 function parseContext(raw: unknown): LeanPiConfig["context"] {
 	const record = raw === undefined ? {} : asRecord(raw, "context");
 	const number = (key: keyof LeanPiConfig["context"], fallback: number): number => {
@@ -239,6 +249,7 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		bench: parseBench(record.bench),
 		context: parseContext(record.context),
 		lsp: parseLsp(record.lsp),
+		mcp: parseMcp(record.mcp),
 		permissions,
 		thresholds: parseThresholds(record.thresholds),
 		limits: {

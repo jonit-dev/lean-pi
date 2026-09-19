@@ -29,6 +29,8 @@ import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
+import { registerMcpCommand } from "./mcp/index.js";
+import { homedir } from "node:os";
 import { defaultSkillRoots, scanSkills, createSkillControl } from "./capabilities/skills.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
@@ -149,6 +151,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	registerPermissionsCommand(commands, { cwd, state: permissions, env });
 	// Cost telemetry (PRD-015): `/cost` reads the same store `/status` will read.
 	registerCostCommand(commands, { cwd });
+	// MCP disclosure (PRD-006): `/mcp` plus the provider that fills
+	// `capabilities.mcps`; registered after the provider reset above.
+	registerMcpCommand(commands, { cwd, config, home: homedir(), env });
 
 	const jev = createJevClient({
 		config,
@@ -414,6 +419,7 @@ export * from "./permissions/index.js";
 export { billingOf } from "./backends/index.js";
 export * from "./telemetry/index.js";
 export * from "./lsp/index.js";
+export * from "./mcp/index.js";
 export { verifyTask, WORKSPACE_HASH_KIND } from "./verify/index.js";
 // The PRD lane is reached through its gate only: `dispatch.js` holds no lane
 // module, so importing it cannot load the PRD machinery FR-032/AC-7 require to

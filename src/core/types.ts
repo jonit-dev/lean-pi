@@ -91,6 +91,12 @@ export interface ThresholdsConfig {
 	review_risk: number;
 }
 
+/** MCP disclosure surface (PRD-006): the admitted-tool cap and the persisted enable/disable/pin state. */
+export interface McpConfig {
+	maxTools?: number;
+	state?: Record<string, { enabled?: boolean; pinned?: boolean }>;
+}
+
 /** LSP integration surface (PRD-018): `auto` decides per task; `servers` overrides a language's command. */
 export interface LspConfig {
 	mode?: "off" | "diagnostics" | "navigation" | "full" | "auto";
@@ -121,6 +127,7 @@ export interface LeanPiConfig {
 	bench: BenchConfig;
 	context: ContextConfig;
 	lsp: LspConfig;
+	mcp: McpConfig;
 	/** Effective permission state: built-in defaults merged with user scope, then project scope (PRD-017). */
 	permissions: ResolvedPermissions;
 	thresholds: ThresholdsConfig;
