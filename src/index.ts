@@ -32,8 +32,7 @@ import { registerCostCommand } from "./telemetry/index.js";
 import { registerMcpCommand } from "./mcp/index.js";
 import { createSessionHost, registerCommandSurface } from "./commands/index.js";
 import { registerRuntimeVerifiers } from "./runtime/index.js";
-import { BackendRegistry } from "./backends/index.js";
-import { runExecutor } from "./executor/index.js";
+import { registerTurnLanesIfOwned } from "./commands/turn-lanes.js";
 import { resolveCostConfig } from "./telemetry/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -213,21 +212,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		},
 	});
 
-	// The executor lane (PRD-007): the only consumer of a compiled contract. It
-	// runs after the compiler lane has put one on the turn context, and it owns
-	// the attempt loop, verification per attempt and the review handoff.
-	registerTurnLane({
-		name: "executor",
-		async run(_turn, context) {
-			if (!context.contract) return;
-			context.executor = await runExecutor(context.contract, {
-				registry: new BackendRegistry(config),
-				cwd,
-				config,
-				jev,
-			});
-		},
-	});
+	// The compiler → executor chain (PRD-004 → PRD-007): the compiler lane puts a
+	// contract on the turn context and the executor lane is its only consumer.
+	registerTurnLanesIfOwned({ cwd, config, jev });
 
 	const declinedFor = credentialsPath(env);
 	registerJevCommands(commands, {
@@ -473,6 +460,7 @@ export * from "./bench/index.js";
 export { levenshtein, upsertCommand } from "./commands/registry.js";
 export type { Command, CommandInit } from "./commands/registry.js";
 export { createCommandSurface, createSessionHost, OWNED_COMMANDS, registerCommandSurface } from "./commands/index.js";
+export { compilerLane, executorLane, ownsExecutionLoop, registerTurnLanes, registerTurnLanesIfOwned, type TurnLaneDeps } from "./commands/turn-lanes.js";
 export type { CommandSurface, CommandSurfaceDeps, ProbeResult, RoleBinding, SessionHost } from "./commands/index.js";
 export { applyRoutePins, clearRoutePins, pinOwner, pinnedDecision, routePins, setRoutePins } from "./compiler/pins.js";
 export type { RoutePins } from "./compiler/pins.js";
