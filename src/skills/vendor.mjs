@@ -186,6 +186,14 @@ export function renderNotice(lock) {
 	].join("\n");
 }
 
+/**
+ * Paths under the pack root that the lock never covers: the pack's own metadata
+ * (`NOTICE.md`, the lock itself) and this repository's folder instructions for
+ * agents (`AGENTS.md`, `CLAUDE.md`), which are not vendored content. Exported so
+ * the pack's coverage rule has exactly one definition.
+ */
+export const PACK_UNLOCKED = new Set(["pack.lock.json", "NOTICE.md", "AGENTS.md", "CLAUDE.md"]);
+
 /** Recompute every locked hash against the pack on disk. */
 export function checkPack({ lock, destRoot }) {
 	if (!lock) return { ok: false, reason: "pack.lock.json missing" };
@@ -199,7 +207,7 @@ export function checkPack({ lock, destRoot }) {
 	}
 	const locked = new Set(lock.skills.flatMap((skill) => skill.files.map((file) => file.path)));
 	for (const path of listPackFiles(destRoot)) {
-		if (path === "pack.lock.json" || path === "NOTICE.md") continue;
+		if (PACK_UNLOCKED.has(path)) continue;
 		if (!locked.has(path)) return { ok: false, reason: `file under the pack with no lock entry: ${path}` };
 	}
 	return { ok: true };

@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkPack, listPackFiles, readJson, renderNotice, VendorError, vendorPack } from "../src/skills/vendor.mjs";
+import { checkPack, listPackFiles, PACK_UNLOCKED, readJson, renderNotice, VendorError, vendorPack } from "../src/skills/vendor.mjs";
 import { PACKAGE_ROOT } from "../src/core/package-info.js";
 import { tempDir } from "./helpers/fixtures.js";
 
@@ -156,8 +156,10 @@ describe("PRD-026 Phase 1 — the pack on disk", () => {
 		const root = join(PACKAGE_ROOT, "skills");
 		const lock = readJson(join(root, "pack.lock.json"));
 		const locked = new Set<string>(lock.skills.flatMap((skill: { files: Array<{ path: string }> }) => skill.files.map((file) => file.path)));
+		// The one definition of what the lock does not cover lives with the checker,
+		// so this test cannot drift from `checkPack()`'s own rule.
 		for (const path of listPackFiles(root)) {
-			if (path === "pack.lock.json" || path === "NOTICE.md") continue;
+			if (PACK_UNLOCKED.has(path)) continue;
 			expect(locked.has(path), path).toBe(true);
 		}
 		expect(readdirSync(root).length).toBeGreaterThan(2);
