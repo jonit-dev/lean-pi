@@ -8,7 +8,7 @@
  * self-comparison guard: a fork implemented as an alias of the same session
  * would fail it.
  */
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterAll, describe, expect, it } from "vitest";
 import { nativeBackend } from "../helpers/fixtures.js";
 import { surfaceFixture, type SurfaceFixture } from "./helpers.js";

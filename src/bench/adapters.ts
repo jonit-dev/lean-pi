@@ -34,7 +34,7 @@ import {
 	SessionManager,
 	type AgentSession,
 	type AgentSessionServices,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { billingOf, HARNESS_DESCRIPTORS, parseBackendPool, runHarness, type HarnessSpawn, type RegisteredBackend } from "../backends/index.js";
 import { runTurn, type TurnContext } from "../commands/session.js";
 import type { LeanPiConfig } from "../core/types.js";
@@ -187,7 +187,7 @@ export function leanPiAttempt(options: LeanPiAttemptOptions): BenchAttemptExecut
 		const started = Date.now();
 		const context = await runTurn(
 			{ text: attempt.task.prompt },
-			{ config, cwd: attempt.workspace, session: booted.session, registry: booted.session.modelRegistry },
+			{ config, cwd: attempt.workspace, session: booted.session, runtime: booted.session.modelRuntime },
 		);
 		const wallMs = Date.now() - started;
 		if (!context.contract) {
@@ -325,7 +325,7 @@ export function stockPiAttempt(options: StockPiAttemptOptions): BenchAttemptExec
 		const declared =
 			Object.values(config.models).find((entry) => entry?.model === attempt.config.executor_model) ?? Object.values(config.models).find((entry) => entry !== undefined);
 		if (!declared) throw new BenchError(`config "${attempt.config.id}" declares no model for a stock Pi session`, "config");
-		const model = services.modelRegistry.find(declared.backend, declared.model);
+		const model = services.modelRuntime.getModel(declared.backend, declared.model);
 		if (!model) {
 			throw new BenchError(`stock Pi cannot reach ${declared.backend}/${declared.model}: write a baseUrl for that backend in leanpi.config.yaml`, "config");
 		}

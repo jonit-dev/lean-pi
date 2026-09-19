@@ -6,7 +6,7 @@
  * — `native` (LeanPi owns the Pi agent loop) versus `external_harness` (a
  * bounded job delegated to another harness, owned by PRD-008).
  */
-import type { Api } from "@mariozechner/pi-ai";
+import type { Api } from "@earendil-works/pi-ai";
 import type { ResolvedPermissions } from "../permissions/trust.js";
 
 /** Logical executor/reviewer classes (FR-041–FR-043). Routing never names a vendor. */

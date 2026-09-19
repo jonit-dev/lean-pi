@@ -9,8 +9,8 @@
  * refs. It refuses rather than reporting a no-op when nothing is reducible.
  */
 import { join } from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { estimateTokens, getLatestCompactionEntry } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { estimateTokens, getLatestCompactionEntry } from "@earendil-works/pi-coding-agent";
 import { createArtifactStore, sha256 } from "../context/artifacts.js";
 import { compact, type ContextItem } from "../context/compaction.js";
 import { buildWorkingState, serializeWorkingState, stubSources, WORKING_STATE_MAX_BYTES } from "../context/working-state.js";

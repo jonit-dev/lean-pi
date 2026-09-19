@@ -307,6 +307,27 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 	return config;
 }
 
+/**
+ * A credential slot in LeanPi's own config syntax, translated into the syntax
+ * Pi's provider registration expects.
+ *
+ * LeanPi documents `apiKey: SOME_ENV_VAR` as "the name of the environment
+ * variable holding it". Pi 0.85 changed its own rule: a bare name is now a
+ * *literal*, and interpolation requires `$SOME_ENV_VAR` (or `${SOME_ENV_VAR}`),
+ * with `!command` still executing a command. This is the one place that
+ * difference is reconciled, so a config written for either reading keeps
+ * working and a real key is never mistaken for a variable name.
+ *
+ * `env` is a parameter rather than a `process.env` read so the translation is
+ * testable without mutating the environment.
+ */
+export function toPiConfigValue(value: string, env: Record<string, string | undefined> = process.env): string {
+	// Already Pi's own syntax: a command, or a template carrying its own `$`.
+	if (value.startsWith("!") || value.includes("$")) return value;
+	if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(value) && env[value] !== undefined) return `$${value}`;
+	return value;
+}
+
 /** Persist `/skills` enable/disable/pin state without disturbing unrelated config keys. */
 export function writeSkillsState(cwd: string, state: LeanPiConfig["skills"]["state"]): void {
 	const path = configPathFor(cwd);

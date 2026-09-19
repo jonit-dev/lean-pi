@@ -6,14 +6,14 @@
  * Additional capabilities are routed internally (§44) instead of permanently
  * widening the model's tool surface.
  */
-import type { ExtensionAPI, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
 	createBashToolDefinition,
 	createEditToolDefinition,
 	createGrepToolDefinition,
 	createReadToolDefinition,
 	createWriteToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 /** LeanPi name → the Pi tool definition it delegates to. */
 export const BASELINE_TOOL_MAP = {

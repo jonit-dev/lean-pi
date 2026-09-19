@@ -15,7 +15,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { EXTERNAL_BASELINES_FLAG, externalAttempt, stockPiAttempt, stockPiExtensions, vendorAvailable, writeStockPiModels } from "../../src/bench/adapters.js";
 import { main } from "../../src/bench/cli.js";

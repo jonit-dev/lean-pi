@@ -13,7 +13,7 @@ import {
 	createAgentSessionServices,
 	DefaultResourceLoader,
 	SessionManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LEANPI_VERSION, PACKAGE_ROOT, clearLanes, listLanes, registerLane, writeUserDefault } from "../src/index.js";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";

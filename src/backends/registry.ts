@@ -6,7 +6,7 @@
  * cooldown state. There is no second kill switch: `enabled: false` removes a
  * backend from selection entirely.
  */
-import type { Api } from "@mariozechner/pi-ai";
+import type { Api } from "@earendil-works/pi-ai";
 import { ConfigError } from "../core/config.js";
 import { BACKEND_TYPES, isModelRole, type BackendConfig, type BackendType, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { HARNESS_DESCRIPTORS, isHarnessVendor, runHarness, type HarnessSpawn, type HarnessVendor } from "./harness.js";

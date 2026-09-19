@@ -7,8 +7,8 @@
  * the executor never branches on `type`; a provider error is a typed failure,
  * never a throw that unwinds the turn.
  */
-import type { AgentSession, ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@mariozechner/pi-coding-agent";
+import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@earendil-works/pi-coding-agent";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "../core/tools.js";
 import type { RegisteredBackend } from "./registry.js";
 import { changedFilesSince, modelFor, snapshotFiles, type WorkerOutcome, type WorkerTaskPacket } from "./worker.js";
@@ -100,7 +100,7 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 		return { status: "failed", failure: "provider", reason: (error as Error).message };
 	}
 
-	const model = services.modelRegistry.find(backend.provider, modelId);
+	const model = services.modelRuntime.getModel(backend.provider, modelId);
 	if (!model) {
 		return {
 			status: "failed",

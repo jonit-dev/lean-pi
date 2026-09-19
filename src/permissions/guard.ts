@@ -16,7 +16,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	type ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { classifyScopes, resolveAll, type PermissionDecision, type Resolution, type Scope } from "./rules.js";
 import { childEnv, redactSecrets, secretValues, type SecretsPolicy } from "./secrets.js";
 import type { PermissionState } from "./state.js";

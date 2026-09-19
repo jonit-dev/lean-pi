@@ -12,7 +12,7 @@ import {
 	SessionManager,
 	type AgentSession,
 	type ExtensionAPI,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
 	BASELINE_TOOL_NAMES,
 	clearCapabilityProviders,
@@ -254,7 +254,7 @@ export async function bootLspToolsSession(options: { cwd: string; agentDir?: str
 			],
 		},
 	});
-	const model = services.modelRegistry.find(STUB_PROVIDER, STUB_MODEL);
+	const model = services.modelRuntime.getModel(STUB_PROVIDER, STUB_MODEL);
 	if (!model) throw new Error("stub model is not registered");
 	const { session } = await createAgentSessionFromServices({
 		services,

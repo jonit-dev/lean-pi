@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BackendRegistry, runHarness, runWorkerTurn } from "../../src/backends/index.js";
 import { loadConfig, createLeanPiSession } from "../../src/index.js";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { fixtureRepo, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
 import { installStubCli, RESULT_SCHEMA, setStubScript, type StubCli } from "./helpers.js";

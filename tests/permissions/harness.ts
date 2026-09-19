@@ -22,7 +22,7 @@ import {
 	type BashOperations,
 	type ExtensionContext,
 	type ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "../../src/core/tools.js";
 import { installPermissionGuard, loadPermissionState, type GuardQuestion, type PermissionGuard, type PermissionState } from "../../src/permissions/index.js";
 import { tempDir } from "../helpers/fixtures.js";
@@ -160,7 +160,7 @@ export async function bootGuardedSession(options: GuardedSessionOptions): Promis
 		},
 	});
 
-	const model = services.modelRegistry.find(STUB_PROVIDER, options.model ?? STUB_MODEL);
+	const model = services.modelRuntime.getModel(STUB_PROVIDER, options.model ?? STUB_MODEL);
 	if (!model) throw new Error("stub model is not registered");
 	const { session } = await createAgentSessionFromServices({
 		services,

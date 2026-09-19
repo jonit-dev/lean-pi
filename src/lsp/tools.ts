@@ -16,7 +16,7 @@
  */
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { AgentToolResult, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { LeanPiConfig } from "../core/types.js";
 import { getClient, LspUnavailableError, type ClientLookup, type LspDiagnostic } from "./client.js";

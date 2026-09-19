@@ -262,7 +262,7 @@ export function minimalContract(): ExecutionContract {
 export function fakePiSession(usage: { input: number; output: number }, workspace?: string) {
 	return {
 		messages: [{ role: "assistant", usage: { input: usage.input, output: usage.output }, content: [] }],
-		modelRegistry: {},
+		modelRuntime: {},
 		async prompt() {
 			if (workspace !== undefined) writeFileSync(join(workspace, "bench-done-marker"), "done\n");
 			return undefined;

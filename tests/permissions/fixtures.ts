@@ -9,7 +9,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Type } from "typebox";
-import type { AgentToolResult, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
 	writeUserDefault,
 	writeUserRule,

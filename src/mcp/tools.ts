@@ -7,7 +7,7 @@
  * exists in this module. `execute` is the one place a connection is opened: the
  * pool spawns on first use, which is what makes disclosure lazy end to end.
  */
-import type { AgentToolResult, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { McpPool } from "./client.js";
 import type { SelectedMcpTool } from "./select.js";

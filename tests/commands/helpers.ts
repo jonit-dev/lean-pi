@@ -7,8 +7,8 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createCommandRegistry, loadConfig, type CommandRegistry, type CommandResult, type LeanPiConfig } from "../../src/index.js";
 import {
 	createCommandSurface,

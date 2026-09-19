@@ -8,8 +8,8 @@
  *
  * `export default activate` is what `pi --extension ./dist/index.js` loads.
  */
-import type { AgentSession, ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@mariozechner/pi-coding-agent";
+import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	getActivePrefix,
 	isTurnInFlight,
@@ -23,7 +23,7 @@ import {
 } from "./commands/session.js";
 import { commandRegistry, type CommandRegistry } from "./commands/registry.js";
 import { registerJevCommands } from "./commands/jev.js";
-import { ConfigError, loadConfig, writeSkillsState } from "./core/config.js";
+import { ConfigError, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
@@ -92,14 +92,18 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig): void {
 		}
 		// Providers that require a routing header (OpenCode Go wants
 		// `x-opencode-session`) are reachable without a code change: Pi resolves each
-		// value through the same env-name / `!command` rule it uses for the key.
+		// value through the same rule it uses for the key, and
+		// `toPiConfigValue()` reconciles that rule with LeanPi's env-name syntax.
 		const headers = backend.headers;
+		const declaredHeaders = headers !== null && typeof headers === "object" && !Array.isArray(headers) ? headers : null;
 		pi.registerProvider(name, {
 			name: backend.name ?? name,
 			baseUrl: backend.baseUrl,
-			apiKey: backend.apiKey ?? "LEANPI_BACKEND_API_KEY",
+			apiKey: toPiConfigValue(backend.apiKey ?? "LEANPI_BACKEND_API_KEY"),
 			api: backend.api ?? "openai-completions",
-			...(headers !== null && typeof headers === "object" && !Array.isArray(headers) ? { headers: headers as Record<string, string> } : {}),
+			...(declaredHeaders === null
+				? {}
+				: { headers: Object.fromEntries(Object.entries(declaredHeaders).map(([key, value]) => [key, typeof value === "string" ? toPiConfigValue(value) : value])) }),
 			models: [...declared].map((id) => ({
 				id,
 				name: id,
@@ -367,7 +371,7 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 				const resolved = resolveRole(loaded.config, "balanced");
 				return { provider: resolved.backend, model: resolved.model };
 			})();
-	const model = services.modelRegistry.find(ref.provider, ref.model);
+	const model = services.modelRuntime.getModel(ref.provider, ref.model);
 	if (!model) {
 		throw new Error(
 			`Model ${ref.provider}/${ref.model} is not registered. Configure "backends.${ref.provider}.baseUrl" in leanpi.config.yaml.`,
@@ -393,7 +397,7 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 				config: loaded.config,
 				cwd,
 				session,
-				registry: services.modelRegistry,
+				runtime: services.modelRuntime,
 			}),
 		modelFor(role) {
 			const roleRef = resolveRole(loaded.config, role);
@@ -409,7 +413,7 @@ export {
 	PREFIX_MAX_BYTES,
 	readVendoredPonytail,
 } from "./core/instructions/prefix.js";
-export { ConfigError, CONFIG_FILENAME, configPathFor, loadConfig, writeSkillsState } from "./core/config.js";
+export { ConfigError, CONFIG_FILENAME, configPathFor, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 export { resolveRole, ROLE_FALLBACK_CHAINS, UnresolvedRoleError } from "./core/roles.js";
 export { BASELINE_TOOL_NAMES, baselineToolDefinitions, registerBaselineTools } from "./core/tools.js";
 export {

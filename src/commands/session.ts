@@ -6,7 +6,7 @@
  * list here rather than each re-entering `activate()`. `runTurn()` is thin by
  * design: it holds no routing, no JEV and no verification logic.
  */
-import type { AgentSession, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { assemble } from "../context/prompt.js";
 import { buildWorkingState, stubSources, type WorkingStateSources } from "../context/working-state.js";
 import { buildStaticPrefix } from "../core/instructions/prefix.js";
@@ -47,7 +47,8 @@ export interface TurnDeps {
 	config: LeanPiConfig;
 	cwd: string;
 	session?: AgentSession;
-	registry?: ModelRegistry;
+	/** The session's model runtime, for resolving the turn's role to a concrete model. */
+	runtime?: ModelRuntime;
 }
 
 const lanes: Lane[] = [];
@@ -130,7 +131,7 @@ export async function runTurn(turn: TurnInput, deps: TurnDeps): Promise<TurnCont
 	await runLanes(turn, context);
 	if (!deps.session) return context;
 
-	const model = deps.registry?.find(context.modelRef.backend, context.modelRef.model);
+	const model = deps.runtime?.getModel(context.modelRef.backend, context.modelRef.model);
 	if (!model) {
 		throw new Error(
 			`Role "${role}" resolves to ${context.modelRef.backend}/${context.modelRef.model}, which is not registered.`,

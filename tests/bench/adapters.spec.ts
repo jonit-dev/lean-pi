@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { leanPiAttempt } from "../../src/bench/adapters.js";
 import { runBench } from "../../src/bench/runner.js";
@@ -154,7 +154,7 @@ describe("PRD-021 LeanPi adapter", () => {
 			prompt: async (text: string) => {
 				prompted.push(text);
 			},
-			modelRegistry: { find: () => ({ id: "qwen3-coder-480b-a35b" }) },
+			modelRuntime: { getModel: () => ({ id: "qwen3-coder-480b-a35b" }) },
 		} as unknown as AgentSession;
 
 		const result = await leanPiAttempt({ config, session: async () => ({ session }) })({
@@ -207,7 +207,7 @@ describe("PRD-021 LeanPi adapter", () => {
 		const session = {
 			setModel: async () => undefined,
 			prompt: async () => undefined,
-			modelRegistry: { find: () => ({ id: "x" }) },
+			modelRuntime: { getModel: () => ({ id: "x" }) },
 			messages: [
 				{ role: "assistant", usage: { input: 1200, cacheRead: 400, output: 60, reasoning: 0 }, content: [{ type: "toolCall" }, { type: "text" }] },
 				{ role: "assistant", usage: { input: 1300, cacheRead: 800, output: 40, reasoning: 0 }, content: [{ type: "toolCall" }] },

@@ -8,7 +8,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentToolResult } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
 	applyLspTools,

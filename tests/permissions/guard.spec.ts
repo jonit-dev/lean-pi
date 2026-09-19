@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSy
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GuardQuestion } from "../../src/permissions/index.js";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { gitInit, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
 import { STUB_MODEL, bootGuardedSession, call, drive, toolMessages } from "./harness.js";

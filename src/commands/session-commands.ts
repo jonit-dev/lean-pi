@@ -8,8 +8,8 @@
  * header; the parent's file is never touched.
  */
 import { basename } from "node:path";
-import type { SessionInfo } from "@mariozechner/pi-coding-agent";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { SessionInfo } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { clearRoutePins } from "../compiler/pins.js";
 import type { CommandRegistry, CommandResult } from "./registry.js";
 import type { CommandSurface } from "./surface.js";

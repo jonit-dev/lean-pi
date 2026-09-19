@@ -4,6 +4,9 @@
   "private": true,
   "description": "Cost-aware task compiler and coding runtime built on Pi",
   "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -30,9 +33,9 @@
     "sync:skills": "node scripts/sync-skills.mjs"
   },
   "dependencies": {
-    "@mariozechner/pi-agent-core": "^0.73.1",
-    "@mariozechner/pi-ai": "^0.73.1",
-    "@mariozechner/pi-coding-agent": "^0.73.1",
+    "@earendil-works/pi-agent-core": "^0.85.1",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
     "typebox": "^1.0.0",
     "yaml": "^2.8.1"
   },
