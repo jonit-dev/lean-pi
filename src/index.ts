@@ -16,16 +16,20 @@ import {
 	registerLane as registerTurnLane,
 	runLanes,
 	runTurn,
+	setActivePrefix,
 	type Lane,
 	type TurnContext,
 	type TurnInput,
 } from "./commands/session.js";
 import { commandRegistry, type CommandRegistry } from "./commands/registry.js";
 import { registerJevCommands } from "./commands/jev.js";
-import { ConfigError, loadConfig } from "./core/config.js";
+import { ConfigError, loadConfig, writeSkillsState } from "./core/config.js";
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
-import { setCompilerContext } from "./compiler/index.js";
+import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
+import { defaultSkillRoots, scanSkills, createSkillControl } from "./capabilities/skills.js";
+import { selectSkills } from "./capabilities/skill-select.js";
+import { registerSkillsCommands } from "./commands/skills.js";
 import { resolveRole } from "./core/roles.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
@@ -331,6 +335,7 @@ export {
 	renderSkillBlock,
 	runLanes,
 	runTurn,
+	setActivePrefix,
 	type Lane,
 	type TurnContext,
 	type TurnDeps,
@@ -369,6 +374,21 @@ export type {
 	SiteTelemetryRow,
 } from "./compiler/contract.js";
 export { SCOUT_PACKET_MAX_BYTES, scoutTask } from "./scout/index.js";
+export { ArtifactNotFoundError, createArtifactStore, renderCompactRecord, sha256 } from "./context/artifacts.js";
+export type { ArtifactStore, CaptureInput, CaptureResult, CompactRecord } from "./context/artifacts.js";
+export { buildExcerpt } from "./context/excerpt.js";
+export {
+	classifyCandidates,
+	compact,
+	registerRetentionSite,
+	RETENTION_QUESTIONS,
+	RETENTION_SITE_ID,
+} from "./context/compaction.js";
+export type { CompactOptions, CompactResult, ContextItem, Decision, ItemKind, Verdict } from "./context/compaction.js";
+export { assemble } from "./context/prompt.js";
+export type { AssembledPrompt, AssembleParts } from "./context/prompt.js";
+export { buildWorkingState, serializeWorkingState, stubSources, WORKING_STATE_MAX_BYTES } from "./context/working-state.js";
+export type { WorkingState, WorkingStateSession, WorkingStateSources } from "./context/working-state.js";
 export type { TaskPacket } from "./scout/index.js";
 export { createJevClient, JEV_ENDPOINT_DEFAULT, JEV_INPUT_COST_PER_MILLION, JEV_MODEL_DEFAULT } from "./jev/client.js";
 export type { JevClient, JevStatus, JevTestResult, JevTransport, JevTransportRequest, JevTransportResponse } from "./jev/client.js";

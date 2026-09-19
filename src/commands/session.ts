@@ -7,9 +7,12 @@
  * design: it holds no routing, no JEV and no verification logic.
  */
 import type { AgentSession, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { assemble } from "../context/prompt.js";
+import { buildWorkingState, stubSources, type WorkingStateSources } from "../context/working-state.js";
 import { buildStaticPrefix } from "../core/instructions/prefix.js";
 import { resolveRole } from "../core/roles.js";
 import type { BackendRef, LeanPiConfig, ModelRole, SelectedSkill } from "../core/types.js";
+import type { ExecutionContract } from "../compiler/contract.js";
 
 export interface TurnInput {
 	text: string;
@@ -24,6 +27,10 @@ export interface TurnContext {
 	modelRef: BackendRef;
 	/** Filled by the capability lane (PRD-005) before the request is sent. */
 	skills: SelectedSkill[];
+	/** The compiled contract for this turn, when a compiler lane produced one (PRD-004). */
+	contract?: ExecutionContract;
+	/** Working-state sources (PRD-009/013/007); stubs when nothing is wired yet. */
+	workingStateSources?: WorkingStateSources;
 	/** STATIC prefix plus the SEMI-STABLE block for this turn. */
 	prefix: string;
 }
@@ -82,11 +89,25 @@ export function renderSkillBlock(skills: SelectedSkill[]): string {
 	return `<!-- SEMI-STABLE: selected skills -->\n${blocks.join("\n\n")}\n`;
 }
 
-/** Run the registered lanes and derive the turn's prefix. */
+/**
+ * Run the registered lanes and resolve the turn's prefix.
+ *
+ * A lane that built the prompt itself owns the prefix. Otherwise the context
+ * engine (PRD-014) is the builder: `assemble()` places the STATIC Ponytail
+ * bytes first, then the SEMI-STABLE block (selected skills, contract) and the
+ * VOLATILE block (working state) last, which is the §22 layout the provider
+ * cache depends on.
+ */
 export async function runLanes(turn: TurnInput, context: TurnContext): Promise<TurnContext> {
 	for (const lane of lanes) await lane.run(turn, context);
-	const staticPrefix = buildStaticPrefix(context.config);
-	context.prefix = [staticPrefix, renderSkillBlock(context.skills)].filter((part) => part.length > 0).join("\n");
+	if (context.prefix.length === 0) {
+		context.prefix = assemble({
+			config: context.config,
+			skills: context.skills,
+			...(context.contract ? { contract: context.contract } : {}),
+			workingState: buildWorkingState(context.workingStateSources ?? stubSources(), { filesTouched: [] }),
+		}).text;
+	}
 	setActivePrefix(context.prefix);
 	return context;
 }

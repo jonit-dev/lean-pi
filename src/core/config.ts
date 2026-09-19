@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { assertTrusted, isProjectLocal, mergePermissions, readUserState, type PermissionEnv, type RawPermissionsBlock } from "../permissions/trust.js";
 import { BACKEND_TYPES, isModelRole, type BackendConfig, type BackendType, type JevMode, type LeanPiConfig, type ModelRole } from "./types.js";
 
 export const CONFIG_FILENAME = "leanpi.config.yaml";
@@ -141,16 +142,56 @@ function parseThresholds(raw: unknown): LeanPiConfig["thresholds"] {
 	};
 }
 
+function parseContext(raw: unknown): LeanPiConfig["context"] {
+	const record = raw === undefined ? {} : asRecord(raw, "context");
+	const number = (key: keyof LeanPiConfig["context"], fallback: number): number => {
+		const value = record[key];
+		if (value === undefined) return fallback;
+		if (typeof value !== "number" || value <= 0) throw new ConfigError(`must be a positive number`, `context.${key}`);
+		return value;
+	};
+	return {
+		artifact_threshold_bytes: number("artifact_threshold_bytes", 32_768),
+		compaction_threshold_bytes: number("compaction_threshold_bytes", 48_000),
+		working_state_max_bytes: number("working_state_max_bytes", 3000),
+	};
+}
+
 function parseCapabilities(raw: unknown): LeanPiConfig["capabilities"] {
 	const record = raw === undefined ? {} : asRecord(raw, "capabilities");
 	const skillRoots = record.skillRoots;
 	if (skillRoots !== undefined && !Array.isArray(skillRoots)) {
 		throw new ConfigError(`skillRoots must be a list of paths`, "capabilities.skillRoots");
 	}
-	return { skillRoots: (skillRoots as string[] | undefined) ?? [] };
+	const mcpConfigPaths = record.mcpConfigPaths;
+	if (mcpConfigPaths !== undefined && !Array.isArray(mcpConfigPaths)) {
+		throw new ConfigError(`mcpConfigPaths must be a list of paths`, "capabilities.mcpConfigPaths");
+	}
+	return {
+		skillRoots: (skillRoots as string[] | undefined) ?? [],
+		mcpConfigPaths: (mcpConfigPaths as string[] | undefined) ?? [],
+	};
 }
 
-export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}): LeanPiConfig {
+/** The project-scope `permissions:` block; PRD-017 merges it asymmetrically. */
+function parsePermissions(raw: unknown): RawPermissionsBlock {
+	if (raw === undefined) return {};
+	const record = asRecord(raw, "permissions");
+	if (record.trust !== undefined && typeof record.trust !== "boolean") {
+		throw new ConfigError(`trust must be a boolean`, "permissions.trust");
+	}
+	return {
+		defaults: record.defaults === undefined ? {} : asRecord(record.defaults, "permissions.defaults"),
+		rules: record.rules === undefined ? [] : (() => {
+			if (!Array.isArray(record.rules)) throw new ConfigError(`rules must be a list`, "permissions.rules");
+			return record.rules;
+		})(),
+		...(record.trust === true ? { trust: true } : {}),
+		...(record.secrets === undefined ? {} : { secrets: asRecord(record.secrets, "permissions.secrets") as RawPermissionsBlock["secrets"] }),
+	};
+}
+
+export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, env: PermissionEnv = process.env): LeanPiConfig {
 	const path = configPathFor(cwd);
 	const raw = existsSync(path) ? (parseYaml(readFileSync(path, "utf8")) as unknown) : undefined;
 	const record = raw === undefined || raw === null ? {} : asRecord(raw, CONFIG_FILENAME);
@@ -162,15 +203,30 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}): 
 	const limitsRaw = record.limits === undefined ? {} : asRecord(record.limits, "limits");
 
 	const backends = parseBackends(record.backends);
+	// PRD-017: assertTrusted runs between load and use. An untrusted project keeps
+	// nothing executable and nothing project-local on the capability surface.
+	const capabilities = parseCapabilities(record.capabilities);
+	const trust = assertTrusted(cwd, env, {
+		skillRoots: capabilities.skillRoots,
+		mcpConfigPaths: capabilities.mcpConfigPaths,
+	});
+	const skillRoots = trust.trusted ? capabilities.skillRoots : capabilities.skillRoots.filter((root) => !isProjectLocal(cwd, root));
+	const permissions = mergePermissions({
+		user: readUserState(env),
+		project: parsePermissions(record.permissions),
+		trust,
+	});
 	const config: LeanPiConfig = {
 		configPath: existsSync(path) ? path : null,
 		backends,
 		models: parseModels(record.models, backends),
 		instructions: { ponytail: (instructionsRaw.ponytail as boolean | undefined) ?? true },
 		jev: parseJev(record.jev),
-		capabilities: parseCapabilities(record.capabilities),
+		capabilities: { ...capabilities, skillRoots },
 		skills: parseSkills(record.skills),
 		bench: parseBench(record.bench),
+		context: parseContext(record.context),
+		permissions,
 		thresholds: parseThresholds(record.thresholds),
 		limits: {
 			executionAttempts: (limitsRaw.executionAttempts as number | undefined) ?? 2,

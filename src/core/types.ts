@@ -7,6 +7,7 @@
  * bounded job delegated to another harness, owned by PRD-008).
  */
 import type { Api } from "@mariozechner/pi-ai";
+import type { ResolvedPermissions } from "../permissions/trust.js";
 
 /** Logical executor/reviewer classes (FR-041–FR-043). Routing never names a vendor. */
 export const MODEL_ROLES = ["quick", "balanced", "strong", "specialist", "review_quick", "review_strong"] as const;
@@ -74,6 +75,8 @@ export interface SkillsConfig {
 
 export interface CapabilitiesConfig {
 	skillRoots?: string[];
+	/** Project-scope MCP config files; the trust surface hashes them (PRD-017). Default `.leanpi/mcp.json`. */
+	mcpConfigPaths?: string[];
 }
 
 export interface LimitsConfig {
@@ -86,6 +89,13 @@ export interface ThresholdsConfig {
 	gate_prd_required: number;
 	complexity: number;
 	review_risk: number;
+}
+
+/** Context engine budgets (PRD-014): artifact threshold, compaction trigger, state ceiling. */
+export interface ContextConfig {
+	artifact_threshold_bytes: number;
+	compaction_threshold_bytes: number;
+	working_state_max_bytes: number;
 }
 
 export interface BenchConfig {
@@ -103,6 +113,9 @@ export interface LeanPiConfig {
 	capabilities: Required<CapabilitiesConfig>;
 	skills: Required<Omit<SkillsConfig, "state">> & { state: NonNullable<SkillsConfig["state"]> };
 	bench: BenchConfig;
+	context: ContextConfig;
+	/** Effective permission state: built-in defaults merged with user scope, then project scope (PRD-017). */
+	permissions: ResolvedPermissions;
 	thresholds: ThresholdsConfig;
 	limits: Required<LimitsConfig>;
 }

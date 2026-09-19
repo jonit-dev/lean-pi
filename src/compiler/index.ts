@@ -7,6 +7,7 @@
  * is a first-class path, so a JEV failure never throws out of this function (§49).
  */
 import type { JevClient } from "../jev/client.js";
+import { resolvedDefaults } from "../permissions/trust.js";
 import type { JevQuestion, JevResult, JevUsage } from "../jev/types.js";
 import type { LeanPiConfig } from "../core/types.js";
 import type { TaskPacket } from "../scout/index.js";
@@ -92,9 +93,11 @@ function fallbackConfig(): LeanPiConfig {
 		models: {},
 		instructions: { ponytail: true },
 		jev: { apiKey: null, endpoint: "", model: "", mode: "disabled" },
-		capabilities: { skillRoots: [] },
+		capabilities: { skillRoots: [], mcpConfigPaths: [] },
 		skills: { maxLoaded: 3, state: {} },
 		bench: { skills: { maxUnnecessaryLoadRate: 0.04 } },
+		context: { artifact_threshold_bytes: 32_768, compaction_threshold_bytes: 48_000, working_state_max_bytes: 3000 },
+		permissions: resolvedDefaults(),
 		limits: { executionAttempts: 2, semanticReviewRounds: 1 },
 		thresholds: DEFAULT_THRESHOLDS,
 	};
@@ -159,7 +162,7 @@ export async function compileTask(
 
 	// Providers fill the declared slots; with none registered the defaults stand.
 	for (const provider of providers) {
-		const value = provider.supply(contract, packet);
+		const value = await provider.supply(contract, packet);
 		if (value === undefined) continue;
 		contract.capabilities = { ...contract.capabilities, [provider.kind]: value } as CapabilitySlots;
 	}
