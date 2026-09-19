@@ -31,6 +31,7 @@ import { installPermissionGuard, loadPermissionState, registerPermissionsCommand
 import { registerCostCommand } from "./telemetry/index.js";
 import { registerMcpCommand } from "./mcp/index.js";
 import { createSessionHost, registerCommandSurface } from "./commands/index.js";
+import { registerRuntimeVerifiers } from "./runtime/index.js";
 import { resolveCostConfig } from "./telemetry/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -188,6 +189,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	const skillRecords = scan();
 	const skillControl = createSkillControl(config.skills.state, (state) => writeSkillsState(cwd, state));
 	registerSkillsCommands(commands, { records: skillRecords, control: skillControl, reload: scan });
+	// Runtime and UI verifiers (PRD-022): registering them turns the four kinds
+	// PRD-009 left open into real verifier entries rather than `not_run`.
+	registerRuntimeVerifiers();
+
 	// The command and session surface (PRD-016). The host points at Pi's own
 	// session manager: LeanPi keeps no session records of its own.
 	registerCommandSurface(commands, {
@@ -445,6 +450,7 @@ export * from "./proof/index.js";
 export * from "./capability/index.js";
 export * from "./routing/index.js";
 export * from "./exploration/index.js";
+export * from "./runtime/index.js";
 export { levenshtein, upsertCommand } from "./commands/registry.js";
 export type { Command, CommandInit } from "./commands/registry.js";
 export { createCommandSurface, createSessionHost, OWNED_COMMANDS, registerCommandSurface } from "./commands/index.js";
