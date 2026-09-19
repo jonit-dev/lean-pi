@@ -394,6 +394,7 @@ export type {
 	SiteTelemetryRow,
 } from "./compiler/contract.js";
 export { SCOUT_PACKET_MAX_BYTES, scoutTask } from "./scout/index.js";
+export * from "./backends/index.js";
 export {
 	createSkillControl,
 	defaultSkillRoots,
