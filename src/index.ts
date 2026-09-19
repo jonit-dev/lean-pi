@@ -28,6 +28,7 @@ import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
+import { registerCostCommand } from "./telemetry/index.js";
 import { defaultSkillRoots, scanSkills, createSkillControl } from "./capabilities/skills.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
@@ -146,6 +147,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	const permissions = loadPermissionState(cwd, env as NodeJS.ProcessEnv);
 	installPermissionGuard(pi, { cwd, state: permissions, env });
 	registerPermissionsCommand(commands, { cwd, state: permissions, env });
+	// Cost telemetry (PRD-015): `/cost` reads the same store `/status` will read.
+	registerCostCommand(commands, { cwd });
 
 	const jev = createJevClient({
 		config,
@@ -406,6 +409,10 @@ export type {
 } from "./compiler/contract.js";
 export { SCOUT_PACKET_MAX_BYTES, scoutTask } from "./scout/index.js";
 export * from "./permissions/index.js";
+// `billingOf` exists in both barrels; the backend derivation (PRD-008) is the
+// canonical one, so the ambiguity is resolved explicitly here.
+export { billingOf } from "./backends/index.js";
+export * from "./telemetry/index.js";
 export * from "./backends/index.js";
 export {
 	createSkillControl,
