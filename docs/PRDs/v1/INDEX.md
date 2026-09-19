@@ -1,39 +1,40 @@
 # LeanPi v1 — PRD Index
 
-Slice of [`ROADMAP.md`](./ROADMAP.md) into 24 implementable PRDs. Every functional requirement in ROADMAP §51 has exactly one owning PRD; every roadmap section that describes buildable behavior is claimed below.
+Slice of [`ROADMAP.md`](./ROADMAP.md) into 25 implementable PRDs. Every functional requirement in ROADMAP §51 has exactly one owning PRD; every roadmap section that describes buildable behavior is claimed below.
 
-**Status:** all PRDs `NOT STARTED`. Nothing is implemented; the repository contains only these documents.
+**Status:** all 25 PRDs `DONE` (verified 2026-09-19). Each PRD's markdown lives in [`done/`](./done/) with its acceptance criteria checked and the evidence naming the spec that proves it. Three criteria are owner-gated (a real vendor subscription run, an external baseline run and a live catalog fetch); every other criterion is agent-runnable locally.
 
 ## PRDs
 
 | PRD | Title | Complexity | Depends on | Phases / boxes | Owns |
 |---|---|---|---|---|---|
-| [001](./PRD-001-harness-foundation.md) | Harness Foundation | 5 MEDIUM | — | 3 / 8 | FR-001, 002, 040–045 |
-| [002](./PRD-002-jev-control-plane.md) | JEV Control Plane | 5 HIGH | 001 | 5 / 12 | FR-010, 011, 020 |
-| [003](./PRD-003-task-scout.md) | Task Scout | 3 LOW | 001 | 2 / 4 | §9 packet |
-| [004](./PRD-004-task-compiler-router.md) | Task Compiler & Router | 4 MEDIUM | 002, 003 | 4 / 11 | FR-003–006, 012, 013 |
-| [005](./PRD-005-skill-disclosure.md) | Skill Disclosure | 3 LOW | 002, 004 | 2 / 6 | FR-014, 070–076, 145 |
-| [006](./PRD-006-mcp-disclosure.md) | MCP Disclosure | 7 HIGH | 002, 004, 017 | 4 / 8 | FR-015, 080–084, 086, 087, 146 |
-| [007](./PRD-007-executor-lane.md) | Executor Lane | 5 MEDIUM | 004, 008 | 4 / 9 | FR-019, 060, 063, 065–067 |
-| [008](./PRD-008-backend-workers.md) | Backend Workers | 4 MEDIUM | 001 | 4 / 9 | FR-046, 050–055, 057, 058 |
-| [009](./PRD-009-deterministic-verification.md) | Deterministic Verification | 4 MEDIUM | 001, 007 | 3 / 6 | FR-120–123 |
-| [010](./PRD-010-proof-gate.md) | Proof Gate | 3 MEDIUM | 002, 009 | 2 / 6 | FR-016, 017, 124–127 |
-| [011](./PRD-011-reviewer-lane.md) | Reviewer Lane | 3 LOW | 002, 008, 009 | 2 / 6 | FR-018, 061, 062, 064, 144 |
-| [012](./PRD-012-prd-lane.md) | PRD Lane | 5 MEDIUM | 004 | 4 / 9 | FR-030–035 |
-| [013](./PRD-013-goal-engine.md) | Goal Engine | 5 MEDIUM | 010, 012 | 4 / 7 | FR-130–136, 143 |
-| [014](./PRD-014-context-engine.md) | Context Engine | 5 MEDIUM | 001 | 4 / 8 | FR-100–107 |
-| [015](./PRD-015-cost-telemetry.md) | Cost Telemetry | 3 LOW | 002, 004, 008 | 2 / 6 | FR-149, §52 |
-| [016](./PRD-016-command-surface.md) | Command & Session Surface | 4 MEDIUM | 002, 004, 015 | 4 / 12 | FR-140–142, 148, 150, 151 |
-| [017](./PRD-017-permissions-trust.md) | Permissions & Trust | 3 HIGH | 001 | 3 / 10 | FR-085, 147, §48 |
-| [018](./PRD-018-lsp-integration.md) | LSP Integration | 4 MEDIUM | 004 | 3 / 9 | FR-090–094 |
-| [019](./PRD-019-rtk-integration.md) | RTK Integration | 4 MEDIUM | 002, 009, 014 | 3 / 7 | FR-110–113 |
-| [020](./PRD-020-adaptive-routing.md) | Adaptive Routing & Quota Pricing | 4 MEDIUM | 002, 008, 015, 024 | 4 / 7 | FR-047, 048, 056 |
-| [021](./PRD-021-benchmark-harness.md) | Benchmark & Evaluation Harness | 5 MEDIUM | 015 | 4 / 8 | §53–§57, §67 #12 |
-| [022](./PRD-022-runtime-verification.md) | Runtime Verification & Workspace Isolation | 6 HIGH | 009, 017 | 4 / 9 | §35 runtime/UI verifiers, §60 worktrees |
-| [023](./PRD-023-jev-exploration-governor.md) | JEV Exploration Governor | 4 MEDIUM | 002, 003, 009, 014 | 4 / 7 | file/search-layer JEV sites |
-| [024](./PRD-024-model-capability-index.md) | Model Capability Index | 5 MEDIUM | 001, 008, 015 | 4 / 8 | model capability catalog |
+| [001](./done/PRD-001-harness-foundation.md) | Harness Foundation | 5 MEDIUM | — | 3 / 8 | FR-001, 002, 040–045 |
+| [002](./done/PRD-002-jev-control-plane.md) | JEV Control Plane | 5 HIGH | 001 | 5 / 12 | FR-010, 011, 020 |
+| [003](./done/PRD-003-task-scout.md) | Task Scout | 3 LOW | 001 | 2 / 4 | §9 packet |
+| [004](./done/PRD-004-task-compiler-router.md) | Task Compiler & Router | 4 MEDIUM | 002, 003 | 4 / 11 | FR-003–006, 012, 013 |
+| [005](./done/PRD-005-skill-disclosure.md) | Skill Disclosure | 3 LOW | 002, 004 | 2 / 6 | FR-014, 070–076, 145 |
+| [006](./done/PRD-006-mcp-disclosure.md) | MCP Disclosure | 7 HIGH | 002, 004, 017 | 4 / 8 | FR-015, 080–084, 086, 087, 146 |
+| [007](./done/PRD-007-executor-lane.md) | Executor Lane | 5 MEDIUM | 004, 008 | 4 / 9 | FR-019, 060, 063, 065–067 |
+| [008](./done/PRD-008-backend-workers.md) | Backend Workers | 4 MEDIUM | 001 | 4 / 9 | FR-046, 050–055, 057, 058 |
+| [009](./done/PRD-009-deterministic-verification.md) | Deterministic Verification | 4 MEDIUM | 001, 007 | 3 / 6 | FR-120–123 |
+| [010](./done/PRD-010-proof-gate.md) | Proof Gate | 3 MEDIUM | 002, 009 | 2 / 6 | FR-016, 017, 124–127 |
+| [011](./done/PRD-011-reviewer-lane.md) | Reviewer Lane | 3 LOW | 002, 008, 009 | 2 / 6 | FR-018, 061, 062, 064, 144 |
+| [012](./done/PRD-012-prd-lane.md) | PRD Lane | 5 MEDIUM | 004 | 4 / 9 | FR-030–035 |
+| [013](./done/PRD-013-goal-engine.md) | Goal Engine | 5 MEDIUM | 010, 012 | 4 / 7 | FR-130–136, 143 |
+| [014](./done/PRD-014-context-engine.md) | Context Engine | 5 MEDIUM | 001 | 4 / 8 | FR-100–107 |
+| [015](./done/PRD-015-cost-telemetry.md) | Cost Telemetry | 3 LOW | 002, 004, 008 | 2 / 6 | FR-149, §52 |
+| [016](./done/PRD-016-command-surface.md) | Command & Session Surface | 4 MEDIUM | 002, 004, 015 | 4 / 12 | FR-140–142, 148, 150, 151 |
+| [017](./done/PRD-017-permissions-trust.md) | Permissions & Trust | 3 HIGH | 001 | 3 / 10 | FR-085, 147, §48 |
+| [018](./done/PRD-018-lsp-integration.md) | LSP Integration | 4 MEDIUM | 004 | 3 / 9 | FR-090–094 |
+| [019](./done/PRD-019-rtk-integration.md) | RTK Integration | 4 MEDIUM | 002, 009, 014 | 3 / 7 | FR-110–113 |
+| [020](./done/PRD-020-adaptive-routing.md) | Adaptive Routing & Quota Pricing | 4 MEDIUM | 002, 008, 015, 024 | 4 / 7 | FR-047, 048, 056 |
+| [021](./done/PRD-021-benchmark-harness.md) | Benchmark & Evaluation Harness | 5 MEDIUM | 015 | 4 / 8 | §53–§57, §67 #12 |
+| [022](./done/PRD-022-runtime-verification.md) | Runtime Verification & Workspace Isolation | 6 HIGH | 009, 017 | 4 / 9 | §35 runtime/UI verifiers, §60 worktrees |
+| [023](./done/PRD-023-jev-exploration-governor.md) | JEV Exploration Governor | 4 MEDIUM | 002, 003, 009, 014 | 4 / 7 | file/search-layer JEV sites |
+| [024](./done/PRD-024-model-capability-index.md) | Model Capability Index | 5 MEDIUM | 001, 008, 015 | 4 / 8 | model capability catalog |
+| [025](./done/PRD-025-todo-list.md) | Task Todo List | 5 MEDIUM | 013, 014 | 4 / 6 | §43 `/todo`, goal-boundary work list |
 
-Totals: 84 phases, 198 required boxes, 3 owner-lane gates (PRD-008 real subscription smoke, PRD-021 external baselines, PRD-024 live keyed catalog fetch). Every other criterion is agent-runnable locally.
+Totals: 85 phases, 207 required boxes, 3 owner-lane gates (PRD-008 real subscription smoke, PRD-021 external baselines, PRD-024 live keyed catalog fetch). Every other criterion is agent-runnable locally.
 
 ## Build order
 
