@@ -98,8 +98,8 @@ function parseJev(raw: unknown): LeanPiConfig["jev"] {
 	const resolvedMode: JevMode = record.enabled === false ? "disabled" : ((mode as JevMode | undefined) ?? "enabled");
 	return {
 		apiKey: typeof record.apiKey === "string" ? record.apiKey : null,
-		endpoint: typeof record.endpoint === "string" ? record.endpoint : "https://api.typesafe.ai/v1",
-		model: typeof record.model === "string" ? record.model : "jev-1.13",
+		endpoint: typeof record.endpoint === "string" ? record.endpoint : "https://api.typesafe.ai/v1/systemone",
+		model: typeof record.model === "string" ? record.model : "jev-latest",
 		mode: resolvedMode,
 	};
 }

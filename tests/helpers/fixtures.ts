@@ -28,6 +28,13 @@ export function gitInit(cwd: string): void {
 	run(["config", "user.name", "Fixture"]);
 }
 
+/** Commit everything currently in the fixture so `git status` reflects only new artifacts. */
+export function gitCommitAll(cwd: string, message = "fixture"): void {
+	const run = (args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" });
+	run(["add", "-A"]);
+	run(["commit", "-q", "-m", message]);
+}
+
 export function bootSession(options: CreateLeanPiSessionOptions): Promise<LeanPiSession> {
 	return createLeanPiSession({ agentDir: tempDir("leanpi-agent-"), ...options });
 }
