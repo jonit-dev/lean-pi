@@ -413,6 +413,12 @@ export * from "./permissions/index.js";
 // canonical one, so the ambiguity is resolved explicitly here.
 export { billingOf } from "./backends/index.js";
 export * from "./telemetry/index.js";
+export { verifyTask, WORKSPACE_HASH_KIND } from "./verify/index.js";
+export type { VerifyOptions, VerifyResult, VerifySettings } from "./verify/index.js";
+export { aggregate, type VerificationStatus } from "./verify/aggregate.js";
+export type { EvidenceRecord, EvidenceStore, EvidenceView, ModelAssertion, VerifierResult } from "./verify/evidence.js";
+export { registerRegressionScopeSite, selectVerifiers, verificationBlockOf } from "./verify/select.js";
+export { workspaceHash } from "./verify/hash.js";
 export * from "./backends/index.js";
 export {
 	createSkillControl,
