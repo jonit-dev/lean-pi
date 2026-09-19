@@ -91,6 +91,19 @@ export interface ThresholdsConfig {
 	review_risk: number;
 }
 
+/** Model capability ranking surface (PRD-024): the bundled file, its staleness window and per-role floors. */
+export interface CapabilityRoleSetting {
+	min_coding_index?: number;
+	max_blended_price?: number;
+	pin?: string;
+}
+
+export interface CapabilitySetting {
+	rankingFile?: string | null;
+	stalenessDays?: number;
+	roles?: Partial<Record<ModelRole, CapabilityRoleSetting>>;
+}
+
 /** MCP disclosure surface (PRD-006): the admitted-tool cap and the persisted enable/disable/pin state. */
 export interface McpConfig {
 	maxTools?: number;
@@ -128,6 +141,7 @@ export interface LeanPiConfig {
 	context: ContextConfig;
 	lsp: LspConfig;
 	mcp: McpConfig;
+	capability: CapabilitySetting;
 	/** Effective permission state: built-in defaults merged with user scope, then project scope (PRD-017). */
 	permissions: ResolvedPermissions;
 	thresholds: ThresholdsConfig;

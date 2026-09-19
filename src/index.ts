@@ -429,6 +429,11 @@ export * from "./telemetry/index.js";
 export * from "./lsp/index.js";
 export * from "./mcp/index.js";
 export * from "./review/index.js";
+export * from "./proof/index.js";
+export * from "./capability/index.js";
+export * from "./todo/index.js";
+export * from "./goal/index.js";
+export * from "./rtk/index.js";
 export { verifyTask, WORKSPACE_HASH_KIND } from "./verify/index.js";
 // The PRD lane is reached through its gate only: `dispatch.js` holds no lane
 // module, so importing it cannot load the PRD machinery FR-032/AC-7 require to

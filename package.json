@@ -14,6 +14,7 @@
   },
   "files": [
     "dist",
+    "src/capability/models.json",
     "src/core/instructions/ponytail.md",
     "src/core/instructions/ponytail.lock.json"
   ],

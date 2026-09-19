@@ -8,7 +8,16 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { assertTrusted, isProjectLocal, mergePermissions, readUserState, type PermissionEnv, type RawPermissionsBlock } from "../permissions/trust.js";
-import { BACKEND_TYPES, isModelRole, type BackendConfig, type BackendType, type JevMode, type LeanPiConfig, type ModelRole } from "./types.js";
+import {
+	BACKEND_TYPES,
+	isModelRole,
+	type BackendConfig,
+	type BackendType,
+	type CapabilityRoleSetting,
+	type JevMode,
+	type LeanPiConfig,
+	type ModelRole,
+} from "./types.js";
 
 export const CONFIG_FILENAME = "leanpi.config.yaml";
 
@@ -154,6 +163,35 @@ function parseLsp(raw: unknown): LeanPiConfig["lsp"] {
 	return { mode: (mode as LeanPiConfig["lsp"]["mode"]) ?? "auto", servers };
 }
 
+function parseCapability(raw: unknown): LeanPiConfig["capability"] {
+	const record = raw === undefined ? {} : asRecord(raw, "capability");
+	const stalenessDays = record.stalenessDays;
+	if (stalenessDays !== undefined && (typeof stalenessDays !== "number" || stalenessDays <= 0)) {
+		throw new ConfigError(`stalenessDays must be a positive number`, "capability.stalenessDays");
+	}
+	if (record.rankingFile !== undefined && record.rankingFile !== null && typeof record.rankingFile !== "string") {
+		throw new ConfigError(`rankingFile must be a path or null`, "capability.rankingFile");
+	}
+	const rolesRaw = record.roles === undefined ? {} : asRecord(record.roles, "capability.roles");
+	const roles: LeanPiConfig["capability"]["roles"] = {};
+	for (const [role, value] of Object.entries(rolesRaw)) {
+		if (!isModelRole(role)) throw new ConfigError(`unknown model role ${JSON.stringify(role)}`, `capability.roles.${role}`);
+		const entry = asRecord(value, `capability.roles.${role}`);
+		for (const key of ["min_coding_index", "max_blended_price"] as const) {
+			const number = entry[key];
+			if (number !== undefined && typeof number !== "number") {
+				throw new ConfigError(`${key} must be a number`, `capability.roles.${role}.${key}`);
+			}
+		}
+		roles[role] = entry as CapabilityRoleSetting;
+	}
+	return {
+		rankingFile: (record.rankingFile as string | null | undefined) ?? null,
+		stalenessDays: (stalenessDays as number | undefined) ?? 90,
+		roles,
+	};
+}
+
 function parseMcp(raw: unknown): LeanPiConfig["mcp"] {
 	const record = raw === undefined ? {} : asRecord(raw, "mcp");
 	const maxTools = record.maxTools;
@@ -250,6 +288,7 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		context: parseContext(record.context),
 		lsp: parseLsp(record.lsp),
 		mcp: parseMcp(record.mcp),
+		capability: parseCapability(record.capability),
 		permissions,
 		thresholds: parseThresholds(record.thresholds),
 		limits: {

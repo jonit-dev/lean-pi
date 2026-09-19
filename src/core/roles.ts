@@ -6,6 +6,7 @@
  * session with no reconfiguration.
  */
 import type { BackendRef, LeanPiConfig, ModelRole } from "./types.js";
+import { resolveRoleViaRanking } from "../capability/index.js";
 
 export class UnresolvedRoleError extends Error {
 	constructor(role: ModelRole) {
@@ -28,8 +29,15 @@ export const ROLE_FALLBACK_CHAINS: Record<ModelRole, ModelRole[]> = {
 	review_strong: ["review_strong", "review_quick", "quick"],
 };
 
-/** The nearest configured role in the ladder wins; the static `models:` map stays authoritative. */
+/**
+ * The nearest configured role in the ladder wins when no ranking is available;
+ * with one (PRD-024), the capability index picks the cheapest bound model that
+ * clears the role's floor and price ceiling, and an unreadable or invalid
+ * ranking falls back to the static `models:` map with the reason reported once.
+ */
 export function resolveRole(config: LeanPiConfig, role: ModelRole): BackendRef {
+	const ranked = resolveRoleViaRanking(config, role);
+	if (ranked) return ranked;
 	for (const candidate of ROLE_FALLBACK_CHAINS[role]) {
 		const entry = config.models[candidate];
 		if (!entry) continue;

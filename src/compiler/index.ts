@@ -24,6 +24,7 @@ import type {
 import { runGate } from "./gate.js";
 import { applyDeviations, matrixDefault } from "./route.js";
 import { createTaskState, deepFreeze } from "./state.js";
+import { applyRoutePins, pinnedDecision, routePins } from "./pins.js";
 
 export interface CompilerContext {
 	client: Pick<JevClient, "ask" | "fallbackCount"> & Partial<Pick<JevClient, "lastUsage">>;
@@ -99,6 +100,7 @@ function fallbackConfig(): LeanPiConfig {
 		context: { artifact_threshold_bytes: 32_768, compaction_threshold_bytes: 48_000, working_state_max_bytes: 3000 },
 		lsp: { mode: "auto", servers: {} },
 		mcp: { maxTools: 6, state: {} },
+		capability: { rankingFile: null, stalenessDays: 90, roles: {} },
 		permissions: resolvedDefaults(),
 		limits: { executionAttempts: 2, semanticReviewRounds: 1 },
 		thresholds: DEFAULT_THRESHOLDS,
@@ -123,12 +125,17 @@ export async function compileTask(
 	const state = createTaskState();
 
 	const gate = await runGate({ client, request, packet, config });
+	// PRD-016's session pins decide the gate outcome and the two classes; the
+	// classifier and the §14 matrix stay the source of every unpinned value.
+	const pins = routePins();
+	const decision = pinnedDecision(gate.decision, pins);
 	const complexity = await classifyExecution({ client, request, packet, config });
 	const capability = await deriveRequiredCapability({ client, request, packet, config, band: complexity.band });
 	const risk = await classifyReviewRisk({ client, request, packet, elevateReview: gate.elevateReview });
 
-	const defaults = matrixDefault(gate.decision === "PRD_REQUIRED", complexity.complexity, risk.review_risk);
-	const { routing, deviation } = applyDeviations(defaults, deviations);
+	const defaults = matrixDefault(decision === "PRD_REQUIRED", complexity.complexity, risk.review_risk);
+	const { routing: classified, deviation } = applyDeviations(defaults, deviations);
+	const routing = applyRoutePins(classified, pins);
 
 	const slots: CapabilitySlots = {
 		skills: [],
@@ -139,8 +146,8 @@ export async function compileTask(
 	const contract: ExecutionContract = {
 		task: {
 			type: inferTaskType(request),
-			prd_required: gate.decision === "PRD_REQUIRED",
-			planning_decision: gate.decision,
+			prd_required: decision === "PRD_REQUIRED",
+			planning_decision: decision,
 			execution_complexity: complexity.complexity,
 			review_risk: risk.review_risk,
 			required_capability: capability.required_capability,
@@ -170,7 +177,14 @@ export async function compileTask(
 	}
 
 	const telemetry: SiteTelemetryRow[] = [
-		{ site_id: "gate.prd_required", answer: gate.decision, confidence: gate.confidence, fallback_used: gate.fallbackUsed, tokens: gate.tokens },
+		{
+			site_id: "gate.prd_required",
+			answer: decision,
+			confidence: pins.prd_required === undefined ? gate.confidence : 1,
+			// A pinned gate was decided by the session, not by JEV: the row says so.
+			fallback_used: pins.prd_required === undefined ? gate.fallbackUsed : true,
+			tokens: gate.tokens,
+		},
 		{
 			site_id: "classify.execution_complexity",
 			answer: complexity.band,
@@ -194,7 +208,7 @@ export async function compileTask(
 		},
 	];
 
-	state.recordPlanning({ decision: gate.decision, contract_frozen: true });
+	state.recordPlanning({ decision, contract_frozen: true });
 	deepFreeze(contract);
 	records.set(contract, {
 		contract,
