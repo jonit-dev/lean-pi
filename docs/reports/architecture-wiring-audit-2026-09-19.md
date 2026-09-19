@@ -56,12 +56,29 @@ Wired and verified in one session; evidence is the test named beside each item.
 | F2 | **wired** — `registerMcpDisclosure` reads the same catalog the `/mcp` runtime builds | `src/index.ts:308` | provider-side unit tests; effect needs a configured server |
 | F9, F16 | **wired** — a `tool_result` pipeline captures every tool result into the artifact store and applies PRD-019's reducer; the guard's `onOutput` stores redacted text; `artifacts` reaches `runExecutor`; and the `artifact` expand tool (PRD-014 AC-2) is registered and active so a reference is recoverable from the session | `installToolOutputPipeline` / `installArtifactTool` in `src/index.ts`, `src/commands/turn-lanes.ts:21-22,53` | `tests/wiring.spec.ts` — a 51KB result becomes `artifact://execute/<sha>` in the next request, the bytes are on disk, and a second turn reads them back through the tool |
 | F14 | **wired + deleted** — `context.skills` filled from the contract slot; `renderSkillBlock` deleted | `src/commands/session.ts:113-116` | `tests/wiring.spec.ts` (skill body present in the request) |
+| F3 | **wired** — PRD-010's gate runs after the executor: the contract's criteria against this turn's evidence, read with the hash PRD-009 stamped the records with, plus PRD-011's verdict for the turn | `src/commands/turn-lanes.ts`, `ExecutorOutcome.workspaceHash` (`src/executor/lane.ts`), `VerifyResult.workspaceHash` (`src/verify/index.ts`) | `tests/wiring.spec.ts` — AC-1's coverage follows the verifier's verdict |
+| F6b | **wired** — PRD-013's boundary after the executor, only when a goal is active | `src/commands/turn-lanes.ts` | `tests/wiring.spec.ts` |
+| F7b | **wired** — the compiler's `next_stage` is consumed; the lane opens only on `prd_lane`, so the quick path still loads no PRD module | `src/commands/turn-lanes.ts` | `tests/wiring.spec.ts` — `laneLoads` empty on a direct turn, `manager` present on a PRD turn |
+| F4 | **wired** — PRD-023's selection runs before the executor and its excerpts head the worker prompt; the LSP symbols port stays absent (grep/glob only, as PRD-023 allows) | `src/commands/turn-lanes.ts`, `ExecutorDeps.selection` | `tests/wiring.spec.ts` |
 | F12, F15 | **cleaned** — `src/capability/catalog.ts` and the dead `capability.liveCatalog` field deleted; the MCP barrel comment corrected | `git status` | `npx tsc --noEmit` |
 
-**Deferred, waiting on a stable `src/executor/lane.ts`:** F3 (proof gate at the
-executor boundary), F7b (PRD dispatch via `CompileRecord.next_stage`), F6b
-(goal evaluation at the boundary), F4 (exploration pre-generation hook). All
-four land in the executor tail; the call sequences are documented above.
+**All findings F1–F16 are wired or cleaned.** Nothing in the audit remains
+deferred.
+
+**Found while wiring the gate (F3), worth a decision of its own:**
+
+- *The gate has to read records with the hash they were stamped with.* A hash
+  computed in the caller (`workspaceHash(cwd, changedFiles)`) differs from the
+  one `verifyTask` computes after the verifiers ran, so every record reads as
+  stale and no criterion can ever be satisfied. Fixed by exposing
+  `VerifyResult.workspaceHash` and carrying it on `ExecutorOutcome`.
+- *A MEDIUM+ contract requires `runtime_smoke`, which a workspace with no
+  runtime plan can never produce.* `verifyTask` records `not_run`, verification
+  never passes, the turn retries to its budget and blocks, and the gate then
+  reports `MISSING_PROOF`. The compiler already guards exactly this class for
+  `affected_tests` (`src/compiler/index.ts:155-159`); `runtime_smoke` has the
+  same shape and no guard. Not changed here — it is a PRD-022/PRD-004 decision
+  about what a workspace without a runtime plan may be required to prove.
 
 **Not mine:** during the same window another writer wired the adaptive router —
 `src/executor/lane.ts` now imports `selectRoute`, `dispatchRequest` and
