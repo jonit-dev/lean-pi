@@ -30,7 +30,10 @@ import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContex
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
 import { registerMcpCommand } from "./mcp/index.js";
+import { createSessionHost, registerCommandSurface } from "./commands/index.js";
+import { resolveCostConfig } from "./telemetry/index.js";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { defaultSkillRoots, scanSkills, createSkillControl } from "./capabilities/skills.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
@@ -162,7 +165,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// MCP disclosure (PRD-006): `/mcp` plus the provider that fills
 	// `capabilities.mcps`; registered after the provider reset above.
 	registerMcpCommand(commands, { cwd, config, home: homedir(), env });
-
 	const jev = createJevClient({
 		config,
 		cwd,
@@ -186,6 +188,16 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	const skillRecords = scan();
 	const skillControl = createSkillControl(config.skills.state, (state) => writeSkillsState(cwd, state));
 	registerSkillsCommands(commands, { records: skillRecords, control: skillControl, reload: scan });
+	// The command and session surface (PRD-016). The host points at Pi's own
+	// session manager: LeanPi keeps no session records of its own.
+	registerCommandSurface(commands, {
+		cwd,
+		config,
+		host: createSessionHost({ cwd, manager: SessionManager.create(cwd, join(cwd, ".leanpi", "sessions")) }),
+		jev,
+		cost: resolveCostConfig(config),
+		env,
+	});
 	registerCapabilityProvider({
 		kind: "skills",
 		supply: async (draft) => {
@@ -431,6 +443,13 @@ export * from "./mcp/index.js";
 export * from "./review/index.js";
 export * from "./proof/index.js";
 export * from "./capability/index.js";
+export * from "./routing/index.js";
+export { levenshtein, upsertCommand } from "./commands/registry.js";
+export type { Command, CommandInit } from "./commands/registry.js";
+export { createCommandSurface, createSessionHost, OWNED_COMMANDS, registerCommandSurface } from "./commands/index.js";
+export type { CommandSurface, CommandSurfaceDeps, ProbeResult, RoleBinding, SessionHost } from "./commands/index.js";
+export { applyRoutePins, clearRoutePins, pinOwner, pinnedDecision, routePins, setRoutePins } from "./compiler/pins.js";
+export type { RoutePins } from "./compiler/pins.js";
 export * from "./todo/index.js";
 export * from "./goal/index.js";
 export * from "./rtk/index.js";
