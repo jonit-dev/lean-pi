@@ -66,7 +66,7 @@ Skill discovery itself (global roots `/home/joao/.claude/skills`, `/home/joao/.c
 
 ## JEV Decision Sites
 
-All four sites register in PRD-002's decision-site registry with id, question set, return type, confidence threshold, fallback and telemetry tag.
+All four sites register in PRD-002's decision-site registry with id, question set, return type, `consequence` class, fallback and telemetry tag — numeric thresholds are `src/jev/confidence.ts`'s, never a registry field.
 
 | Decision | Atomic question(s) | Return type | Deterministic fallback when JEV off | Value rating |
 |---|---|---|---|---|
@@ -143,7 +143,7 @@ All four sites register in PRD-002's decision-site registry with id, question se
 **Status:** NOT STARTED
 **ACs:** AC-5, AC-6, AC-7, AC-8
 **Files:**
-- `src/compiler/route.ts` (new) — the §14 matrix table, deviation application, `routing.deviation` record.
+- `src/compiler/route.ts` (new) — the §14 matrix table, deviation application, `routing.deviation` record, and `selectRoute(contract, candidates)` — the single selection entry point PRD-020 edits in every phase rather than the router being replaced.
 - `src/compiler/state.ts` (new) — `PlanningState`, `ExecutionState`, `VerificationState`, `ReviewState`, `TaskState`.
 - `src/compiler/index.ts` (new) — `compileTask` composition, contract freeze, per-site telemetry rows.
 - `src/index.ts` (edited) — re-export `compileTask`, `ExecutionContract`, `TaskState`.

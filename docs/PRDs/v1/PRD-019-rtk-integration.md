@@ -20,11 +20,11 @@ Files inspected: `docs/PRDs/v1/ROADMAP.md` §19 (modes and the JetBrains counter
 
 ## Solution
 
-Reduction plugs into the boundary PRD-014 already owns, not into each tool. Every large tool result routes through `storeToolOutput()` in `src/context/artifacts.ts`; RTK becomes one optional reducer call inside that function. Consequence: one wiring point covers shell, test runners, build output and any future tool, and the raw-retention guarantee (FR-113) is the store's existing behavior rather than new bookkeeping.
+Reduction plugs into the boundary PRD-014 already owns, not into each tool. Every large tool result routes through `capture()` in `src/context/artifacts.ts`; RTK becomes one optional reducer call inside that function. Consequence: one wiring point covers shell, test runners, build output and any future tool, and the raw-retention guarantee (FR-113) is the store's existing behavior rather than new bookkeeping.
 
 Consumer flow:
 
-> user issues a task → executor runs a shell/test tool → tool result reaches `storeToolOutput()` (PRD-014) → `reduceToolOutput()` (`src/context/rtk.ts`) applies or skips reduction per mode → executor context receives the compact text plus an `artifact://` reference → the executor (or the user, via the artifact store) expands that reference and gets the exact original bytes back.
+> user issues a task → executor runs a shell/test tool → tool result reaches `capture()` (PRD-014) → `reduceToolOutput()` (`src/context/rtk.ts`) applies or skips reduction per mode → executor context receives the compact text plus an `artifact://` reference → the executor (or the user, via the artifact store) expands that reference and gets the exact original bytes back.
 
 Modes, per ROADMAP §19 `rtk: off | on | auto | experiment`:
 
@@ -69,7 +69,7 @@ The rating is deliberately weak, so the deterministic rule is the shipped behavi
 
 | Capability | Reachable consumer/trigger | Replaces / disposition | Evidence |
 |---|---|---|---|
-| Tool-output reduction | Session shell/test tool call → `storeToolOutput()` in `src/context/artifacts.ts` (created in PRD-014, reducer hook added in Phase 1) → `reduceToolOutput()` in `src/context/rtk.ts` (created in Phase 1) | Replaces raw tool text in executor context; no prior reducer exists. Raw bytes continue to be the store's canonical copy | AC-1 |
+| Tool-output reduction | Session shell/test tool call → `capture()` in `src/context/artifacts.ts` (created in PRD-014, reducer hook added in Phase 1) → `reduceToolOutput()` in `src/context/rtk.ts` (created in Phase 1) | Replaces raw tool text in executor context; no prior reducer exists. Raw bytes continue to be the store's canonical copy | AC-1 |
 | Raw-output recovery | Executor/user artifact expansion → `artifact://` reference resolved by `src/context/artifacts.ts` (created in PRD-014) | Unchanged store contract; this PRD only guarantees reduction never bypasses it | AC-1, AC-3 |
 | RTK mode configuration | Session startup → `LeanPiConfig.rtk` in `src/core/config.ts` (created in PRD-001, field added in Phase 1) | Replaces an absent setting; no legacy flag to migrate | AC-2, AC-4 |
 | `rtk.reduction_policy` JEV site | Ambiguous-band tool output → `reduceToolOutput()` (created in Phase 1) → site registered with the decision-site registry in `src/jev/registry.ts` (created in PRD-002, registration added in Phase 2) | Adds an optional, default-off override above the deterministic rule; the rule remains the shipped path | AC-5 |
@@ -80,9 +80,9 @@ The rating is deliberately weak, so the deterministic rule is the shipped behavi
 #### Phase 1: Optional reduction with guaranteed raw recovery
 **Status:** NOT STARTED
 **ACs:** AC-1, AC-2, AC-3
-**Files:** `src/context/rtk.ts` (new — `reduceToolOutput()`, process invocation, timeout, failure fallback); `src/context/artifacts.ts` (edit — call the reducer inside `storeToolOutput()` after the raw bytes are persisted, never before); `src/core/config.ts` (edit — `rtk: 'off' | 'on' | 'auto' | 'experiment'` plus output-class thresholds and binary path/timeout settings); `tests/rtk.test.ts` (new).
+**Files:** `src/context/rtk.ts` (new — `reduceToolOutput()`, process invocation, timeout, failure fallback); `src/context/artifacts.ts` (edit — call the reducer inside `capture()` after the raw bytes are persisted, never before); `src/core/config.ts` (edit — `rtk: 'off' | 'on' | 'auto' | 'experiment'` plus output-class thresholds and binary path/timeout settings); `tests/rtk.test.ts` (new).
 **Implementation:** Persist raw bytes, exit status and timestamp to the artifact store first, then attempt reduction; the compact text always carries the resulting `artifact://` reference. Invoke the configured reducer command over stdin/stdout with a timeout; treat spawn failure (ENOENT), non-zero exit, timeout and empty/invalid output as "unavailable" and return the raw text unchanged while recording the reason. Never throw into the tool-call path. Binary path is configurable with a bare command name as the discovery default; no absolute path is hard-coded.
-**Verification:** E1 — vitest through `storeToolOutput()` with a fixture command emitting >64 KB: assert the executor-visible text is smaller and ends in an `artifact://` reference, assert SHA-256 of the expanded artifact equals SHA-256 of the original bytes (AC-1); assert `rtk: off` yields identical text and zero reducer spawns using a spawn counter, which also proves the reducer is genuinely exercised in the `on` case rather than mocked away (AC-2); assert the ENOENT, non-zero-exit and timeout paths each return raw output and mark unavailability (AC-3). Red comes from the missing reducer hook before Phase 1 lands.
+**Verification:** E1 — vitest through `capture()` with a fixture command emitting >64 KB: assert the executor-visible text is smaller and ends in an `artifact://` reference, assert SHA-256 of the expanded artifact equals SHA-256 of the original bytes (AC-1); assert `rtk: off` yields identical text and zero reducer spawns using a spawn counter, which also proves the reducer is genuinely exercised in the `on` case rather than mocked away (AC-2); assert the ENOENT, non-zero-exit and timeout paths each return raw output and mark unavailability (AC-3). Red comes from the missing reducer hook before Phase 1 lands.
 **Checkpoint:** pending
 
 #### Phase 2: `auto`/`experiment` modes, per-call decision records, and the default-off JEV policy site
