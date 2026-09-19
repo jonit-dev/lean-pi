@@ -1,7 +1,7 @@
 /**
  * Public surface of MCP disclosure (PRD-006). `src/index.ts` re-exports this
- * barrel; `activate()` builds the runtime, registers the provider and calls
- * `registerMcpCommand`.
+ * barrel; `activate()` calls `registerMcpCommand` for the `/mcp` surface and
+ * `registerMcpDisclosure` for the provider that fills `capabilities.mcps`.
  */
 export * from "./catalog.js";
 export * from "./client.js";

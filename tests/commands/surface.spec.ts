@@ -9,11 +9,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { compileTask, createArtifactStore, createCommandRegistry, setCompilerContext } from "../../src/index.js";
+import { compileTask, createCommandRegistry, setCompilerContext } from "../../src/index.js";
 import { createSessionHost, registerCommandSurface } from "../../src/commands/index.js";
-import { registerGoalCommands } from "../../src/goal/index.js";
-import { registerPrdCommandsLazily } from "../../src/prd/dispatch.js";
-import { registerReviewCommand } from "../../src/review/commands.js";
 import { emitRunTelemetry, createRunCollector, registerCostCommand, resolveCostConfig } from "../../src/telemetry/index.js";
 import { bootSession, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
@@ -76,14 +73,9 @@ describe("/help, /status and /config (PRD-016 Phase 1)", () => {
 					host: createSessionHost({ cwd, manager: session.session.sessionManager }),
 					jev: session.jev,
 				});
-				// The remaining shared-surface commands, registered by their owning PRDs.
-				registerGoalCommands(session.commands, { cwd, config: session.activation.config });
-				registerReviewCommand(session.commands, { cwd, config: session.activation.config });
-				registerPrdCommandsLazily(session.commands, {
-					cwd,
-					config: session.activation.config,
-					artifactStore: createArtifactStore({ sessionDir: join(cwd, "artifacts") }),
-				});
+				// The remaining shared-surface commands are registered by `activate()`
+				// itself (PRD-011/012/013/025), so a booted session carries them without
+				// the test registering anything by hand.
 
 				const help = await session.commands.dispatch("/help", { cwd });
 				expect(help.ok).toBe(true);
@@ -91,7 +83,7 @@ describe("/help, /status and /config (PRD-016 Phase 1)", () => {
 					expect(help.text).toContain(`/${name}`);
 				}
 				// The commands other PRDs registered into the same map, with their own summaries.
-				for (const name of ["goal", "review", "prd", "skills", "mcp", "permissions", "jev", "cost"]) {
+				for (const name of ["goal", "review", "prd", "todo", "skills", "mcp", "permissions", "jev", "cost"]) {
 					expect(help.text).toContain(`/${name}`);
 				}
 				expect(help.text).toContain("(PRD-015)");

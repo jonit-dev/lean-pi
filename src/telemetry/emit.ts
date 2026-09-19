@@ -118,8 +118,12 @@ export function emitRunTelemetry(
 export interface TurnTelemetryOptions {
 	/** Created at run start by the caller that knows the run's identity. */
 	collector: RunCollector;
-	/** Verdicts for this turn, copied into the record. */
-	verdict: RunVerdict;
+	/**
+	 * Verdicts for this turn, copied into the record. A function is evaluated after
+	 * the turn ran, which is the only way a caller can report what the turn proved
+	 * rather than what it hoped for.
+	 */
+	verdict: RunVerdict | ((context: TurnContext) => RunVerdict | Promise<RunVerdict>);
 	/** Defaults to the cost surface of `deps.config`. */
 	cost?: CostConfig;
 	prdUsed?: string | null;
@@ -137,7 +141,8 @@ export async function runTurnWithTelemetry(
 ): Promise<TurnContext> {
 	const context = await runTurn(turn, deps);
 	if (context.contract) {
-		emitRunTelemetry(telemetry.collector, context.contract, telemetry.verdict, {
+		const verdict = typeof telemetry.verdict === "function" ? await telemetry.verdict(context) : telemetry.verdict;
+		emitRunTelemetry(telemetry.collector, context.contract, verdict, {
 			cwd: deps.cwd,
 			cost: telemetry.cost ?? resolveCostConfig(deps.config),
 			...(telemetry.prdUsed === undefined ? {} : { prdUsed: telemetry.prdUsed }),

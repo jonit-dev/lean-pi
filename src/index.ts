@@ -9,6 +9,7 @@
  * `export default activate` is what `pi --extension ./dist/index.js` loads.
  */
 import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	getActivePrefix,
@@ -29,11 +30,23 @@ import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
-import { registerMcpCommand } from "./mcp/index.js";
-import { createSessionHost, registerCommandSurface } from "./commands/index.js";
+import { registerMcpCommand, registerMcpDisclosure } from "./mcp/index.js";
+import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS } from "./commands/index.js";
 import { registerRuntimeVerifiers } from "./runtime/index.js";
 import { registerTurnLanesIfOwned } from "./commands/turn-lanes.js";
-import { resolveCostConfig } from "./telemetry/index.js";
+import { createRunCollector, emitRunTelemetry, resolveCostConfig, runTurnWithTelemetry, type RunVerdict } from "./telemetry/index.js";
+import { createArtifactStore, type ArtifactStore } from "./context/artifacts.js";
+import type { WorkingStateSources } from "./context/working-state.js";
+import { reduceToolOutput } from "./rtk/index.js";
+import { gateFromProofResult, itemsOf, registerTodoCommands, type TodoCarrier, type TodoGate } from "./todo/index.js";
+import { createGoalStore, goalTextSource, registerGoalCommands } from "./goal/index.js";
+import { registerReviewCommand, type ReviewCommandDeps } from "./review/index.js";
+import { createLspProvider } from "./lsp/index.js";
+import { LSP_TOOL_NAMES, registerLspTools } from "./lsp/tools.js";
+import { registerPrdCommandsLazily } from "./prd/dispatch.js";
+import { readPrdState } from "./prd/state.js";
+import { aggregate } from "./verify/aggregate.js";
+import type { EvidenceRecord } from "./verify/evidence.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { defaultSkillRoots, scanSkills, createSkillControl } from "./capabilities/skills.js";
@@ -69,7 +82,17 @@ export interface LeanPiActivation {
 	readonly tools: string[];
 	/** Ordered lane registry used by the per-turn entry point. */
 	registerLane(lane: Lane): void;
-	/** The JEV control-plane client, handed to lanes by reference — never a tool. */
+	/**
+	 * The per-turn fan-in: the entry point hands each finished turn's context back
+	 * so the command surfaces and the todo gate read the turn that just ran. Called
+	 * by both entry points — the interactive hook and `createLeanPiSession()`.
+	 */
+	observeTurn(context: TurnContext): void;
+	/** The session's todo list (PRD-025): the state `/todo` writes and prompts carry. */
+	readonly todo: TodoCarrier;
+	/** PRD-014's working-state sources, read live by every assembled prompt. */
+	readonly workingStateSources: WorkingStateSources;
+	/** The JEV control plane, handed to lanes by reference — never a tool. */
 	readonly jev: JevClient;
 }
 
@@ -144,6 +167,110 @@ function installExecutorPrefix(pi: ExtensionAPI, fallbackPrefix: () => string): 
 	});
 }
 
+/**
+ * The tool-output boundary (PRD-014 AC-1, PRD-019 FR-110–113): every tool result
+ * passes through PRD-019's reducer, which captures the raw bytes into PRD-014's
+ * artifact store first and then decides, per the configured mode, whether the
+ * executor sees the raw text or a bounded summary ending in the `artifact://`
+ * reference. This is the hook PRD-019's consumer flow names; the reducer is the
+ * only caller of `capture()` on this path, so nothing is stored twice.
+ */
+function installToolOutputPipeline(
+	pi: ExtensionAPI,
+	deps: { artifacts: ArtifactStore; cwd: string; config: LeanPiConfig; jev: Pick<JevClient, "ask" | "fallbackCount"> & Partial<Pick<JevClient, "getMode">> },
+): void {
+	pi.on("tool_result", async (event) => {
+		const text = event.content
+			.filter((part): part is { type: "text"; text: string } => part.type === "text")
+			.map((part) => part.text)
+			.join("\n");
+		if (text.length === 0) return undefined;
+		const reduced = await reduceToolOutput(
+			{ output: text, kind: event.toolName, sourceRef: `${event.toolName}:${event.toolCallId}` },
+			{ store: deps.artifacts, config: deps.config, cwd: deps.cwd, jev: deps.jev },
+		);
+		if (reduced.text === text) return undefined;
+		// The non-text parts keep their position; only the text channel is reduced.
+		const rest = event.content.filter((part) => part.type !== "text");
+		return { content: [{ type: "text" as const, text: reduced.text }, ...rest] };
+	});
+}
+
+/**
+ * The §52 verdict a turn's own outcome supports. It claims exactly what the turn
+ * produced: PRD-009's aggregate for verification, PRD-010's decision when the
+ * gate ran, PRD-011's level/verdict when a reviewer ran. A turn that compiled no
+ * contract claims nothing, which is why `success` requires the executor to have
+ * finished and any proof gate that did run to have passed.
+ */
+function verdictOf(context: TurnContext): RunVerdict {
+	const executor = context.executor;
+	const review = executor?.review;
+	return {
+		verification: executor ? aggregate(executor.evidence) : "not_run",
+		proof_gate: context.proof?.decision ?? "not_run",
+		reviewer: review === undefined || review.skipped ? "not_run" : (review.verdict?.decision ?? "not_run"),
+		success: executor?.status === "completed" && (context.proof === undefined || context.proof.decision === "PASS"),
+	};
+}
+
+/**
+ * PRD-014's working-state sources, wired to the state this activation actually
+ * holds: the goal the user set, the active PRD's criteria, what the last turn
+ * changed and what failed, and the items the todo list has not closed. Every
+ * field reads live state, so a `/goal`, `/todo` or `/prd` between two turns
+ * changes the next prompt without anything being copied at activation time.
+ */
+function workingStateSourcesFor(state: { cwd: string; todo: TodoCarrier; lastContext: () => TurnContext | undefined }): WorkingStateSources {
+	const goalStore = createGoalStore(state.cwd);
+	const evidence = (): readonly EvidenceRecord[] => state.lastContext()?.executor?.evidence ?? [];
+	return {
+		goal: goalTextSource(goalStore),
+		acceptance: () => readPrdState(state.cwd)?.criteria.map((criterion) => `${criterion.id}: ${criterion.text}`) ?? [],
+		filesTouched: () => state.lastContext()?.executor?.changedFiles ?? [],
+		failingEvidence: () => {
+			const record = evidence().find((entry) => entry.status !== "pass");
+			return record ? { summary: `${record.kind} ${record.status} (${record.scope})`, workspaceHash: record.workspaceHash } : null;
+		},
+		verificationByKind: () => Object.fromEntries(evidence().map((record) => [record.kind, record.status])),
+		attempts: () => state.lastContext()?.executor?.invocations.length ?? 0,
+		unresolved: () =>
+			itemsOf(state.todo)
+				.filter((item) => item.status !== "done" && item.status !== "dropped")
+				.map((item) => `${item.id}: ${item.text}`),
+	};
+}
+
+/**
+ * The expand affordance PRD-014 AC-2 requires. Once the tool-output pipeline
+ * replaces a large result with a compact record, the only way back to the bytes
+ * is a reference read — this tool is that read, and without it every
+ * `artifact://` an executor sees would be unrecoverable from the session.
+ * Registered next to the baseline surface, so it is present whenever the
+ * pipeline can produce a reference.
+ */
+export const ARTIFACT_TOOL_NAME = "artifact";
+
+function installArtifactTool(pi: ExtensionAPI, artifacts: ArtifactStore): void {
+	pi.registerTool({
+		name: ARTIFACT_TOOL_NAME,
+		label: ARTIFACT_TOOL_NAME,
+		description: "Read the full bytes behind an `artifact://` reference a compacted tool result left behind.",
+		parameters: Type.Object({ ref: Type.String({ description: "An `artifact://<kind>/<id>` reference." }) }),
+		execute: async (_id, params) => {
+			const ref = String((params as { ref?: unknown }).ref ?? "");
+			try {
+				return { content: [{ type: "text" as const, text: artifacts.expand(ref).toString("utf8") }], details: { ref } };
+			} catch (error) {
+				return {
+					content: [{ type: "text" as const, text: `${ref} is not stored: ${error instanceof Error ? error.message : String(error)}` }],
+					details: { ref },
+				};
+			}
+		},
+	});
+}
+
 export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanPiActivation {
 	// Pi's extension API has no cwd at load time, so the loader-driven path
 	// resolves it from the process. `LEANPI_CWD` is the documented override for
@@ -164,6 +291,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	const config = options.config ?? loadConfig(cwd, {}, env);
 	registerBackends(pi, config);
 	const tools = registerBaselineTools(pi, cwd);
+	// PRD-018: the seven LSP tools are registered once and stay inactive until a
+	// turn's compiled mode exposes its group (§15: never on by default). The mode
+	// is applied per turn in `runTurn`.
+	registerLspTools(pi, { root: cwd, config, env });
 	installExecutorPrefix(pi, () => buildStaticPrefix(config));
 
 	// Permission guard (PRD-017): installed after the baseline tools so the
@@ -175,13 +306,38 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// `leanpi.config.yaml`, and re-reading one there would fail on the
 	// "no model roles configured" check for a file the caller never used.
 	const permissions = loadPermissionState(cwd, env as NodeJS.ProcessEnv, { models: config.models, backends: config.backends });
-	installPermissionGuard(pi, { cwd, state: permissions, env });
+	// One session manager for the whole activation: the command surface points at
+	// it and the artifact store keys its directory off its id, so a record and the
+	// bytes it references can never belong to two different sessions.
+	const manager = SessionManager.create(cwd, join(cwd, ".leanpi", "sessions"));
+	const artifacts = createArtifactStore({
+		sessionDir: join(cwd, ".leanpi", "artifacts", manager.getSessionId()),
+		thresholdBytes: config.context.artifact_threshold_bytes,
+	});
+	installArtifactTool(pi, artifacts);
+	// The redaction channel only fires when a secret was actually redacted (PRD-017);
+	// the general capture path is the tool-output pipeline below, which sees the
+	// already-redacted text because it runs after this handler.
+	installPermissionGuard(pi, {
+		cwd,
+		state: permissions,
+		env,
+		onOutput: (redacted) => {
+			try {
+				artifacts.capture({ output: redacted, kind: "tool_output", sourceRef: "guard" });
+			} catch {
+				// A store failure must never turn a tool result into an error.
+			}
+		},
+	});
 	registerPermissionsCommand(commands, { cwd, state: permissions, env });
 	// Cost telemetry (PRD-015): `/cost` reads the same store `/status` will read.
 	registerCostCommand(commands, { cwd });
 	// MCP disclosure (PRD-006): `/mcp` plus the provider that fills
-	// `capabilities.mcps`; registered after the provider reset above.
-	registerMcpCommand(commands, { cwd, config, home: homedir(), env });
+	// `capabilities.mcps`; registered after the provider reset above. The provider
+	// reads the same runtime the command built, so a mid-session `/mcp disable` is
+	// visible to the next compile.
+	const mcpRuntime = registerMcpCommand(commands, { cwd, config, home: homedir(), env });
 	const jev = createJevClient({
 		config,
 		cwd,
@@ -216,15 +372,23 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	registerRuntimeVerifiers();
 
 	// The command and session surface (PRD-016). The host points at Pi's own
-	// session manager: LeanPi keeps no session records of its own.
+	// session manager: LeanPi keeps no session records of its own. The same
+	// manager keys the artifact store, so a compaction record and the bytes it
+	// references always resolve inside one session directory.
 	registerCommandSurface(commands, {
 		cwd,
 		config,
-		host: createSessionHost({ cwd, manager: SessionManager.create(cwd, join(cwd, ".leanpi", "sessions")) }),
+		host: createSessionHost({ cwd, manager }),
 		jev,
 		cost: resolveCostConfig(config),
 		env,
 	});
+
+	// The three capability providers that fill the contract's slots (PRD-004's
+	// single registration point, called after the reset above so one activation
+	// cannot stack on another's): skills (PRD-005), MCP (PRD-006) and LSP
+	// (PRD-018). RTK declares no provider — the deterministic reducer is wired at
+	// the tool-output boundary below, where tool output actually exists.
 	registerCapabilityProvider({
 		kind: "skills",
 		supply: async (draft) => {
@@ -232,10 +396,55 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			return selection.skills;
 		},
 	});
+	registerMcpDisclosure({ cwd, config, home: homedir(), client: jev, catalog: () => mcpRuntime.catalog() });
+	registerCapabilityProvider(createLspProvider({ config, root: cwd, env }));
+	// PRD-019 at PRD-014's boundary: capture every tool result into the artifact
+	// store, then hand the executor the reduced or raw text the configured mode
+	// decides. The RtkConfig's default mode is the measurement-gated one, so this
+	// is a capture path first and a reduction path only where that mode allows.
+	installToolOutputPipeline(pi, { artifacts, cwd, config, jev });
+
+	// The command surfaces PRD-016 does not own. Each of these was implemented and
+	// reachable only from tests before: `/todo` (PRD-025), `/goal` (PRD-013),
+	// `/review` (PRD-011) and `/prd` (PRD-012). Their per-turn inputs arrive through
+	// `observeTurn` below, so a registered handler reads the turn that just ran
+	// rather than a snapshot of activation time.
+	const todoCarrier: TodoCarrier = {};
+	let todoGate: TodoGate | undefined;
+	const reviewDeps: ReviewCommandDeps = { cwd, config, artifacts };
+	// The same replace-not-stack rule the owned twelve follow: a second activation
+	// in one process supersedes these handlers instead of colliding with them.
+	for (const name of PRD_OWNED_COMMANDS) if (commands.has(name)) commands.unregister(name);
+	registerTodoCommands(commands, {
+		cwd,
+		state: todoCarrier,
+		gate: { verdict: (criterionId) => todoGate?.verdict(criterionId) },
+		prd: () => readPrdState(cwd),
+	});
+	registerGoalCommands(commands, { cwd, config, prd: () => readPrdState(cwd), sessionId: manager.getSessionId() });
+	registerReviewCommand(commands, reviewDeps);
+	registerPrdCommandsLazily(commands, { cwd, config, artifactStore: artifacts, jev });
+
+	// The per-turn fan-in: lanes write the turn's compiled state onto the context,
+	// the entry points hand it back here, and the command surfaces, the working
+	// state and the todo gate read it. Nothing else stores per-turn state here.
+	let lastContext: TurnContext | undefined;
+	const workingStateSources = workingStateSourcesFor({ cwd, todo: todoCarrier, lastContext: () => lastContext });
+	const observeTurn = (context: TurnContext): void => {
+		lastContext = context;
+		// A new proof result replaces the previous one; a turn without one keeps the
+		// last verdict rather than silently clearing the todo gate.
+		if (context.proof) todoGate = gateFromProofResult(context.proof);
+		const invocation = context.executor?.invocations[context.executor.invocations.length - 1];
+		reviewDeps.contract = context.contract;
+		reviewDeps.evidence = context.executor?.evidence;
+		reviewDeps.executor = invocation ? { backend: invocation.backend, model: null } : undefined;
+		reviewDeps.recordedLevel = () => context.executor?.review.level;
+	};
 
 	// The compiler → executor chain (PRD-004 → PRD-007): the compiler lane puts a
 	// contract on the turn context and the executor lane is its only consumer.
-	registerTurnLanesIfOwned({ cwd, config, jev });
+	registerTurnLanesIfOwned({ cwd, config, jev, artifacts, todos: todoCarrier, sessionId: manager.getSessionId() });
 
 	const declinedFor = credentialsPath(env);
 	registerJevCommands(commands, {
@@ -269,10 +478,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// In the interactive `pi --extension` flow the user's prompt reaches Pi, not
 	// `runTurn()`, so the lane phase runs here — exactly once per turn, and never
-	// a second time when the prompt itself came from `runTurn()`.
+	// a second time when the prompt itself came from `runTurn()`. The turn's
+	// context is handed to the same fan-in the programmatic path uses, and a turn
+	// that compiled a contract writes its §52 record here: this path owns no
+	// session object, so the verdict is read off the executor's own outcome.
 	pi.on("before_agent_start", async (event) => {
 		if (isTurnInFlight()) return;
-		await runLanes(
+		const context = await runLanes(
 			{ text: event.prompt },
 			{
 				turn: { text: event.prompt },
@@ -281,9 +493,19 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 				config,
 				modelRef: resolveRole(config, "balanced"),
 				skills: [],
+				todo: todoCarrier,
+				workingStateSources,
 				prefix: "",
 			},
 		);
+		observeTurn(context);
+		if (context.contract) {
+			emitRunTelemetry(createRunCollector({ taskId: event.prompt.slice(0, 64), sessionId: manager.getSessionId() }), context.contract, verdictOf(context), {
+				cwd,
+				cost: resolveCostConfig(config),
+				...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
+			});
+		}
 	});
 
 	return {
@@ -293,6 +515,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		config,
 		tools,
 		jev,
+		observeTurn,
+		todo: todoCarrier,
+		workingStateSources,
 		registerLane(lane) {
 			registerTurnLane(lane);
 		},
@@ -379,27 +604,52 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 		);
 	}
 
+	const sessionManager = options.sessionManager ?? SessionManager.inMemory();
 	const { session } = await createAgentSessionFromServices({
 		services,
-		sessionManager: options.sessionManager ?? SessionManager.inMemory(),
+		sessionManager,
 		model,
 		noTools: "builtin",
-		tools: [...BASELINE_TOOL_NAMES],
+		// The allowlist admits the LSP tools to the registry; the mode, applied per
+		// turn by `runTurn`, decides which of them are active. They start inactive
+		// (§15), exactly as the LSP tool tests boot their session.
+		tools: [...BASELINE_TOOL_NAMES, ...LSP_TOOL_NAMES, ARTIFACT_TOOL_NAME],
 	});
+	// The five baseline names plus the expand affordance: the LSP tools stay
+	// inactive until a turn's mode selects its group.
+	session.setActiveToolsByName([...BASELINE_TOOL_NAMES, ARTIFACT_TOOL_NAME]);
 
+	// One §52 record per turn that compiled a contract: the seam runs the real
+	// `runTurn()`, hands the context to the activation's fan-in, and prices the
+	// turn from the collector the run accumulated into. A turn with no contract
+	// (native executor roles) writes nothing here — it was not a compiled run.
+	const sessionId = sessionManager.getSessionId();
 	return {
 		session,
 		activation: loaded,
 		jev: loaded.jev,
 		commands: options.commands ?? commandRegistry,
 		leanpi: { name: LEANPI_EXTENSION_NAME, version: LEANPI_VERSION },
-		runTurn: (turn) =>
-			runTurn(typeof turn === "string" ? { text: turn } : turn, {
-				config: loaded.config,
-				cwd,
-				session,
-				runtime: services.modelRuntime,
-			}),
+		runTurn: (turn) => {
+			const input = typeof turn === "string" ? { text: turn } : turn;
+			return runTurnWithTelemetry(
+				input,
+				{
+					config: loaded.config,
+					cwd,
+					session,
+					runtime: services.modelRuntime,
+					todo: loaded.todo,
+					workingStateSources: loaded.workingStateSources,
+					onContext: (context) => loaded.observeTurn(context),
+				},
+				{
+					collector: createRunCollector({ taskId: input.text.slice(0, 64), sessionId }),
+					verdict: (context) => verdictOf(context),
+					cost: resolveCostConfig(loaded.config),
+				},
+			);
+		},
 		modelFor(role) {
 			const roleRef = resolveRole(loaded.config, role);
 			return { provider: roleRef.backend, model: roleRef.model };
@@ -422,7 +672,6 @@ export {
 	getActivePrefix,
 	listLanes,
 	registerLane,
-	renderSkillBlock,
 	runLanes,
 	runTurn,
 	setActivePrefix,

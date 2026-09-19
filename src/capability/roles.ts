@@ -30,8 +30,6 @@ export interface CapabilitySetting {
 	/** Days after which the oldest role-filling record is reported stale. */
 	stalenessDays?: number;
 	roles?: Partial<Record<ModelRole, CapabilityRoleSetting>>;
-	/** Owner-gated live catalog (see `catalog.ts`); off unless its env flag is set. */
-	liveCatalog?: boolean;
 }
 
 export interface ResolvedCapabilitySetting {

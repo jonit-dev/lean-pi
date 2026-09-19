@@ -12,8 +12,7 @@
  * null (never throws) when the ranking cannot be read or does not validate, and
  * the call site keeps using the static `models:` map instead.
  *
- * The owner-gated live catalog fetch lives in `catalog.ts`, deliberately *not*
- * re-exported here: nothing on this path can reach the network.
+ * Nothing on this path can reach the network: the ranking is the committed file.
  */
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

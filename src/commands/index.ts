@@ -47,6 +47,14 @@ export const OWNED_COMMANDS = [
 ] as const;
 
 /**
+ * The commands the other PRDs own and `activate()` registers: PRD-025's `/todo`,
+ * PRD-013's `/goal`, PRD-011's `/review` and PRD-012's `/prd`. They are named
+ * here so a second activation in one process replaces them like the owned twelve
+ * rather than colliding with them (`register` rejects a duplicate name).
+ */
+export const PRD_OWNED_COMMANDS = ["todo", "goal", "review", "prd"] as const;
+
+/**
  * Register the owned handlers and return the session state they share. A later
  * session supersedes the earlier handlers, exactly like `/jev` and `/skills`, so
  * `activate()` may run more than once in one process.

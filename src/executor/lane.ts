@@ -123,6 +123,13 @@ export interface ExecutorDeps {
 	onPrdLane?: () => void;
 	/** PRD-022's worktree isolation, used when `limits.isolation === "worktree"`. */
 	isolate?: (run: (cwd: string) => Promise<ExecutorOutcome>) => Promise<ExecutorOutcome>;
+	/**
+	 * PRD-023's pre-generation selection, as the executor lane passes it: the
+	 * excerpts of the files the governor chose, prepended to the worker prompt so
+	 * the executor starts from a bounded selection rather than reading the
+	 * repository itself.
+	 */
+	selection?: { excerpts: string };
 	/** Test seam: PRD-020's clearing candidate source; defaults to the bundled ranking. */
 	clearing?: ClearingSource;
 	now?: () => number;
@@ -308,7 +315,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 			{
 				objective: task.objective,
 				role,
-				prompt: [renderExecutorPrompt(promptTask), ...(carried?.lines ?? [])].join("\n"),
+				prompt: [renderExecutorPrompt(promptTask), ...(deps.selection ? [deps.selection.excerpts] : []), ...(carried?.lines ?? [])].join("\n"),
 				...(widened.length > 0 ? { files: [...widened] } : {}),
 				allowedTools: [...EXECUTOR_TOOLS],
 				budget: task.budget,

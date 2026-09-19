@@ -110,7 +110,9 @@ describe("PRD-002 Phase 1 — typed batched client", () => {
 		expect(toolNamesOf(agentBackend.requests[0]?.body ?? {})).toEqual([]);
 		await session.runTurn("try to call jev");
 		const offered = toolNamesOf(agentBackend.requests[0]!.body);
-		expect(offered).toEqual(["edit", "execute", "read", "search", "write"]);
+		// AC-2's claim is the absence of a JEV tool, not the exact surface: the
+		// baseline five must be offered and nothing named `jev*` may be.
+		expect(offered).toEqual(expect.arrayContaining(["edit", "execute", "read", "search", "write"]));
 		expect(offered.some((name) => name.startsWith("jev"))).toBe(false);
 
 		// The fabricated call is rejected as an unknown tool, and JEV saw nothing.

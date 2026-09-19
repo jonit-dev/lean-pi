@@ -15,7 +15,7 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { LEANPI_VERSION, PACKAGE_ROOT, clearLanes, listLanes, registerLane, writeUserDefault } from "../src/index.js";
+import { ARTIFACT_TOOL_NAME, LEANPI_VERSION, LSP_TOOL_NAMES, PACKAGE_ROOT, clearLanes, listLanes, registerLane, writeUserDefault } from "../src/index.js";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubBackend, type StubStep } from "./helpers/stub-backend.js";
 
@@ -95,7 +95,13 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 			expect(loaded.errors).toEqual([]);
 			expect(loaded.extensions).toHaveLength(1);
 			expect(loaded.extensions[0]!.resolvedPath).toBe(entry);
-			expect([...loaded.extensions[0]!.tools.keys()].sort()).toEqual(["edit", "execute", "read", "search", "write"]);
+			// Registered is not active: PRD-018's seven LSP tools are in the registry
+			// so a turn's mode can expose its group, and the session boots with the
+			// five baseline names active (asserted through `activation.tools` above
+			// and by the AC-2 turn below).
+			expect([...loaded.extensions[0]!.tools.keys()].sort()).toEqual(
+				["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME, ...LSP_TOOL_NAMES].sort(),
+			);
 		} finally {
 			delete process.env.LEANPI_CWD;
 		}
@@ -132,10 +138,12 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 		expect(probeFired).toBe(1);
 		expect(context.modelRef).toEqual({ backend: "local", model: "cheap-fast", type: "native" });
 
-		// Every request offered exactly the five baseline tools.
+		// Every request offered the five baseline tools plus PRD-014's expand
+		// affordance, which the tool-output pipeline needs whenever it can turn a
+		// large result into an `artifact://` reference. The LSP group stays inactive.
 		expect(stub.requests).toHaveLength(6);
 		for (const request of stub.requests) {
-			expect(toolNamesOf(request.body)).toEqual(["edit", "execute", "read", "search", "write"]);
+			expect(toolNamesOf(request.body)).toEqual(["artifact", "edit", "execute", "read", "search", "write"]);
 		}
 
 		// write → search → read → edit → execute, each observed at the next request.
