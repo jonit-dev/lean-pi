@@ -2,19 +2,19 @@
 
 Slice of [`ROADMAP.md`](./ROADMAP.md) into 26 implementable PRDs. Every functional requirement in ROADMAP §51 has exactly one owning PRD; every roadmap section that describes buildable behavior is claimed below.
 
-**Status:** all PRDs `NOT STARTED`. Nothing is implemented; the repository contains only these documents.
+**Status:** PRD-001–005 are `DONE` (verified 2026-09-19; code and specs at branch `prd-implementation` `5d5881a`) and live in [`done/`](./done/); the other 21 are `NOT STARTED`.
 
-Every number in this document is derived from the PRD files on disk — phase counts from their `#### Phase` headings, box counts from their `- [ ] AC-` lines, dependencies and FR ownership from their headers — not maintained by hand.
+Every number in this document is derived from the PRD files on disk — phase counts from their `#### Phase` headings, box counts from their `AC-` lines, dependencies and FR ownership from their headers — not maintained by hand.
 
 ## PRDs
 
 | PRD | Title | Complexity | Depends on | Phases / boxes | Owns |
 |---|---|---|---|---|---|
-| [001](./PRD-001-harness-foundation.md) | Harness Foundation | 5 MEDIUM | — | 3 / 9 | FR-001, 002, 040–045 |
-| [002](./PRD-002-jev-control-plane.md) | JEV Control Plane | 5 HIGH | 001 | 5 / 13 | FR-010, 011, 020 |
-| [003](./PRD-003-task-scout.md) | Task Scout | 3 LOW | 001 | 2 / 4 | §9 packet |
-| [004](./PRD-004-task-compiler-router.md) | Task Compiler & Router | 4 MEDIUM | 002, 003 | 4 / 11 | FR-003–006, 012, 013 |
-| [005](./PRD-005-skill-disclosure.md) | Skill Disclosure | 3 LOW | 002, 004, 014 | 2 / 7 | FR-014, 070–076, 145 |
+| [001](./done/PRD-001-harness-foundation.md) | Harness Foundation | 5 MEDIUM | — | 3 / 9 | FR-001, 002, 040–045 |
+| [002](./done/PRD-002-jev-control-plane.md) | JEV Control Plane | 5 HIGH | 001 | 5 / 13 | FR-010, 011, 020 |
+| [003](./done/PRD-003-task-scout.md) | Task Scout | 3 LOW | 001 | 2 / 4 | §9 packet |
+| [004](./done/PRD-004-task-compiler-router.md) | Task Compiler & Router | 4 MEDIUM | 002, 003 | 4 / 11 | FR-003–006, 012, 013 |
+| [005](./done/PRD-005-skill-disclosure.md) | Skill Disclosure | 3 LOW | 002, 004, 014 | 2 / 7 | FR-014, 070–076, 145 |
 | [006](./PRD-006-mcp-disclosure.md) | MCP Disclosure | 7 HIGH | 002, 004, 014, 017 | 4 / 9 | FR-015, 080–084, 086, 087, 146 |
 | [007](./PRD-007-executor-lane.md) | Executor Lane | 5 MEDIUM | 004, 008, 009, 011 | 4 / 9 | FR-019, 060, 063, 065–067 |
 | [008](./PRD-008-backend-workers.md) | Backend Workers | 4 MEDIUM | 001, 017 | 4 / 9 | FR-046, 050–055, 057, 058 |

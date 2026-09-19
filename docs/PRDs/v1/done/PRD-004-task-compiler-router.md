@@ -1,6 +1,6 @@
 # PRD-004 — Task Compiler & Router
 
-**Status:** NOT STARTED
+**Status:** DONE (verified 2026-09-19; code and specs at `prd-implementation` `5d5881a`)
 **Complexity:** 4 (MEDIUM)
 **Owner:** joao
 **Depends on:** PRD-002, PRD-003
@@ -77,17 +77,17 @@ All four sites register in PRD-002's decision-site registry with id, question se
 
 ## Acceptance Criteria
 
-- [ ] AC-1 [local; actor: agent]: `compileTask()` called through the package entry on the §62 fixture ("change the button text from Deploy to Publish") yields `prd_required: false`, and on the §64 fixture ("replace the networking implementation while maintaining compatibility") yields `prd_required: true` with the PRD lane as the dispatched next stage — Evidence: pending.
-- [ ] AC-2 [local; actor: agent]: With JEV answers rejected by `accept()` for their registered `consequence` class, a low-risk bounded fixture task compiles to `prd_required: false` with `review_risk` one level above the deterministic review-risk result for the same packet, while an architectural fixture task compiles to `prd_required: true` (§10 low-confidence behavior, §50 asymmetry) — Evidence: pending.
-- [ ] AC-3 [local; actor: agent]: With the JEV client unavailable (constructor throws on `ask`), `compileTask()` still returns a complete contract — gate resolved by heuristics, `execution_complexity: MEDIUM`, executor `balanced` — with `fallback_used: true` recorded for each of the four sites, and no exception reaches the caller (§49) — Evidence: pending.
-- [ ] AC-4 [local; actor: agent]: The mechanical-codemod fixture compiles to `execution_complexity: LOW` (E0) with `review_risk: R2` or higher, and the exhaustively-tested-algorithm fixture compiles to `execution_complexity: HIGH` (E3) with `review_risk: R0`, proving the axes vary independently (§13). The same two fixtures are then compiled with the JEV client throwing on every `ask()`, and the axes still diverge — LOW with `review_risk >= R2` and HIGH with `R0` — so the deterministic fallback cannot be a function of the complexity band either — Evidence: pending.
-- [ ] AC-5 [local; actor: agent]: For all six `(prd_required × complexity)` combinations, the compiled contract's `routing.executor_class` and `routing.reviewer_class` equal the resolved six-row table in §Solution cell for cell, with no deviation inputs supplied; the `false/LOW` row is asserted twice — once with `review_risk: R0` expecting `none` and once with `R2` expecting `review_quick` — so the one risk-dependent cell is proved rather than assumed — Evidence: pending.
-- [ ] AC-6 [local; actor: agent]: Supplying a deviation input (the matrix-default executor class marked unavailable) compiles to a different `executor_class` than the matrix default and records `routing.deviation` naming the departed-from default and the reason; with no deviation input the field is absent — Evidence: pending.
-- [ ] AC-7 [local; actor: agent]: The recorded JEV transcript for one full compile contains only atomic questions — every answer is a scalar, enum or score, no answer carries a contract-shaped object, and the number of distinct question ids matches the four registered sites (§8: JEV never generates the contract) — Evidence: pending.
-- [ ] AC-8 [local; actor: agent]: After a compile, mutating `ExecutionState` (recording an attempt) leaves `PlanningState`, `VerificationState` and `ReviewState` byte-identical, and an attempt to write the contract snapshot throws rather than mutating it (FR-004) — Evidence: pending.
-- [ ] AC-9 [local; actor: agent]: The three worked examples compile end-to-end to their documented routes: §62 → quick executor, no skills, no MCP, no semantic review; §63 → balanced executor, debugging skill slot requested, quick reviewer; §64 → PRD lane then strong executor, strong independent reviewer, staged verification (§62–§64, §65). The `lsp` field is deliberately not asserted here — AC-10 already pins it to the scout packet's `lsp_available`, and LSP policy belongs to PRD-018 — Evidence: pending.
-- [ ] AC-10 [local; actor: agent]: With no capability provider registered, the contract's `capabilities` are `skills: []`, `mcps: []`, `lsp` equal to the scout packet's `lsp_available`, `rtk: auto`; registering a stub provider that returns one skill and one MCP makes both appear in the next compiled contract unchanged, proving the slot interface is consumed and not bypassed — Evidence: pending.
-- [ ] AC-11 [local; actor: agent]: Each compiled contract carries `task.required_capability` as `{ min_coding_index: <number>, specialization?: <string> }` derived from the classifier — the §62 fixture's `min_coding_index` strictly below the §64 fixture's — the value is a number and not a tier enum, and the compiler resolves no concrete model (the field stays an annotation PRD-024 compares against its `coding_score`). The executor task packet built from the same contract carries no `required_capability` field at all, keeping PRD-007's §28 whitelist intact — Evidence: pending.
+- [x] AC-1 [local; actor: agent]: `compileTask()` called through the package entry on the §62 fixture ("change the button text from Deploy to Publish") yields `prd_required: false`, and on the §64 fixture ("replace the networking implementation while maintaining compatibility") yields `prd_required: true` with the PRD lane as the dispatched next stage — Evidence: tests/compiler/gate.spec.ts — "AC-1: the §62 task runs direct and the §64 task requires a PRD".
+- [x] AC-2 [local; actor: agent]: With JEV answers rejected by `accept()` for their registered `consequence` class, a low-risk bounded fixture task compiles to `prd_required: false` with `review_risk` one level above the deterministic review-risk result for the same packet, while an architectural fixture task compiles to `prd_required: true` (§10 low-confidence behavior, §50 asymmetry) — Evidence: tests/compiler/gate.spec.ts — "AC-2: below-threshold answers resolve asymmetrically by risk".
+- [x] AC-3 [local; actor: agent]: With the JEV client unavailable (constructor throws on `ask`), `compileTask()` still returns a complete contract — gate resolved by heuristics, `execution_complexity: MEDIUM`, executor `balanced` — with `fallback_used: true` recorded for each of the four sites, and no exception reaches the caller (§49) — Evidence: tests/compiler/gate.spec.ts — "AC-3: an unreachable JEV still yields a complete contract with fallback_used on every site".
+- [x] AC-4 [local; actor: agent]: The mechanical-codemod fixture compiles to `execution_complexity: LOW` (E0) with `review_risk: R2` or higher, and the exhaustively-tested-algorithm fixture compiles to `execution_complexity: HIGH` (E3) with `review_risk: R0`, proving the axes vary independently (§13). The same two fixtures are then compiled with the JEV client throwing on every `ask()`, and the axes still diverge — LOW with `review_risk >= R2` and HIGH with `R0` — so the deterministic fallback cannot be a function of the complexity band either — Evidence: tests/compiler/classify.spec.ts — "AC-4: a mechanical codemod is LOW/wide-risk and a tested algorithm is HIGH/narrow-risk" and "AC-4: the axes still diverge when every JEV call fails".
+- [x] AC-5 [local; actor: agent]: For all six `(prd_required × complexity)` combinations, the compiled contract's `routing.executor_class` and `routing.reviewer_class` equal the resolved six-row table in §Solution cell for cell, with no deviation inputs supplied; the `false/LOW` row is asserted twice — once with `review_risk: R0` expecting `none` and once with `R2` expecting `review_quick` — so the one risk-dependent cell is proved rather than assumed — Evidence: tests/compiler/route.spec.ts — "AC-5: every resolved §Solution row compiles to its documented classes".
+- [x] AC-6 [local; actor: agent]: Supplying a deviation input (the matrix-default executor class marked unavailable) compiles to a different `executor_class` than the matrix default and records `routing.deviation` naming the departed-from default and the reason; with no deviation input the field is absent — Evidence: tests/compiler/route.spec.ts — "AC-6: a deviation is applied and recorded, or absent when nothing deviates".
+- [x] AC-7 [local; actor: agent]: The recorded JEV transcript for one full compile contains only atomic questions — every answer is a scalar, enum or score, no answer carries a contract-shaped object, and the number of distinct question ids matches the four registered sites (§8: JEV never generates the contract) — Evidence: tests/compiler/route.spec.ts — "AC-7: one compile sends only atomic questions — no contract-shaped answer".
+- [x] AC-8 [local; actor: agent]: After a compile, mutating `ExecutionState` (recording an attempt) leaves `PlanningState`, `VerificationState` and `ReviewState` byte-identical, and an attempt to write the contract snapshot throws rather than mutating it (FR-004) — Evidence: tests/compiler/state.spec.ts — "recording an execution attempt leaves the other three containers untouched" and "the assembled contract is frozen: writing the snapshot throws".
+- [x] AC-9 [local; actor: agent]: The three worked examples compile end-to-end to their documented routes: §62 → quick executor, no skills, no MCP, no semantic review; §63 → balanced executor, debugging skill slot requested, quick reviewer; §64 → PRD lane then strong executor, strong independent reviewer, staged verification (§62–§64, §65). The `lsp` field is deliberately not asserted here — AC-10 already pins it to the scout packet's `lsp_available`, and LSP policy belongs to PRD-018 — Evidence: tests/compiler/examples.spec.ts — "AC-9: each example compiles to its documented route".
+- [x] AC-10 [local; actor: agent]: With no capability provider registered, the contract's `capabilities` are `skills: []`, `mcps: []`, `lsp` equal to the scout packet's `lsp_available`, `rtk: auto`; registering a stub provider that returns one skill and one MCP makes both appear in the next compiled contract unchanged, proving the slot interface is consumed and not bypassed — Evidence: tests/compiler/examples.spec.ts — "AC-10: capability slots default to empty and are filled by a registered provider".
+- [x] AC-11 [local; actor: agent]: Each compiled contract carries `task.required_capability` as `{ min_coding_index: <number>, specialization?: <string> }` derived from the classifier — the §62 fixture's `min_coding_index` strictly below the §64 fixture's — the value is a number and not a tier enum, and the compiler resolves no concrete model (the field stays an annotation PRD-024 compares against its `coding_score`). The executor task packet built from the same contract carries no `required_capability` field at all, keeping PRD-007's §28 whitelist intact — Evidence: tests/compiler/classify.spec.ts — "AC-11: the contract carries a numeric coding-index floor and no model id".
 
 ## Integration Ledger
 
@@ -103,7 +103,7 @@ All four sites register in PRD-002's decision-site registry with id, question se
 
 #### Phase 1: Planning gate decides PRD vs direct execution
 
-**Status:** NOT STARTED
+**Status:** DONE
 **ACs:** AC-1, AC-2, AC-3
 **Files:**
 - `src/compiler/gate.ts` (new) — the six §10 questions, code-side combination, low-confidence resolution, deterministic heuristics.
@@ -118,11 +118,11 @@ All four sites register in PRD-002's decision-site registry with id, question se
 5. Error handling: a malformed/partial answer set is treated as low confidence, never as a `false`.
 
 **Verification:** E1 — `npx vitest run tests/compiler/gate.spec.ts`; asserts the §62 and §64 fixtures reach their documented gate outcomes with a scripted JEV stub (AC-1), that below-threshold answers produce the two asymmetric defaults (AC-2), and that a throwing client still yields a decision with `fallback_used` (AC-3). Distinct risks: wrong decision, wrong low-confidence direction, and hard dependence on JEV. Negative control: the fixtures are written before `gate.ts` exists, so the first run reds on missing behavior; additionally the JEV-off case asserts the heuristic path ran by checking the `fallback_used` flag rather than only a non-throw.
-**Checkpoint:** pending
+**Checkpoint:** done
 
 #### Phase 2: Independent complexity and review-risk classification
 
-**Status:** NOT STARTED
+**Status:** DONE
 **ACs:** AC-4, AC-11
 **Files:**
 - `src/compiler/classify.ts` (new) — `classifyExecution` (E0–E3 → LOW/MEDIUM/HIGH), `classifyReviewRisk` (R0–R3), `deriveRequiredCapability`.
@@ -136,11 +136,11 @@ All four sites register in PRD-002's decision-site registry with id, question se
 4. Fallbacks: complexity → MEDIUM. Review risk → the three deterministic signals in §Solution counted into R0–R3, raised one level by `elevate_review`; `classifyReviewRisk(answersOrNull, packet, request, elevateReview)` receives neither the complexity result nor the complexity band on either path, so the structural guarantee in step 2 holds with JEV off as well as on.
 
 **Verification:** E2 — `npx vitest run tests/compiler/classify.spec.ts`; the mechanical-codemod fixture asserts `LOW`/`E0` with `review_risk >= R2` and the tested-algorithm fixture asserts `HIGH`/`E3` with `R0` (AC-4) — a collapsed implementation that derives risk from complexity cannot satisfy both — and both fixtures are re-run with a throwing JEV client asserting the same divergence, which is the control that catches a complexity-derived *fallback* (the JEV-on cases alone cannot see it). Capability fixtures assert the §62 task's `min_coding_index` is strictly below the §64 task's, that the value is a number, and that no model id appears on the contract (AC-11). Covers the axis-collapse, fallback-collapse and scope-creep-into-PRD-024 risks that E1 cannot see.
-**Checkpoint:** pending
+**Checkpoint:** done
 
 #### Phase 3: Routing matrix, contract assembly, and separated state
 
-**Status:** NOT STARTED
+**Status:** DONE
 **ACs:** AC-5, AC-6, AC-7, AC-8
 **Files:**
 - `src/compiler/route.ts` (new) — the §14 matrix table, deviation application, `routing.deviation` record, and `selectRoute(contract, candidates)` — the single selection entry point PRD-020 edits in every phase rather than the router being replaced.
@@ -157,11 +157,11 @@ All four sites register in PRD-002's decision-site registry with id, question se
 5. Error handling: an unknown deviation input is recorded and ignored rather than failing the compile — routing must always produce a contract.
 
 **Verification:** E3 — `npx vitest run tests/compiler/route.spec.ts tests/compiler/state.spec.ts`; a table-driven case per resolved §Solution row asserting executor and reviewer classes, with the `false/LOW` row run twice at `review_risk: R0` and `R2` to prove the risk-dependent reviewer cell (AC-5); a deviation case asserting both the changed class and the recorded reason, plus the no-deviation case asserting the field is absent (AC-6); a transcript assertion over the recording JEV stub that every answer is a scalar/enum/score and that the distinct question-id count equals the four registered sites (AC-7); and a state case mutating `ExecutionState` then comparing serialized snapshots of the other three plus asserting the frozen contract throws on write (AC-8). Distinct risks: wrong defaults, an unresolved alternative cell passing on either value, invisible deviations, a broad prompt sneaking back in, and cross-lane state bleed. Negative control: the table cases are written from the §Solution table before `route.ts` exists, so a missing row reds rather than defaulting.
-**Checkpoint:** pending
+**Checkpoint:** done
 
 #### Phase 4: Worked examples compile to their documented routes
 
-**Status:** NOT STARTED
+**Status:** DONE
 **ACs:** AC-9, AC-10
 **Files:**
 - `src/compiler/contract.ts` (edited) — `CapabilityProvider` interface and default empty slots.
@@ -175,4 +175,4 @@ All four sites register in PRD-002's decision-site registry with id, question se
 4. §63's "debugging skill" expectation is asserted as a *requested* skill slot, since resolution belongs to PRD-005 — the fixture asserts the slot is requested and left to the provider, not that a skill was loaded.
 
 **Verification:** E4 — `npx vitest run tests/compiler/examples.spec.ts`; each of the three examples compiles through the public `compileTask` entry and is compared field-by-field against its documented route (AC-9); the capability case asserts the empty-slot defaults and then, with one stub provider registered, that the supplied skill and MCP appear unchanged in the next compiled contract (AC-10). One real-entry-point run covers behavior, wiring and regression for the whole compiler, so no separate demo or CLI check is added. Negative control: the stub-provider case is first run with the provider unregistered and must fail the "skill appears" assertion, proving the slot is actually consumed rather than populated elsewhere.
-**Checkpoint:** pending
+**Checkpoint:** done
