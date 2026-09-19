@@ -39,10 +39,14 @@ export const execShell: ShellExec = (command, cwd, timeoutMs) =>
 			resolve({ exitCode, stdout, stderr, timedOut, spawnError });
 		};
 		const terminate = (): void => {
-			if (child.pid === undefined) return;
+			const pid = child.pid;
+			// `kill(-1)` is a broadcast to every signalable process the user owns, not
+			// an ordinary group, so only an owned PID > 1 may be signalled: an explicit
+			// reserved/invalid PID must reach neither `process.kill` nor `child.kill`.
+			if (pid === undefined || !Number.isSafeInteger(pid) || pid <= 1) return;
 			try {
 				// The child is its own group leader, so this reaches its descendants too.
-				process.kill(-child.pid, "SIGKILL");
+				process.kill(-pid, "SIGKILL");
 			} catch {
 				child.kill("SIGKILL");
 			}

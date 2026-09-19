@@ -96,6 +96,10 @@ export function startProcess(command: string, options: StartProcessOptions): Sta
 
 	const reaped = async (graceMs: number): Promise<void> => {
 		if (exit !== null) return;
+		// Snapshot the validated PID once; both signal phases use it across the awaits.
+		// Reserved/invalid PIDs are rejected because `kill(-1)` is a broadcast.
+		const pid = child.pid;
+		if (pid !== undefined && (!Number.isSafeInteger(pid) || pid <= 1)) return;
 		const killed = new Promise<void>((resolve) => {
 			const timer = setTimeout(resolve, graceMs);
 			void exited.then(() => {
@@ -103,9 +107,9 @@ export function startProcess(command: string, options: StartProcessOptions): Sta
 				resolve();
 			});
 		});
-		if (child.pid !== undefined) {
+		if (pid !== undefined) {
 			try {
-				process.kill(-child.pid, "SIGTERM");
+				process.kill(-pid, "SIGTERM");
 			} catch {
 				child.kill("SIGTERM");
 			}
@@ -114,9 +118,9 @@ export function startProcess(command: string, options: StartProcessOptions): Sta
 		}
 		await killed;
 		if (exit !== null) return;
-		if (child.pid !== undefined) {
+		if (pid !== undefined) {
 			try {
-				process.kill(-child.pid, "SIGKILL");
+				process.kill(-pid, "SIGKILL");
 			} catch {
 				child.kill("SIGKILL");
 			}
