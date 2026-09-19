@@ -147,6 +147,26 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// handed by reference rather than re-created per lane.
 	setCompilerContext({ client: jev, config, cwd });
 
+	// Skill disclosure (PRD-005): one registry, one selection function, one
+	// command surface. The provider fills `capabilities.skills` inside compileTask.
+	// Providers are process-global and bound to this session's JEV client, so the
+	// session being activated replaces the previous one's set rather than stacking.
+	clearCapabilityProviders();
+	const skillRoots = config.capabilities.skillRoots.length > 0
+		? config.capabilities.skillRoots.map((path) => ({ path, class: path.includes(".claude/plugins") ? ("plugin" as const) : ("user" as const) }))
+		: defaultSkillRoots(cwd);
+	const scan = () => scanSkills(cwd, { roots: skillRoots });
+	const skillRecords = scan();
+	const skillControl = createSkillControl(config.skills.state, (state) => writeSkillsState(cwd, state));
+	registerSkillsCommands(commands, { records: skillRecords, control: skillControl, reload: scan });
+	registerCapabilityProvider({
+		kind: "skills",
+		supply: async (draft) => {
+			const selection = await selectSkills({ records: scan(), control: skillControl, request: draft.task.user_request, config, client: jev });
+			return selection.skills;
+		},
+	});
+
 	const declinedFor = credentialsPath(env);
 	registerJevCommands(commands, {
 		client: jev,
@@ -374,6 +394,22 @@ export type {
 	SiteTelemetryRow,
 } from "./compiler/contract.js";
 export { SCOUT_PACKET_MAX_BYTES, scoutTask } from "./scout/index.js";
+export {
+	createSkillControl,
+	defaultSkillRoots,
+	frontmatterOf,
+	FRONTMATTER_READ_LIMIT,
+	loadSkillBody,
+	pluginSkillRoots,
+	resetScanStats,
+	scanSkills,
+	scanStats,
+} from "./capabilities/skills.js";
+export type { ScanOptions, ScanStats, SkillControl, SkillRecord, SkillRoot, SkillStateEntry, SourceClass } from "./capabilities/skills.js";
+export { lexicalSelect, registerSkillSite, selectSkills, SKILL_SITE_ID, DEFAULT_TOP_K } from "./capabilities/skill-select.js";
+export type { SelectSkillsInput, SelectSkillsResult, SkillDisclosureDecision } from "./capabilities/skill-select.js";
+export { registerSkillsCommands } from "./commands/skills.js";
+export type { SkillsCommandDeps } from "./commands/skills.js";
 export { ArtifactNotFoundError, createArtifactStore, renderCompactRecord, sha256 } from "./context/artifacts.js";
 export type { ArtifactStore, CaptureInput, CaptureResult, CompactRecord } from "./context/artifacts.js";
 export { buildExcerpt } from "./context/excerpt.js";

@@ -1,0 +1,42 @@
+{"request": "write a pull request title and description for this branch", "expected": "pr-opener"}
+{"request": "name and shape this pull request so a reviewer understands it", "expected": "pr-manager"}
+{"request": "create a PRD for the new billing feature", "expected": "prd-creator"}
+{"request": "which PRDs are still in flight and which can be archived", "expected": "prd-manager"}
+{"request": "execute this PRD phase by phase with parallel agents", "expected": "prd-executor"}
+{"request": "manage project-local git worktrees for these tasks", "expected": "git-worktree"}
+{"request": "ship this change as a branch and pull request, then merge when CI is green", "expected": "worktree-pr-auto"}
+{"request": "babysit the open pull requests in this org", "expected": "babysit-prs"}
+{"request": "refactor this react component into smaller pieces", "expected": "react-refactoring"}
+{"request": "hunt down the commit that introduced this regression", "expected": "regression-hunter"}
+{"request": "convert this markdown report to a pdf", "expected": "md-to-pdf"}
+{"request": "print this report on the office printer", "expected": "print"}
+{"request": "interview me one question at a time before implementing", "expected": "interview-me"}
+{"request": "optimize this codebase for a slower model to save tokens", "expected": "save-tokens"}
+{"request": "reduce my coding-agent token spend", "expected": "token-saver"}
+{"request": "create a new skill for our team conventions", "expected": "skill-creator"}
+{"request": "ping me on ntfy when an agent is blocked", "expected": "attention-ping"}
+{"request": "work while I am away and do not ask me questions", "expected": "afk-work"}
+{"request": "generate three deliberately different design directions", "expected": "design-directions"}
+{"request": "build a distinctive landing page with high design quality", "expected": "frontend-design"}
+{"request": "run a gauntlet loop until the quality bar is met", "expected": "gauntlet-loop"}
+{"request": "turn repeated agent mistakes into durable project knowledge", "expected": "wikiskill-evolution"}
+{"request": "what is the capital of France", "expected": null}
+{"request": "explain how TCP handshakes work", "expected": null}
+{"request": "summarise this paragraph in one sentence", "expected": null}
+{"request": "calculate 17 * 23", "expected": null}
+{"request": "translate this sentence into Portuguese", "expected": null}
+{"request": "what time is it in Tokyo", "expected": null}
+{"request": "give me a list of prime numbers under 50", "expected": null}
+{"request": "describe the water cycle", "expected": null}
+{"request": "what does HTTP 404 mean", "expected": null}
+{"request": "convert 12 kilometres into miles", "expected": null}
+{"request": "who wrote the Iliad", "expected": null}
+{"request": "explain the difference between TCP and UDP", "expected": null}
+{"request": "name three primary colours", "expected": null}
+{"request": "what is photosynthesis", "expected": null}
+{"request": "how many continents are there", "expected": null}
+{"request": "define entropy in one sentence", "expected": null}
+{"request": "what is the boiling point of water at sea level", "expected": null}
+{"request": "list the planets in order", "expected": null}
+{"request": "what is a haiku", "expected": null}
+{"request": "explain recursion in one sentence", "expected": null}

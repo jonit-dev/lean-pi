@@ -1,0 +1,451 @@
+{
+  "mode": "jev",
+  "corpus_size": 206,
+  "fixtures": 42,
+  "positives": 22,
+  "negatives": 20,
+  "wrong_loads": 1,
+  "unnecessary_loads": 0,
+  "wrong_load_rate": 0.045454545454545456,
+  "unnecessary_load_rate": 0,
+  "ceiling": 0.04,
+  "verdict": "pass",
+  "roadmap_targets": {
+    "wrong_load_rate": 0.073,
+    "unnecessary_load_rate": 0.04,
+    "note": "ROADMAP §5 TypeSafe 488-request experiment — recorded as comparison context, not a claim about LeanPi"
+  },
+  "rows": [
+    {
+      "request": "write a pull request title and description for this branch",
+      "expected": "pr-opener",
+      "loaded": [
+        "pr-opener",
+        "pr-manager"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "name and shape this pull request so a reviewer understands it",
+      "expected": "pr-manager",
+      "loaded": [
+        "pr-manager",
+        "pr-opener"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "create a PRD for the new billing feature",
+      "expected": "prd-creator",
+      "loaded": [
+        "prd-creator"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "which PRDs are still in flight and which can be archived",
+      "expected": "prd-manager",
+      "loaded": [
+        "prd-manager"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "execute this PRD phase by phase with parallel agents",
+      "expected": "prd-executor",
+      "loaded": [
+        "prd-executor",
+        "swarm-coordinator",
+        "prd-creator"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "manage project-local git worktrees for these tasks",
+      "expected": "git-worktree",
+      "loaded": [
+        "git-worktree"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "ship this change as a branch and pull request, then merge when CI is green",
+      "expected": "worktree-pr-auto",
+      "loaded": [
+        "github-pr-workflow",
+        "pr-ship",
+        "worktree-pr-auto"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "babysit the open pull requests in this org",
+      "expected": "babysit-prs",
+      "loaded": [
+        "babysit-prs",
+        "pr-babysitting"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "refactor this react component into smaller pieces",
+      "expected": "react-refactoring",
+      "loaded": [
+        "react-refactoring"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "hunt down the commit that introduced this regression",
+      "expected": "regression-hunter",
+      "loaded": [
+        "regression-hunter",
+        "git-advanced-workflows",
+        "debugging-strategies"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "convert this markdown report to a pdf",
+      "expected": "md-to-pdf",
+      "loaded": [
+        "md-to-pdf"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "print this report on the office printer",
+      "expected": "print",
+      "loaded": [
+        "print"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "interview me one question at a time before implementing",
+      "expected": "interview-me",
+      "loaded": [
+        "interview-me"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "optimize this codebase for a slower model to save tokens",
+      "expected": "save-tokens",
+      "loaded": [
+        "save-tokens"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "reduce my coding-agent token spend",
+      "expected": "token-saver",
+      "loaded": [
+        "token-saver",
+        "save-tokens"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "create a new skill for our team conventions",
+      "expected": "skill-creator",
+      "loaded": [
+        "skill-creator"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "ping me on ntfy when an agent is blocked",
+      "expected": "attention-ping",
+      "loaded": [
+        "attention-ping"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "work while I am away and do not ask me questions",
+      "expected": "afk-work",
+      "loaded": [
+        "afk-work"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "generate three deliberately different design directions",
+      "expected": "design-directions",
+      "loaded": [
+        "design-directions"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "build a distinctive landing page with high design quality",
+      "expected": "frontend-design",
+      "loaded": [
+        "frontend-design",
+        "visual-design-foundations"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "run a gauntlet loop until the quality bar is met",
+      "expected": "gauntlet-loop",
+      "loaded": [
+        "gauntlet-loop"
+      ],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV confirmed"
+    },
+    {
+      "request": "turn repeated agent mistakes into durable project knowledge",
+      "expected": "wikiskill-evolution",
+      "loaded": [],
+      "wrong_load": true,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "what is the capital of France",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "explain how TCP handshakes work",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "summarise this paragraph in one sentence",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "calculate 17 * 23",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "translate this sentence into Portuguese",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "what time is it in Tokyo",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "give me a list of prime numbers under 50",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "describe the water cycle",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "what does HTTP 404 mean",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "convert 12 kilometres into miles",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "who wrote the Iliad",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "explain the difference between TCP and UDP",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "name three primary colours",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "what is photosynthesis",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "how many continents are there",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "define entropy in one sentence",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "what is the boiling point of water at sea level",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "list the planets in order",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "what is a haiku",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    },
+    {
+      "request": "explain recursion in one sentence",
+      "expected": null,
+      "loaded": [],
+      "wrong_load": false,
+      "unnecessary_load": false,
+      "fallback_used": false,
+      "reason": "JEV answered: no skill required"
+    }
+  ]
+}

@@ -67,7 +67,8 @@ export interface CapabilitySlots {
 /** One interface, four named future implementations (PRD-005/006/018/019). */
 export interface CapabilityProvider {
 	kind: "skills" | "mcps" | "lsp" | "rtk";
-	supply(draft: ExecutionContract, packet: TaskPacket): unknown;
+	/** May be async: skill selection asks JEV before the contract is frozen. */
+	supply(draft: ExecutionContract, packet: TaskPacket): unknown | Promise<unknown>;
 }
 
 export interface ExecutionContract {

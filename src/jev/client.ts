@@ -240,9 +240,14 @@ export function createJevClient(options: JevClientOptions): JevClient {
 	return {
 		async ask(siteId, questions, state) {
 			const site = getSite(siteId);
-			const declared: QuestionKind[] = site.questions.map((question) => question.kind);
-			if (questions.length !== declared.length) {
-				throw new Error(`Site "${siteId}" declares ${declared.length} questions but ${questions.length} were asked.`);
+			// The declared set is a *template*: a site with per-candidate questions
+			// (skill relevance, retention) asks a batch whose size varies. What must
+			// hold is that no undeclared answer kind is ever accepted.
+			const declared = new Set<QuestionKind>(site.returnType);
+			for (const question of questions) {
+				if (!declared.has(question.kind)) {
+					throw new Error(`Site "${siteId}" does not declare ${question.kind} questions (asked "${question.id}").`);
+				}
 			}
 
 			if (mode === "disabled") return resolveByFallback(site, questions, state, "privacy-mode-disabled");
@@ -264,12 +269,17 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			}
 
 			modelVersion = response.model;
-			if (!results.every((result) => accept(result, site.consequence))) {
+			// §50 applied asymmetrically and per result: a high-consequence site
+			// realistically accepts all of its (few) answers or none, while a ranking
+			// site keeps the candidates that cleared its bar. Only when nothing
+			// clears it does the whole site resolve through its fallback.
+			const accepted = results.filter((result) => accept(result, site.consequence));
+			if (accepted.length === 0) {
 				return resolveByFallback(site, questions, state, "below-threshold");
 			}
-			log.append(rowFor(site, results, response.usage));
+			log.append(rowFor(site, accepted, response.usage));
 			lastUsage = response.usage;
-			return results;
+			return accepted;
 		},
 
 		sites: () => listSites(),
