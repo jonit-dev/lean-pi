@@ -1,6 +1,6 @@
 # LeanPi
 
-**Cost-aware task compiler and coding runtime built on [Pi](https://github.com/badlogic/pi-mono).**
+**Cost-aware task compiler and coding runtime built on [Pi](https://github.com/earendil-works/pi).**
 
 LeanPi's objective is not to use fewer tokens. It is:
 
