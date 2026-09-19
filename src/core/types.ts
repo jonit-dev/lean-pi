@@ -81,6 +81,13 @@ export interface LimitsConfig {
 	semanticReviewRounds?: number;
 }
 
+/** Calibration surface §10 requires: thresholds are configuration, never literals in a branch. */
+export interface ThresholdsConfig {
+	gate_prd_required: number;
+	complexity: number;
+	review_risk: number;
+}
+
 export interface BenchConfig {
 	skills: { maxUnnecessaryLoadRate: number };
 }
@@ -96,5 +103,6 @@ export interface LeanPiConfig {
 	capabilities: Required<CapabilitiesConfig>;
 	skills: Required<Omit<SkillsConfig, "state">> & { state: NonNullable<SkillsConfig["state"]> };
 	bench: BenchConfig;
+	thresholds: ThresholdsConfig;
 	limits: Required<LimitsConfig>;
 }

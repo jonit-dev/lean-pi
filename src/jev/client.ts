@@ -61,6 +61,8 @@ export interface JevClient {
 	/** One request per decision point, never one per question (FR-011). */
 	ask(siteId: string, questions: JevQuestion[], state: unknown): Promise<JevResult[]>;
 	sites(): DecisionSite[];
+	/** Token usage of the most recently resolved site; zero when it fell back. */
+	lastUsage(): JevUsage;
 	getMode(): JevMode;
 	setMode(mode: JevMode): void;
 	fallbackCount(): number;
@@ -165,6 +167,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 	const now = options.now ?? (() => new Date());
 	const currentCredential = options.credential ?? (() => resolveCredential(config, env));
 
+	let lastUsage: JevUsage = emptyUsage();
 	let mode: JevMode = config.jev.mode;
 	let fallbackCount = 0;
 	let reachable = false;
@@ -196,6 +199,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			throw new Error(`Fallback for site "${site.id}" returned ${Array.isArray(results) ? results.length : 0} results for ${questions.length} questions.`);
 		}
 		fallbackCount += 1;
+		lastUsage = emptyUsage();
 		log.append(rowFor(site, results, emptyUsage(), reason));
 		return results;
 	}
@@ -264,10 +268,12 @@ export function createJevClient(options: JevClientOptions): JevClient {
 				return resolveByFallback(site, questions, state, "below-threshold");
 			}
 			log.append(rowFor(site, results, response.usage));
+			lastUsage = response.usage;
 			return results;
 		},
 
 		sites: () => listSites(),
+		lastUsage: () => lastUsage,
 		getMode: () => mode,
 		setMode(next) {
 			mode = next;

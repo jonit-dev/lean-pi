@@ -25,6 +25,7 @@ import { registerJevCommands } from "./commands/jev.js";
 import { ConfigError, loadConfig } from "./core/config.js";
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
+import { setCompilerContext } from "./compiler/index.js";
 import { resolveRole } from "./core/roles.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
@@ -138,6 +139,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		env,
 		...(options.jevTransport ? { transport: options.jevTransport } : {}),
 	});
+	// The compiler uses the session's JEV client: one control plane per process,
+	// handed by reference rather than re-created per lane.
+	setCompilerContext({ client: jev, config, cwd });
+
 	const declinedFor = credentialsPath(env);
 	registerJevCommands(commands, {
 		client: jev,
@@ -332,6 +337,37 @@ export {
 	type TurnInput,
 } from "./commands/session.js";
 export { LEANPI_EXTENSION_NAME, LEANPI_VERSION, PACKAGE_ROOT } from "./core/package-info.js";
+export {
+	clearCapabilityProviders,
+	compileRecordOf,
+	compileTask,
+	getCompilerContext,
+	registerCapabilityProvider,
+	setCompilerContext,
+	type CompilerContext,
+} from "./compiler/index.js";
+export { classifyExecution, classifyReviewRisk, deriveRequiredCapability, heuristicBand, reviewRiskFromSignals, reviewRiskSignals } from "./compiler/classify.js";
+export { gateSignals, GATE_SITE_ID, heuristicGate, runGate } from "./compiler/gate.js";
+export { applyDeviations, matrixDefault, REVIEWER_BY_RISK, ROUTING_MATRIX } from "./compiler/route.js";
+export { createTaskState, deepFreeze } from "./compiler/state.js";
+export type { TaskState, TaskStateSnapshot } from "./compiler/state.js";
+export type {
+	CapabilityProvider,
+	CapabilitySlots,
+	CompileRecord,
+	DeviationInput,
+	DeviationKind,
+	ExecutionBand,
+	ExecutionComplexity,
+	ExecutionContract,
+	ExecutorClass,
+	PlanningDecision,
+	RequiredCapability,
+	ReviewRisk,
+	ReviewerClass,
+	RouteDeviation,
+	SiteTelemetryRow,
+} from "./compiler/contract.js";
 export { SCOUT_PACKET_MAX_BYTES, scoutTask } from "./scout/index.js";
 export type { TaskPacket } from "./scout/index.js";
 export { createJevClient, JEV_ENDPOINT_DEFAULT, JEV_INPUT_COST_PER_MILLION, JEV_MODEL_DEFAULT } from "./jev/client.js";

@@ -71,6 +71,13 @@ export function registerSite(site: DecisionSite): DecisionSite {
 	return site;
 }
 
+/** Idempotent registration: a compiler may compile many tasks in one process. */
+export function ensureSite(site: DecisionSite): DecisionSite {
+	const existing = sites.get(site.id);
+	if (existing) return existing;
+	return registerSite(site);
+}
+
 export function getSite(id: string): DecisionSite {
 	const site = sites.get(id);
 	if (!site) throw new UnknownSiteError(id);

@@ -124,6 +124,23 @@ function parseBench(raw: unknown): LeanPiConfig["bench"] {
 	return { skills: { maxUnnecessaryLoadRate: (ceiling as number | undefined) ?? 0.04 } };
 }
 
+function parseThresholds(raw: unknown): LeanPiConfig["thresholds"] {
+	const record = raw === undefined ? {} : asRecord(raw, "thresholds");
+	const value = (key: keyof LeanPiConfig["thresholds"], fallback: number): number => {
+		const entry = record[key];
+		if (entry === undefined) return fallback;
+		if (typeof entry !== "number" || entry < 0 || entry > 1) {
+			throw new ConfigError(`must be a number between 0 and 1`, `thresholds.${key}`);
+		}
+		return entry;
+	};
+	return {
+		gate_prd_required: value("gate_prd_required", 0.5),
+		complexity: value("complexity", 0.5),
+		review_risk: value("review_risk", 0.5),
+	};
+}
+
 function parseCapabilities(raw: unknown): LeanPiConfig["capabilities"] {
 	const record = raw === undefined ? {} : asRecord(raw, "capabilities");
 	const skillRoots = record.skillRoots;
@@ -154,6 +171,7 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}): 
 		capabilities: parseCapabilities(record.capabilities),
 		skills: parseSkills(record.skills),
 		bench: parseBench(record.bench),
+		thresholds: parseThresholds(record.thresholds),
 		limits: {
 			executionAttempts: (limitsRaw.executionAttempts as number | undefined) ?? 2,
 			semanticReviewRounds: (limitsRaw.semanticReviewRounds as number | undefined) ?? 1,
