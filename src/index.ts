@@ -46,7 +46,7 @@ import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/creden
 import { createJevClient, type JevClient } from "./jev/client.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
-import type { LeanPiConfig, ModelRole } from "./core/types.js";
+import { isModelRole, type LeanPiConfig, type ModelRole } from "./core/types.js";
 
 export interface ActivateOptions {
 	config?: LeanPiConfig;
@@ -76,8 +76,9 @@ export interface LeanPiActivation {
 /** Register one Pi provider per `native` backend; every role on it becomes selectable. */
 function registerBackends(pi: ExtensionAPI, config: LeanPiConfig): void {
 	const modelsByBackend = new Map<string, Set<string>>();
-	for (const entry of Object.values(config.models)) {
-		if (!entry) continue;
+	for (const [role, entry] of Object.entries(config.models)) {
+		// Only role keys bind a model; `models.specialists` (FR-047) binds a role.
+		if (!isModelRole(role) || !entry) continue;
 		const set = modelsByBackend.get(entry.backend) ?? new Set<string>();
 		set.add(entry.model);
 		modelsByBackend.set(entry.backend, set);

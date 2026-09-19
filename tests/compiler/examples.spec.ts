@@ -56,7 +56,10 @@ const EXAMPLES: Array<{
 			executor: "quick",
 			reviewer: "none",
 			prdRequired: false,
-			verification: ["typecheck", "affected_tests"],
+			// B1: the packet's changed files name no test and the harness configures no
+			// scope-free targeted command, so the contract must not require a check no
+			// surface can name — it would resolve no command and record `not_run`.
+			verification: ["typecheck"],
 		},
 		{
 			name: "§63 medium bug",
@@ -66,7 +69,7 @@ const EXAMPLES: Array<{
 			executor: "balanced",
 			reviewer: "review_quick",
 			prdRequired: false,
-			verification: ["typecheck", "affected_tests", "runtime_smoke"],
+			verification: ["typecheck", "runtime_smoke"],
 		},
 		{
 			name: "§64 major feature",
@@ -76,7 +79,7 @@ const EXAMPLES: Array<{
 			executor: "strong",
 			reviewer: "review_strong",
 			prdRequired: true,
-			verification: ["typecheck", "affected_tests", "full_suite", "runtime_smoke"],
+			verification: ["typecheck", "full_suite", "runtime_smoke"],
 		},
 	];
 })();
@@ -90,6 +93,12 @@ describe("PRD-004 Phase 4 — worked examples", () => {
 			expect(contract.routing.executor_class, example.name).toBe(example.executor);
 			expect(contract.routing.reviewer_class, example.name).toBe(example.reviewer);
 			expect(contract.verification.required, example.name).toEqual(example.verification);
+			// B1's other half, asserted rather than left implicit in the row above:
+			// these packets name no test surface and the harness configures no
+			// scope-free targeted command, so the targeted kind is absent and no
+			// criterion claims a scope it cannot name.
+			expect(contract.verification.required, example.name).not.toContain("affected_tests");
+			expect(contract.verification.criteria, example.name).toBeUndefined();
 			expect(contract.limits.execution_attempts, example.name).toBeGreaterThan(0);
 			expect(compileRecordOf(contract)!.next_stage, example.name).toBe(example.prdRequired ? "prd_lane" : "executor_lane");
 			if (example.reviewer === "none") expect(contract.limits.semantic_review_rounds, example.name).toBe(0);

@@ -11,12 +11,15 @@ import { assertTrusted, isProjectLocal, mergePermissions, readUserState, type Pe
 import {
 	BACKEND_TYPES,
 	isModelRole,
+	MODEL_ROLES,
 	type BackendConfig,
 	type BackendType,
 	type CapabilityRoleSetting,
 	type JevMode,
 	type LeanPiConfig,
 	type ModelRole,
+	type ModelsConfig,
+	type VerifyConfig,
 } from "./types.js";
 
 export const CONFIG_FILENAME = "leanpi.config.yaml";
@@ -66,14 +69,33 @@ function parseBackends(raw: unknown): Record<string, BackendConfig> {
 	return backends;
 }
 
-function parseModels(
-	raw: unknown,
-	backends: Record<string, BackendConfig>,
-): Partial<Record<ModelRole, { backend: string; model: string }>> {
+/**
+ * FR-047's `models.specialists` block: a language or task-type key bound to the
+ * role that serves it. It is a second map under `models:`, not a seventh role,
+ * so its keys are validated as keys and its values as roles — storing it as a
+ * role entry would mistype the map every consumer walks.
+ */
+function parseSpecialists(raw: unknown): Record<string, ModelRole> {
+	const record = asRecord(raw, "models.specialists");
+	const specialists: Record<string, ModelRole> = {};
+	for (const [key, role] of Object.entries(record)) {
+		if (typeof role !== "string" || !isModelRole(role)) {
+			throw new ConfigError(`must name a model role (${MODEL_ROLES.join(" | ")}), got ${JSON.stringify(role)}`, `models.specialists.${key}`);
+		}
+		specialists[key] = role;
+	}
+	return specialists;
+}
+
+function parseModels(raw: unknown, backends: Record<string, BackendConfig>): ModelsConfig {
 	if (raw === undefined) return {};
 	const record = asRecord(raw, "models");
-	const models: Partial<Record<ModelRole, { backend: string; model: string }>> = {};
+	const models: ModelsConfig = {};
 	for (const [role, value] of Object.entries(record)) {
+		if (role === "specialists") {
+			models.specialists = parseSpecialists(value);
+			continue;
+		}
 		if (!isModelRole(role)) {
 			throw new ConfigError(`unknown model role ${JSON.stringify(role)}`, `models.${role}`);
 		}
@@ -233,6 +255,33 @@ function parseCapabilities(raw: unknown): LeanPiConfig["capabilities"] {
 	};
 }
 
+/**
+ * The `verify:` block (PRD-009 §Solution, PRD-018 AC-4): the host project's own
+ * verifier commands, keyed by verifier kind. A command that is not a command —
+ * a number, an empty string — is rejected here rather than resolved to `""` and
+ * recorded as `not_run` once a turn already depends on it.
+ */
+function parseVerify(raw: unknown): VerifyConfig {
+	const record = raw === undefined ? {} : asRecord(raw, "verify");
+	const commands: Record<string, string> = {};
+	if (record.commands !== undefined) {
+		for (const [kind, command] of Object.entries(asRecord(record.commands, "verify.commands"))) {
+			if (kind.length === 0) {
+				throw new ConfigError(`verifier kind must be a non-empty key`, "verify.commands");
+			}
+			if (typeof command !== "string" || command.length === 0) {
+				throw new ConfigError(`command must be a non-empty string`, `verify.commands.${kind}`);
+			}
+			commands[kind] = command;
+		}
+	}
+	const timeoutMs = record.timeoutMs;
+	if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+		throw new ConfigError(`timeoutMs must be a positive number`, "verify.timeoutMs");
+	}
+	return { commands, ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }) };
+}
+
 /** The project-scope `permissions:` block; PRD-017 merges it asymmetrically. */
 function parsePermissions(raw: unknown): RawPermissionsBlock {
 	if (raw === undefined) return {};
@@ -289,6 +338,7 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		lsp: parseLsp(record.lsp),
 		mcp: parseMcp(record.mcp),
 		capability: parseCapability(record.capability),
+		verify: parseVerify(record.verify),
 		permissions,
 		thresholds: parseThresholds(record.thresholds),
 		limits: {
@@ -298,7 +348,9 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		...overrides,
 	};
 
-	if (Object.keys(config.models).length === 0 && overrides.models === undefined) {
+	// `models.specialists` is a map, not a role: a file declaring only specialists
+	// has configured no role and must fail the same way an empty block does.
+	if (!MODEL_ROLES.some((role) => config.models[role] !== undefined) && overrides.models === undefined) {
 		throw new ConfigError(
 			"no model roles configured — at least one of quick/balanced/strong is required",
 			existsSync(path) ? "models" : CONFIG_FILENAME,

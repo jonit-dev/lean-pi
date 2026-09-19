@@ -100,7 +100,10 @@ export async function verifyTask(contract: ExecutionContract, workspaceRoot: str
 
 	const selection = await selectVerifiers(contract, {
 		...(options.jev ? { jev: options.jev } : {}),
-		...(options.diff ? { diff: options.diff } : {}),
+		// A caller that supplies no diff still has one: the files this run touched.
+		// Without it the regression-scope rule cannot see a broad change, and the
+		// targeted test has no surface to name.
+		diff: options.diff ?? { files: touchedPaths },
 		commands: settings.commands,
 	});
 

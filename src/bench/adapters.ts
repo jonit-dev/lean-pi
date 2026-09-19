@@ -37,7 +37,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { billingOf, HARNESS_DESCRIPTORS, parseBackendPool, runHarness, type HarnessSpawn, type RegisteredBackend } from "../backends/index.js";
 import { runTurn, type TurnContext } from "../commands/session.js";
-import type { LeanPiConfig } from "../core/types.js";
+import { isModelRole, type LeanPiConfig } from "../core/types.js";
 import {
 	appendRun,
 	createRunCollector,
@@ -265,9 +265,11 @@ export function writeStockPiModels(config: LeanPiConfig, agentDir: string): void
 	const providers: Record<string, unknown> = {};
 	for (const [name, backend] of Object.entries(config.backends)) {
 		if (backend.type !== "native" || typeof backend.baseUrl !== "string") continue;
-		const models = Object.values(config.models)
-			.filter((entry) => entry?.backend === name)
-			.map((entry) => ({ id: entry!.model }));
+		// `models.specialists` (FR-047) is a language/task-type map, not a role
+		// binding, so only the role keys name a model this provider serves.
+		const models = Object.entries(config.models)
+			.filter(([role, entry]) => isModelRole(role) && entry?.backend === name)
+			.map(([, entry]) => ({ id: entry!.model }));
 		if (models.length === 0) continue;
 		providers[name] = {
 			baseUrl: backend.baseUrl,
@@ -322,8 +324,12 @@ export function stockPiAttempt(options: StockPiAttemptOptions): BenchAttemptExec
 			agentDir,
 			resourceLoaderOptions: { extensionFactories: [] },
 		});
-		const declared =
-			Object.values(config.models).find((entry) => entry?.model === attempt.config.executor_model) ?? Object.values(config.models).find((entry) => entry !== undefined);
+		// Role bindings only: falling back to the first `models:` value would pick
+		// the `specialists` map (FR-047) and dispatch an undefined model id.
+		const bindings = Object.entries(config.models)
+			.filter(([role, entry]) => isModelRole(role) && entry !== undefined)
+			.map(([, entry]) => entry!);
+		const declared = bindings.find((entry) => entry.model === attempt.config.executor_model) ?? bindings[0];
 		if (!declared) throw new BenchError(`config "${attempt.config.id}" declares no model for a stock Pi session`, "config");
 		const model = services.modelRuntime.getModel(declared.backend, declared.model);
 		if (!model) {

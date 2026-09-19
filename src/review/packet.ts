@@ -78,22 +78,32 @@ export function workspaceChange(cwd: string, base = "HEAD"): { diff: string; fil
  * `verification.criteria` (ids with an optional label); a `task.acceptance_criteria`
  * list is honoured when a contract carries one. An id with no text is still a
  * criterion — the finding's `criterion` field points at it.
+ *
+ * A compiled contract carries the same id in both blocks — the criterion list
+ * and the verification block that names its scope — so the first occurrence
+ * wins: the reviewer must see one criterion per id, with the text the task
+ * stated rather than a bare id repeated after it.
  */
 export function acceptanceCriteriaOf(contract: ExecutionContract): AcceptanceCriterion[] {
 	const raw = (contract as { task?: { acceptance_criteria?: unknown }; verification?: { criteria?: unknown } });
 	const sources = [raw.task?.acceptance_criteria, raw.verification?.criteria];
 	const criteria: AcceptanceCriterion[] = [];
+	const seen = new Set<string>();
 	for (const source of sources) {
 		if (!Array.isArray(source)) continue;
 		for (const entry of source) {
 			if (typeof entry === "string") {
-				if (entry.trim().length > 0) criteria.push({ id: entry, text: entry });
+				if (entry.trim().length > 0 && !seen.has(entry)) {
+					seen.add(entry);
+					criteria.push({ id: entry, text: entry });
+				}
 				continue;
 			}
 			if (entry === null || typeof entry !== "object") continue;
 			const item = entry as Record<string, unknown>;
-			if (typeof item.id !== "string" || item.id.length === 0) continue;
+			if (typeof item.id !== "string" || item.id.length === 0 || seen.has(item.id)) continue;
 			const text = typeof item.text === "string" && item.text.length > 0 ? item.text : typeof item.label === "string" ? item.label : item.id;
+			seen.add(item.id);
 			criteria.push({ id: item.id, text });
 		}
 	}

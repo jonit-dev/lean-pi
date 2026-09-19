@@ -75,8 +75,10 @@ export function resolveRoutingConfig(config?: LeanPiConfig | null): RoutingConfi
 		const declared = raw.sites?.[id];
 		if (typeof declared === "boolean") sites[id] = declared;
 	}
-	// FR-047's bindings live under `models:` (`models.specialists.<language|task_type>`),
-	// read structurally because PRD-001's role parser rejects a non-role key there.
+	// FR-047's bindings live under `models:` (`models.specialists.<language|task_type>`).
+	// PRD-001's parser validates that map for a config file, but `loadConfig`'s
+	// `overrides` argument bypasses the parser, so the read stays structural and
+	// re-checks every value here rather than trusting the type.
 	const specialists: Record<string, ModelRole> = {};
 	const declaredSpecialists = (config?.models as Record<string, unknown> | undefined)?.["specialists"];
 	if (declaredSpecialists && typeof declaredSpecialists === "object" && !Array.isArray(declaredSpecialists)) {

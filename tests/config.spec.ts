@@ -3,7 +3,7 @@
  */
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadConfig, resolveRole, type ModelRole } from "../src/index.js";
+import { ConfigError, loadConfig, resolveRole, type ModelRole } from "../src/index.js";
 import { bootSession, fixtureRepo, nativeBackend, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "./helpers/stub-backend.js";
 
@@ -157,5 +157,60 @@ describe("PRD-001 AC-9 — the role ladder", () => {
 		for (const [role, model] of Object.entries(expected) as Array<[ModelRole, string]>) {
 			expect(resolveRole(config, role).model, role).toBe(model);
 		}
+	});
+});
+
+describe("FR-047 / PRD-009 — `models.specialists` and `verify:` are read from the config file", () => {
+	const backends = { local: nativeBackend("http://127.0.0.1:1/v1") };
+
+	/** A config file on disk, loaded the way an operator reaches it: no overrides. */
+	function fromFile(config: Record<string, unknown>) {
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, config);
+		return () => loadConfig(cwd);
+	}
+
+	it("loads `models.specialists` as its own map without disturbing the role bindings", () => {
+		const config = fromFile({
+			backends,
+			models: {
+				balanced: { backend: "local", model: "balanced-model" },
+				strong: { backend: "local", model: "strong-model" },
+				specialists: { rust: "strong", refactor: "balanced" },
+			},
+		})();
+		expect(config.models.specialists).toEqual({ rust: "strong", refactor: "balanced" });
+		expect(config.models.strong).toEqual({ backend: "local", model: "strong-model" });
+		expect(config.models.balanced).toEqual({ backend: "local", model: "balanced-model" });
+	});
+
+	it("rejects a specialist bound to something that is not a model role, naming the entry", () => {
+		expect(fromFile({ backends, models: { quick: { backend: "local", model: "m" }, specialists: { rust: "nonsense" } } })).toThrow(ConfigError);
+		expect(fromFile({ backends, models: { quick: { backend: "local", model: "m" }, specialists: { rust: "nonsense" } } })).toThrow("models.specialists.rust");
+		expect(fromFile({ backends, models: { quick: { backend: "local", model: "m" }, specialists: "strong" } })).toThrow("models.specialists");
+	});
+
+	it("does not count a specialists map as a configured role", () => {
+		expect(fromFile({ backends, models: { specialists: { rust: "strong" } } })).toThrow("no model roles configured");
+	});
+
+	it("carries the `verify:` block, and an empty one when the file declares none", () => {
+		const declared = fromFile({
+			backends,
+			models: { quick: { backend: "local", model: "m" } },
+			verify: { commands: { targeted_test: "npx vitest run tests/" }, timeoutMs: 1000 },
+		})();
+		expect(declared.verify).toEqual({ commands: { targeted_test: "npx vitest run tests/" }, timeoutMs: 1000 });
+
+		const silent = fromFile({ backends, models: { quick: { backend: "local", model: "m" } } })();
+		expect(silent.verify).toEqual({ commands: {} });
+	});
+
+	it("rejects a verifier command that is not a command, and a timeout that cannot elapse", () => {
+		const models = { quick: { backend: "local", model: "m" } };
+		expect(fromFile({ backends, models, verify: { commands: { targeted_test: 7 } } })).toThrow("verify.commands.targeted_test");
+		expect(fromFile({ backends, models, verify: { commands: { targeted_test: "" } } })).toThrow("verify.commands.targeted_test");
+		expect(fromFile({ backends, models, verify: { commands: { targeted_test: "npx vitest" }, timeoutMs: 0 } })).toThrow("verify.timeoutMs");
+		expect(fromFile({ backends, models, verify: { commands: [] } })).toThrow("verify.commands");
 	});
 });

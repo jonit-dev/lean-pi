@@ -36,7 +36,7 @@ export interface ReviewCommandDeps {
 	warnings?: readonly string[];
 	executorSummary?: string;
 	/** The executor's binding, so the lane can establish reviewer independence (§31). */
-	executor?: { backend: string; model: string };
+	executor?: { backend: string; model: string | null };
 	/** The level `classifyReview()` recorded for this turn, if any. */
 	recordedLevel?: () => ReviewLevel | undefined;
 	/** `false` keeps `/review` read-only; otherwise a contract means verification runs for non-`diff` modes. */
@@ -97,6 +97,9 @@ export async function runReview(deps: ReviewCommandDeps, mode: ReviewMode = "gat
 	const outcome = await review(packet, level, mode, {
 		registry: deps.registry ?? new BackendRegistry(deps.config),
 		cwd: deps.cwd,
+		// The `models:` ladder is what the backend's own role map cannot carry, so
+		// the lane gets the config, not just the pool it was parsed into (§27/F5).
+		config: deps.config,
 		...(deps.executor ? { executor: deps.executor } : {}),
 		...(deps.runner ? { runner: deps.runner } : {}),
 		...(deps.spawn ? { spawn: deps.spawn } : {}),

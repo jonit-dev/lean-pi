@@ -125,6 +125,27 @@ export async function classifyEscalation({ client, history, role, failure }: Esc
 	return { category: answer.choice as EscalationCategory, fallbackUsed: false };
 }
 
+/**
+ * What a continuing category changes about the *next* invocation. The gate
+ * cannot see the attempt that failed, so a directive names the change while the
+ * lane supplies the attempt-specific detail — which files moved, what the
+ * failure said, which backend's effort parameter is in play. A category whose
+ * only effect was its own label would let the loop re-send the packet it just
+ * failed on.
+ */
+export interface EscalationDirective {
+	/** What the next attempt must do differently; the lane appends the failure detail. */
+	instruction: string;
+	/** Add the files the failed attempt changed to the next packet's `files`. */
+	widenContext?: boolean;
+	/** Raise the next packet's effort, under the backend's own `effort_param` name. */
+	raiseEffort?: boolean;
+	/** Run a strong review of the current state before the next attempt. */
+	strongReview?: boolean;
+	/** Name the tool set the next attempt may use. */
+	nameTools?: boolean;
+}
+
 export interface EscalationAction {
 	category: EscalationCategory;
 	/** The role the next attempt runs on; unchanged for categories that keep it. */
@@ -133,6 +154,8 @@ export interface EscalationAction {
 	continues: boolean;
 	/** Set for `SWITCH_BACKEND`: the backend that produced the last attempt, excluded next. */
 	excludeBackend?: string;
+	/** Set for the categories whose only lever is what the packet carries; `SWITCH_MODEL` and `SWITCH_BACKEND` change `role`/`excludeBackend` instead. */
+	directive?: EscalationDirective;
 	reason: string;
 }
 
@@ -146,7 +169,13 @@ export function escalate(category: EscalationCategory, context: { role: ModelRol
 		case "SWITCH_MODEL":
 			return { category, role: stepRole(context.role), continues: true, reason: "stepping the role ladder (FR-067)" };
 		case "INCREASE_REASONING":
-			return { category, role: context.role, continues: true, reason: "raising reasoning effort on the current role" };
+			return {
+				category,
+				role: context.role,
+				continues: true,
+				reason: "raising reasoning effort on the current role",
+				directive: { instruction: "reason harder about the same change before answering", raiseEffort: true },
+			};
 		case "SWITCH_BACKEND":
 			return {
 				category,
@@ -156,11 +185,29 @@ export function escalate(category: EscalationCategory, context: { role: ModelRol
 				reason: "moving to the next enabled backend",
 			};
 		case "GET_MORE_CONTEXT":
-			return { category, role: context.role, continues: true, reason: "widening the selected context" };
+			return {
+				category,
+				role: context.role,
+				continues: true,
+				reason: "widening the selected context",
+				directive: { instruction: "the previous attempt lacked context it needed; use the widened files", widenContext: true },
+			};
 		case "ENABLE_CAPABILITY":
-			return { category, role: context.role, continues: true, reason: "enabling one named capability" };
+			return {
+				category,
+				role: context.role,
+				continues: true,
+				reason: "enabling one named capability",
+				directive: { instruction: "use the capability the previous attempt lacked", nameTools: true },
+			};
 		case "STRONG_REVIEW":
-			return { category, role: context.role, continues: true, reason: "handing off to a strong review" };
+			return {
+				category,
+				role: context.role,
+				continues: true,
+				reason: "handing off to a strong review",
+				directive: { instruction: "act on the strong review's findings before retrying", strongReview: true },
+			};
 		case "USER_INPUT":
 			return { category, role: context.role, continues: false, reason: "the request needs a user decision" };
 		case "STOP_BLOCKED":

@@ -103,9 +103,11 @@ function rolesField(entry: Record<string, unknown>, path: string): ModelRole[] |
 export function parseBackendPool(config: LeanPiConfig): RegisteredBackend[] {
 	const modelsByRole: Record<string, Partial<Record<ModelRole, string>>> = {};
 	for (const [role, entry] of Object.entries(config.models)) {
-		if (!entry) continue;
+		// `models.specialists` (FR-047) is a second map under the same block, not a
+		// role binding: only role keys carry a `(backend, model)` pair.
+		if (!isModelRole(role) || !entry) continue;
 		const byRole = modelsByRole[entry.backend] ?? {};
-		byRole[role as ModelRole] = entry.model;
+		byRole[role] = entry.model;
 		modelsByRole[entry.backend] = byRole;
 	}
 

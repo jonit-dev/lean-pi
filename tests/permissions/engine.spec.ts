@@ -13,6 +13,7 @@ import { createCommandRegistry } from "../../src/commands/registry.js";
 import {
 	builtinPermissions,
 	classifyScopes,
+	escapesRoot,
 	globMatch,
 	literalPrefixLength,
 	loadPermissionState,
@@ -127,6 +128,38 @@ describe("PRD-017 Phase 1 — classification returns the whole scope set", () =>
 		]);
 	});
 
+	it("S2: git global options and separated flags do not hide a destructive or network subcommand", () => {
+		// Separated / long force flags that the contiguous-cluster pattern missed.
+		for (const command of ["git clean -fd", "git clean -f -d", "git clean --force -d"]) {
+			expect(scopesOf("execute", { command }, root)).toContain(`git_destructive:${command}`);
+		}
+		// `-C`/`-c` before the subcommand hid both the subcommand and its network reach.
+		expect(scopesOf("execute", { command: "git -C . push --force" }, root).sort()).toEqual([
+			"git_destructive:git -C . push --force",
+			"network:git -C . push --force",
+			"shell:git -C . push --force",
+		]);
+		expect(scopesOf("execute", { command: "git -c user.name=x fetch" }, root).sort()).toEqual([
+			"network:git -c user.name=x fetch",
+			"shell:git -c user.name=x fetch",
+		]);
+		// `+refspec` is push's force form.
+		expect(scopesOf("execute", { command: "git push origin +main" }, root).sort()).toEqual([
+			"git_destructive:git push origin +main",
+			"network:git push origin +main",
+			"shell:git push origin +main",
+		]);
+
+		// Non-vacuous control: an ordinary git command stays shell alone.
+		expect(scopesOf("execute", { command: "git status" }, root)).toEqual(["shell:git status"]);
+		expect(scopesOf("execute", { command: "git log --oneline" }, root)).toEqual(["shell:git log --oneline"]);
+
+		// The plain forms the old patterns already caught keep working.
+		for (const command of ["git push --force origin main", "git reset --hard HEAD~3", "git branch -D feat", "git checkout -- .", "git update-ref -d refs/heads/main"]) {
+			expect(scopesOf("execute", { command }, root)).toContain(`git_destructive:${command}`);
+		}
+	});
+
 	it("AC-4: an MCP tool call is one capability id per server/tool", () => {
 		expect(scopesOf("mcp__fs__write_file", { path: "a.txt" }, root)).toEqual(["mcp:fs/write_file"]);
 		expect(scopesOf("mcp:fs/read_file", { path: "a.txt" }, root)).toEqual(["mcp:fs/read_file"]);
@@ -228,5 +261,70 @@ describe("PRD-017 Phase 2 — loadConfig applies the gate", () => {
 		// The render path says the same thing, so `/permissions` is not a second truth.
 		writeUserDefault("shell", "deny", env);
 		expect(renderPermissions(loadPermissionState(cwd, env))).toMatch(/shell\s+deny\s+\(user scope\)/);
+	});
+});
+
+describe("BUG_REVIEW S1 — an unresolvable leaf under an out-of-root link is still external_dir", () => {
+	it("classifies a not-yet-created leaf through the link as an out-of-root write", () => {
+		const cwd = tempDir("leanpi-perm-s1-");
+		const outside = tempDir("leanpi-perm-s1-outside-");
+		writeFileSync(join(outside, "existing.txt"), "OUTSIDE\n");
+		symlinkSync(outside, join(cwd, "link"));
+
+		// The leaf does not exist yet, so `realpath` alone cannot decide containment.
+		expect(escapesRoot(cwd, "link/new.txt")).toBe(true);
+		expect(escapesRoot(cwd, "link/deep/nested/new.txt")).toBe(true);
+		// An existing leaf through the same link was, and stays, out of root.
+		expect(escapesRoot(cwd, "link/existing.txt")).toBe(true);
+		expect(scopesOf("write", { path: "link/new.txt" }, cwd)).toEqual(["edit:link/new.txt", "external_dir:link/new.txt"]);
+		expect(scopesOf("write", { path: "link/existing.txt" }, cwd)).toEqual(["edit:link/existing.txt", "external_dir:link/existing.txt"]);
+	});
+
+	it("classifies a dangling symlink leaf by where it points, not by the root it sits in", () => {
+		const cwd = tempDir("leanpi-perm-s1-");
+		const outside = tempDir("leanpi-perm-s1-outside-");
+		symlinkSync(join(outside, "not-created-yet.txt"), join(cwd, "dangling.txt"));
+		expect(escapesRoot(cwd, "dangling.txt")).toBe(true);
+		expect(scopesOf("write", { path: "dangling.txt" }, cwd)).toEqual(["edit:dangling.txt", "external_dir:dangling.txt"]);
+
+		// A dangling link that points inside the root is not an escape.
+		symlinkSync(join(cwd, "later.txt"), join(cwd, "in-root-dangling.txt"));
+		expect(escapesRoot(cwd, "in-root-dangling.txt")).toBe(false);
+	});
+
+	it("fails closed when the path cannot be canonicalized at all", () => {
+		const cwd = tempDir("leanpi-perm-s1-");
+		symlinkSync("loop", join(cwd, "loop"));
+		expect(escapesRoot(cwd, "loop")).toBe(true);
+		expect(escapesRoot(cwd, "loop/x")).toBe(true);
+	});
+
+	it("keeps genuine in-root paths in root, including a leaf that does not exist yet", () => {
+		const cwd = tempDir("leanpi-perm-s1-");
+		expect(escapesRoot(cwd, "new.txt")).toBe(false);
+		expect(escapesRoot(cwd, "deep/nested/new.txt")).toBe(false);
+		expect(scopesOf("write", { path: "new.txt" }, cwd)).toEqual(["edit:new.txt"]);
+	});
+});
+
+describe("BUG_REVIEW B6 — a symlinked session root does not push its own paths out of root", () => {
+	const real = tempDir("leanpi-perm-b6-real-");
+	const linkRoot = join(tempDir("leanpi-perm-b6-parent-"), "link");
+
+	it("treats relative paths under a symlinked root as in-root, and real escapes as escapes", () => {
+		writeFileSync(join(real, "a.txt"), "x\n");
+		symlinkSync(real, linkRoot);
+
+		expect(escapesRoot(linkRoot, "a.txt")).toBe(false);
+		expect(escapesRoot(real, "a.txt")).toBe(false);
+		// Same root, a leaf that is only going to be created.
+		expect(escapesRoot(linkRoot, "b.txt")).toBe(false);
+		expect(scopesOf("read", { path: "a.txt" }, linkRoot)).toEqual(["read:a.txt"]);
+		expect(scopesOf("write", { path: "a.txt" }, linkRoot)).toEqual(["edit:a.txt"]);
+
+		// A symlinked root must not become a licence to leave it.
+		expect(escapesRoot(linkRoot, "../etc/passwd")).toBe(true);
+		expect(escapesRoot(linkRoot, join(tempDir("leanpi-perm-b6-outside-"), "x.txt"))).toBe(true);
+		expect(escapesRoot(real, "../etc/passwd")).toBe(true);
 	});
 });

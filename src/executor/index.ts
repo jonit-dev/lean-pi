@@ -4,6 +4,7 @@
 export {
 	EXECUTOR_TASK_KEYS,
 	renderExecutorPrompt,
+	ROUTE_SITE_ID,
 	runExecutor,
 	toExecutorTask,
 } from "./lane.js";
@@ -44,4 +45,4 @@ export {
 	needsClarification,
 	registerExecutorSites,
 } from "./escalation.js";
-export type { EscalationAction, EscalationCategory, EscalationDecision, EscalationInput } from "./escalation.js";
+export type { EscalationAction, EscalationCategory, EscalationDecision, EscalationDirective, EscalationInput } from "./escalation.js";

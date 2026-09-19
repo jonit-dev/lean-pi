@@ -31,6 +31,31 @@ const KIND_ALIASES: Record<string, VerifierKind> = {
 	compile: "typecheck",
 };
 
+/** A changed file that is itself a test: the only surface a targeted test can name. */
+const TEST_FILE_PATTERN = /\.(spec|test)\.[cm]?[jt]sx?$/;
+const TEST_DIRECTORY_PATTERN = /(^|\/)(tests|__tests__)\//;
+
+/**
+ * The test files among `files`, space-joined, or `""` when there are none.
+ *
+ * One rule, two readers: the compiler stamps the contract's criteria with it,
+ * and selection derives the targeted scope from the run's own files with it, so
+ * "what does the targeted test run over" cannot be answered two ways.
+ */
+export function targetedSurfaceOf(files: readonly string[]): string {
+	return files.filter((file) => TEST_FILE_PATTERN.test(file) || TEST_DIRECTORY_PATTERN.test(file)).join(" ");
+}
+
+/**
+ * Whether the effective targeted command can run with no scope at all — the one
+ * case where a contract may require `affected_tests` without naming a surface.
+ * The question is the selector's own `resolveCommand`, so the compiler cannot
+ * require a check this layer would resolve to the empty string.
+ */
+export function targetedRunsWithoutScope(commands: Partial<Record<string, string>> = {}): boolean {
+	return resolveCommand("targeted_test", "", commands).length > 0;
+}
+
 export function normalizeVerifierKind(raw: string): VerifierKind | undefined {
 	const value = raw.trim().toLowerCase().replaceAll("-", "_");
 	return KIND_ALIASES[value] ?? (isVerifierKind(value) ? value : undefined);
@@ -97,7 +122,7 @@ function criterionIdsFor(kind: VerifierKind, criteria: readonly CriterionVerific
 	return criteria.filter((entry) => (entry.verifiers ?? []).some((name) => normalizeVerifierKind(name) === kind)).map((entry) => entry.id);
 }
 
-function scopeFor(kind: VerifierKind, criteria: readonly CriterionVerification[]): string {
+function scopeFor(kind: VerifierKind, criteria: readonly CriterionVerification[], derived = ""): string {
 	// A package-wide surface (typecheck, lint, build) is what the verifier
 	// actually runs over regardless of which criterion asked for it; only a kind
 	// with no default surface — the targeted test pattern — takes the surface the
@@ -106,7 +131,11 @@ function scopeFor(kind: VerifierKind, criteria: readonly CriterionVerification[]
 	const declared = criteria.find(
 		(entry) => entry.scope !== undefined && entry.scope.trim().length > 0 && (entry.verifiers ?? []).some((name) => normalizeVerifierKind(name) === kind),
 	);
-	return declared?.scope?.trim() ?? "";
+	if (declared?.scope !== undefined) return declared.scope.trim();
+	// Nothing declared one, so the run's own test files are the surface — the
+	// only one this layer can name without guessing. A kind with no default
+	// surface and no command of its own takes none.
+	return kind === "targeted_test" ? derived : "";
 }
 
 /** Config and build surfaces whose change reaches beyond any targeted test set. */
@@ -210,8 +239,11 @@ export async function selectVerifiers(contract: ExecutionContract, options: Sele
 	const block = verificationBlockOf(contract);
 	const descriptors: VerifierDescriptor[] = [];
 	const skipped: Array<{ kind: string; reason: string }> = [];
+	// The diff is also the fallback surface for the targeted test: the files this
+	// run changed are the tests it must re-run, when the contract names none.
+	const derived = targetedSurfaceOf(options.diff?.files ?? []);
 
-	const add = (kind: VerifierKind, scope: string = scopeFor(kind, block.criteria), mandatory = true): void => {
+	const add = (kind: VerifierKind, scope: string = scopeFor(kind, block.criteria, derived), mandatory = true): void => {
 		if (descriptors.some((descriptor) => descriptor.kind === kind)) return;
 		descriptors.push({
 			kind,

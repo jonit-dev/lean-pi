@@ -17,24 +17,30 @@
 import type { ArtifactStore } from "../context/artifacts.js";
 import type { JevClient } from "../jev/client.js";
 import type { BackendRegistry, HarnessSpawn } from "../backends/index.js";
-import { runWorkerTurn } from "../backends/index.js";
+import { modelFor, runWorkerTurn } from "../backends/index.js";
 import type { RunWorkerTurnOptions } from "../backends/registry.js";
 import type { WorkerTaskPacket, WorkerTurnOutcome } from "../backends/worker.js";
 import type { CapabilitySlots, ExecutionContract } from "../compiler/contract.js";
 import type { LeanPiConfig, ModelRole, SelectedSkill } from "../core/types.js";
+import type { ClearingSource } from "../routing/candidates.js";
+import { dispatchRequest, effortParameterOf, selectRoute } from "../routing/router.js";
+import type { RouteCostBlock } from "../telemetry/record.js";
 import type { EvidenceRecord, EvidenceStore } from "../verify/evidence.js";
 import type { ShellExec } from "../verify/run.js";
 import { verifyTask } from "../verify/index.js";
 import { classifyReview, securitySensitivePathsIn } from "../review/gate.js";
-import { review, type ReviewMode, type ReviewRunner } from "../review/lane.js";
+import { review, type Independence, type ReviewMode, type ReviewRunner } from "../review/lane.js";
 import { buildPacket } from "../review/packet.js";
-import type { ReviewLevel, ReviewVerdict } from "../review/schema.js";
+import type { ActiveReviewLevel, ReviewLevel, ReviewVerdict } from "../review/schema.js";
 import { classifyEscalation, escalate, needsClarification, type EscalationCategory } from "./escalation.js";
 import { nextAttempt, recordAttempt, type AttemptStrategy, type FailureInput, type RetryBudget, type RetryRecord } from "./retry.js";
 import { classifyFailure, retryUseful, FAILURE_SITE_ID, RETRY_SITE_ID, type FailureCategory } from "./sites.js";
 
 /** The six §28 fields, and nothing else. */
 export const EXECUTOR_TASK_KEYS = ["objective", "acceptanceCriteria", "context", "capabilities", "budget", "retryLimit"] as const;
+
+/** The row that records which identity PRD-020's router chose for the turn. */
+export const ROUTE_SITE_ID = "routing.select_route";
 
 export interface ExecutorTask {
 	objective: string;
@@ -59,6 +65,8 @@ export interface ExecutorReviewOutcome {
 	verdict: ReviewVerdict | null;
 	/** True when `classifyReview` returned `NO_SEMANTIC_REVIEW`, so no reviewer ran. */
 	skipped: boolean;
+	/** Whether the reviewer differed from the executor; `null` when no reviewer ran. */
+	independence: Independence | null;
 }
 
 export interface ExecutorOutcome {
@@ -78,6 +86,8 @@ export interface ExecutorOutcome {
 	question?: string;
 	/** Recorded when the lane proceeded on a stated assumption instead of asking. */
 	assumption?: string;
+	/** PRD-020's pre-dispatch prediction, when the router decided this turn's identity. */
+	route_cost?: RouteCostBlock;
 }
 
 export interface ExecutorSiteRow {
@@ -113,6 +123,8 @@ export interface ExecutorDeps {
 	onPrdLane?: () => void;
 	/** PRD-022's worktree isolation, used when `limits.isolation === "worktree"`. */
 	isolate?: (run: (cwd: string) => Promise<ExecutorOutcome>) => Promise<ExecutorOutcome>;
+	/** Test seam: PRD-020's clearing candidate source; defaults to the bundled ranking. */
+	clearing?: ClearingSource;
 	now?: () => number;
 }
 
@@ -167,6 +179,24 @@ function selectedContextFiles(contract: ExecutionContract): string[] {
 	return skills.map((skill) => skill.source).slice(0, 16);
 }
 
+/** The §44 tool vocabulary one executor attempt may use. */
+const EXECUTOR_TOOLS = ["read", "search", "edit", "write", "execute"] as const;
+
+/**
+ * The concrete difference an escalation or a review round makes to the next
+ * packet. The gate names the change; the lane fills in what only it knows —
+ * which files moved, what the failure said, which backend's effort parameter is
+ * in play — so no escalated attempt repeats the packet it just failed on.
+ */
+interface NextAttempt {
+	/** Prompt lines naming what changed and what failed. */
+	lines: string[];
+	/** Extra files the next packet asks for. */
+	files?: string[];
+	/** Extra packet fields, e.g. the backend's own effort parameter. */
+	fields?: Record<string, unknown>;
+}
+
 export async function runExecutor(contract: ExecutionContract, deps: ExecutorDeps): Promise<ExecutorOutcome> {
 	if (contract.limits.isolation === "worktree" && deps.isolate) {
 		return deps.isolate((isolatedCwd) => runExecutor(contract, { ...deps, cwd: isolatedCwd, isolate: undefined }));
@@ -200,20 +230,61 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 	const seenRecords = new Set<string>();
 	let question: string | undefined;
 	let assumption: string | undefined;
+	/** The files the last attempt reported changing; `GET_MORE_CONTEXT` widens with them. */
+	let lastChangedFiles: string[] = [];
+	/** What the next attempt must do differently; consumed by the next packet. */
+	let nextDirective: NextAttempt | null = null;
+	/** Reviewers that returned a non-`PASS` verdict, against `limits.semantic_review_rounds`. */
+	let reviewRounds = 0;
 
-	const blocked = (reason: string): ExecutorOutcome => ({
+	// PRD-020 (F1): the identity this turn dispatches at is the router's, decided
+	// once from the frozen contract. Nothing below re-derives a model: the routed
+	// candidate is pinned into the packet and every other backend is held out of
+	// the chain until the turn burns or escalates off it.
+	const route = await selectRoute({
+		contract,
+		config: deps.config,
+		cwd: deps.cwd,
+		...(deps.jev ? { client: deps.jev } : {}),
+		...(deps.clearing ? { clearing: deps.clearing } : {}),
+	});
+	for (const row of route.telemetry) sites.push({ site: row.site_id, answer: row.answer, fallbackUsed: row.fallback_used });
+	const routed = route.selected;
+	// A capability gap is recorded, never silent: the pool's own role chain runs
+	// the turn, and the row says the cost-aware choice did not decide it.
+	sites.push({
+		site: ROUTE_SITE_ID,
+		answer: routed ? `${routed.candidate.backend}/${routed.candidate.model}` : route.reason,
+		fallbackUsed: routed === null,
+	});
+	if (routed) {
+		role = routed.candidate.roles.includes(role) ? role : (routed.candidate.roles[0] ?? role);
+	}
+	/** The routed identity, while it is still the one the chain must dispatch. */
+	let routedIdentity: { backend: string; model: string } | null = routed ? { backend: routed.candidate.backend, model: routed.candidate.model } : null;
+	/** Everything the routed backend is preferred over; dropped with the pin. */
+	let routeExclusions: string[] = routed ? deps.registry.backends.filter((backend) => backend.name !== routed.candidate.backend).map((backend) => backend.name) : [];
+	// A burned or escalated-away route is no longer this turn's identity, and
+	// holding its exclusions would strand FR-046's fallback chain.
+	const abandonRoute = (): void => {
+		routedIdentity = null;
+		routeExclusions = [];
+	};
+
+	const blocked = (reason: string, review?: ExecutorReviewOutcome): ExecutorOutcome => ({
 		status: "blocked",
 		changedFiles: [],
 		evidence,
 		commands,
 		retryHistory,
 		invocations,
-		review: { level: "NO_SEMANTIC_REVIEW", verdict: null, skipped: true },
+		review: review ?? { level: "NO_SEMANTIC_REVIEW", verdict: null, skipped: true, independence: null },
 		blockedReason: reason,
 		escalations,
 		sites,
 		...(question ? { question } : {}),
 		...(assumption ? { assumption } : {}),
+		...(route.route_cost ? { route_cost: route.route_cost } : {}),
 	});
 
 	for (;;) {
@@ -222,15 +293,32 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 		}
 		budget.attemptsUsed += 1;
 
-		const outcome = await worker(
+		// The directive belongs to exactly one attempt: whatever it widened or
+		// raised applies to the invocation about to run, not to every later one.
+		const carried = nextDirective;
+		nextDirective = null;
+		const widened = carried?.files ? [...new Set([...task.context.files, ...carried.files])] : task.context.files;
+		const promptTask = widened === task.context.files ? task : { ...task, context: { ...task.context, files: widened } };
+
+		// PRD-020 dispatches the identity the router named: the model is pinned on
+		// the packet so `modelFor` cannot re-derive a different one, the effort the
+		// router decided travels under the backend's own parameter name, and an
+		// escalation's directive still wins over both.
+		const packet = dispatchRequest(
 			{
 				objective: task.objective,
 				role,
-				prompt: renderExecutorPrompt(task),
-				...(task.context.files.length > 0 ? { files: [...task.context.files] } : {}),
-				allowedTools: ["read", "search", "edit", "write", "execute"],
+				prompt: [renderExecutorPrompt(promptTask), ...(carried?.lines ?? [])].join("\n"),
+				...(widened.length > 0 ? { files: [...widened] } : {}),
+				allowedTools: [...EXECUTOR_TOOLS],
 				budget: task.budget,
+				...(routedIdentity ? { model: routedIdentity.model } : {}),
 			},
+			route,
+			deps.config,
+		);
+		const outcome = await worker(
+			{ ...packet, ...(carried?.fields ?? {}) },
 			{
 				registry: deps.registry,
 				cwd: deps.cwd,
@@ -238,7 +326,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 				...(deps.spawn ? { spawn: deps.spawn } : {}),
 				...(deps.env ? { env: deps.env } : {}),
 				...(deps.now ? { now: deps.now } : {}),
-				exclude: [...excludeBackends],
+				exclude: [...new Set([...excludeBackends, ...routeExclusions])],
 			},
 		);
 
@@ -254,12 +342,17 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 			}
 		} else {
 			invocations.push({ role, backend: backendName, strategy: strategyLabel, ok: true });
+			lastChangedFiles = [...outcome.result.changedFiles];
 			const result = await verifyTask(contract, deps.cwd, {
 				...(deps.store ? { store: deps.store } : {}),
 				...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 				...(deps.jev ? { jev: deps.jev } : {}),
 				config: deps.config,
 				touchedPaths: outcome.result.changedFiles,
+				// B4: the verifier can only widen the regression scope when it is told
+				// what the diff touched; without it `regressionScopeRule(undefined)`
+				// answers `TARGETED_SUFFICIENT` by construction.
+				diff: { files: [...outcome.result.changedFiles] },
 				...(deps.verifyCommands ? { commands: deps.verifyCommands } : {}),
 				...(deps.exec ? { exec: deps.exec } : {}),
 			});
@@ -267,23 +360,47 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 			commands.push(...result.commands);
 
 			if (result.status === "pass") {
+				const ranBackend = outcome.backend ? deps.registry.byName(outcome.backend) : undefined;
 				const reviewOutcome = await runReview(contract, deps, {
 					changedFiles: outcome.result.changedFiles,
 					evidence: result.records,
 					failedAttempts: retryHistory.length,
+					// F4: the identity that actually ran, so the reviewer lane can prefer
+					// a different model and report independence rather than guess.
+					...(ranBackend ? { executor: { backend: ranBackend.name, model: modelFor(ranBackend, role) } } : {}),
 				});
-				return {
-					status: "completed",
-					changedFiles: outcome.result.changedFiles,
-					evidence,
-					commands,
-					retryHistory,
-					invocations,
-					review: reviewOutcome,
-					escalations,
-					sites,
-					...(assumption ? { assumption } : {}),
-				};
+				const verdict = reviewOutcome.verdict;
+				if (reviewOutcome.skipped || !verdict || verdict.decision === "PASS") {
+					return {
+						status: "completed",
+						changedFiles: outcome.result.changedFiles,
+						evidence,
+						commands,
+						retryHistory,
+						invocations,
+						review: reviewOutcome,
+						escalations,
+						sites,
+						...(assumption ? { assumption } : {}),
+						...(route.route_cost ? { route_cost: route.route_cost } : {}),
+					};
+				}
+
+				// F2: a reviewer that did not pass is a failure like any other, and it
+				// is bounded by the contract's own round ceiling rather than by the
+				// retry ladder the verifier failures use.
+				const detail = `${verdict.decision}: ${findingsOf(verdict)}`;
+				reviewRounds += 1;
+				if (reviewRounds < contract.limits.semantic_review_rounds && budget.attemptsUsed < budget.executionAttempts) {
+					// The round lands on the retry history so the next review sees an
+					// attempt that failed and its floor can elevate the level.
+					recordAttempt(retryHistory, { strategy: "reassess", failure: { kind: "review", detail }, newEvidence: true, model: role, backend: backendName });
+					nextDirective = { lines: [`the reviewer will not pass this change — ${detail}`] };
+					attemptStrategy = "reassess";
+					strategyLabel = "review_fix";
+					continue;
+				}
+				return blocked(`the reviewer requires a fix before this change can pass (${detail})`, reviewOutcome);
 			}
 
 			const failing = result.records.find((record) => record.status === "fail" || record.status === "error");
@@ -322,7 +439,12 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 			// same backend repeats the same environment, so it is burned first.
 			if (category.value === "environment") {
 				const burned = invocations[invocations.length - 1]?.backend;
-				if (burned && burned !== "none") excludeBackends = [...excludeBackends, burned];
+				if (burned && burned !== "none") {
+					excludeBackends = [...excludeBackends, burned];
+					// The routed identity is the burned one: holding its exclusions
+					// would leave the chain with nothing to fall back to.
+					if (burned === routedIdentity?.backend) abandonRoute();
+				}
 			}
 			continue;
 		}
@@ -356,9 +478,54 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 		}
 		role = action.role;
 		if (action.excludeBackend) excludeBackends = [...excludeBackends, action.excludeBackend];
+		// §34: an escalation moves the route. The router decided the identity for
+		// the attempt that failed, so the escalated attempt re-enters the pool's
+		// chain on the role the gate chose rather than re-dispatching the same pin.
+		abandonRoute();
 		attemptStrategy = "escalate";
 		strategyLabel = action.category;
+
+		// F7: every continuing category changes the next packet, not just its label.
+		// The gate names the change; the attempt-specific detail — which files moved,
+		// what failed, which backend's effort parameter is in play — is here.
+		const directive = action.directive;
+		if (directive) {
+			const lines = [`escalation ${action.category}: ${directive.instruction}`, `the previous failure was: ${failure.detail}`];
+			const next: NextAttempt = { lines };
+			if (directive.widenContext) next.files = [...lastChangedFiles];
+			if (directive.nameTools) lines.push(`tools this attempt may use: ${EXECUTOR_TOOLS.join(", ")}`);
+			if (directive.raiseEffort) {
+				const nextBackend = deps.registry.selectBackend(role, excludeBackends)[0];
+				const parameter = nextBackend ? effortParameterOf(deps.config, nextBackend.name) : null;
+				// A backend that declares no effort parameter still gets the instruction
+				// above: it is told to reason harder, just not in a field of its own.
+				if (parameter) next.fields = { [parameter]: "high" };
+			}
+			if (directive.strongReview) {
+				// The change has not passed verification — the escalation gate is why
+				// this review happens — so the reviewer is told that, not the pass claim.
+				const strong = await runReviewAt(
+					contract,
+					deps,
+					{
+						changedFiles: lastChangedFiles,
+						evidence,
+						failedAttempts: retryHistory.length,
+						summary: "the escalation gate asked for a strong review of the current state after a failed attempt",
+					},
+					"STRONG_REVIEW",
+					"strong",
+				);
+				if (strong.verdict) lines.push(`strong review ${strong.verdict.decision}: ${findingsOf(strong.verdict)}`);
+			}
+			nextDirective = next;
+		}
 	}
+}
+
+/** A verdict's findings as one line, for a prompt or a blocked reason. */
+function findingsOf(verdict: ReviewVerdict): string {
+	return verdict.findings.map((finding) => `${finding.severity} ${finding.file}: ${finding.evidence}`).join("; ") || "no findings recorded";
 }
 
 /** The record identity used to decide whether an attempt produced new evidence. */
@@ -392,11 +559,17 @@ export function strategyFor(category: FailureCategory): string {
 	}
 }
 
-async function runReview(
-	contract: ExecutionContract,
-	deps: ExecutorDeps,
-	change: { changedFiles: readonly string[]; evidence: readonly EvidenceRecord[]; failedAttempts: number },
-): Promise<ExecutorReviewOutcome> {
+/** The change a review reads, plus the identity that ran it when the pool knows it. */
+interface ReviewChange {
+	changedFiles: readonly string[];
+	evidence: readonly EvidenceRecord[];
+	failedAttempts: number;
+	executor?: { backend: string; model: string | null };
+	/** What the reviewer is told the executor claims; overridden when nothing passed. */
+	summary?: string;
+}
+
+async function runReview(contract: ExecutionContract, deps: ExecutorDeps, change: ReviewChange): Promise<ExecutorReviewOutcome> {
 	// The review decision is PRD-011's, and nothing here re-implements it: a local
 	// `review_risk === 'low'` shortcut would route exactly the changes PRD-011's
 	// deterministic floor protects.
@@ -411,24 +584,41 @@ async function runReview(
 		...(deps.jev ? { client: deps.jev } : {}),
 	});
 	if (gate.level === "NO_SEMANTIC_REVIEW") {
-		return { level: gate.level, verdict: null, skipped: true };
+		return { level: gate.level, verdict: null, skipped: true, independence: null };
 	}
+	return runReviewAt(contract, deps, change, gate.level, "gate");
+}
+
+/**
+ * One reviewer invocation at a fixed level. The gate's review and the
+ * `STRONG_REVIEW` escalation's review both go through here, so they cannot
+ * disagree about the packet, the deps or the executor identity.
+ */
+async function runReviewAt(
+	contract: ExecutionContract,
+	deps: ExecutorDeps,
+	change: ReviewChange,
+	level: ActiveReviewLevel,
+	mode: ReviewMode,
+): Promise<ExecutorReviewOutcome> {
 	const built = buildPacket({
 		objective: contract.task.objective,
 		acceptanceCriteria: contract.task.acceptance_criteria,
 		cwd: deps.cwd,
 		changedFiles: change.changedFiles,
 		evidence: change.evidence,
-		executorSummary: "the executor reports the change is complete and deterministically verified",
+		executorSummary: change.summary ?? "the executor reports the change is complete and deterministically verified",
 		...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 	});
-	const outcome = await review(built.packet, gate.level, "gate" as ReviewMode, {
+	const outcome = await review(built.packet, level, mode, {
 		registry: deps.registry,
 		cwd: deps.cwd,
+		config: deps.config,
+		...(change.executor ? { executor: change.executor } : {}),
 		...(deps.agentDir ? { agentDir: deps.agentDir } : {}),
 		...(deps.reviewRunner ? { runner: deps.reviewRunner } : {}),
 		...(deps.spawn ? { spawn: deps.spawn } : {}),
 		...(deps.env ? { env: deps.env } : {}),
 	});
-	return { level: gate.level, verdict: outcome.verdict, skipped: false };
+	return { level, verdict: outcome.verdict, skipped: false, independence: outcome.independence };
 }

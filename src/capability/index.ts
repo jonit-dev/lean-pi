@@ -18,7 +18,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { PACKAGE_ROOT } from "../core/package-info.js";
-import { MODEL_ROLES, type BackendRef, type LeanPiConfig, type ModelRole } from "../core/types.js";
+import { isModelRole, MODEL_ROLES, type BackendRef, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { capabilityConfigOf, selectRoleModel, UnknownPinError, type RoleSelection } from "./roles.js";
 import { RankingUnavailableError, RankingValidationError, parseRankingFile, type ModelCapability, type RankedModel, type Ranking } from "./schema.js";
 
@@ -43,8 +43,9 @@ function ageDaysOf(isoDate: string, now: Date): number {
  */
 function bindingOf(record: ModelCapability, config: LeanPiConfig): BackendRef | null {
 	const bindings: BackendRef[] = [];
-	for (const entry of Object.values(config.models)) {
-		if (!entry) continue;
+	for (const [role, entry] of Object.entries(config.models)) {
+		// `models.specialists` (FR-047) is a language/task-type map, not a binding.
+		if (!isModelRole(role) || !entry) continue;
 		if (entry.model !== record.model_id && !record.aliases.includes(entry.model)) continue;
 		const backend = config.backends[entry.backend];
 		if (!backend || backend.enabled === false) continue;

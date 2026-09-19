@@ -7,12 +7,15 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { BackendRegistry } from "../../src/backends/index.js";
 import { createCommandRegistry } from "../../src/commands/registry.js";
 import { createTaskState } from "../../src/compiler/state.js";
 import { registerReviewCommand, runReview } from "../../src/review/commands.js";
-import { REVIEW_PACKET_KEYS, type ReviewLevel } from "../../src/review/schema.js";
+import { review } from "../../src/review/lane.js";
+import { REVIEW_PACKET_KEYS, type ReviewLevel, type ReviewPacket } from "../../src/review/schema.js";
 import { EvidenceStore } from "../../src/verify/evidence.js";
 import { installStubCli, setStubScript } from "../backends/helpers.js";
+import { fixtureRepo, nativeBackend } from "../helpers/fixtures.js";
 import { contractOf, recordingExec } from "../verify/support.js";
 import { configWith, reviewRepo, scriptedRunner, singleBackendConfig, TRANSCRIPT_MARKER, twoBackendConfig, verdictJson } from "./support.js";
 
@@ -267,5 +270,84 @@ describe("reviewer lane", () => {
 		);
 		expect(outcome.verdict.decision).toBe("ESCALATE");
 		expect(outcome.verdict.findings[0]!.evidence).toContain("timeout");
+	});
+});
+
+/** A packet good enough to review; the lane only renders it into the prompt. */
+const PACKET: ReviewPacket = {
+	objective: "set the value to 2",
+	acceptance_criteria: [{ id: "AC-1", text: "the value is 2" }],
+	final_diff: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-export const value = 1;\n+export const value = 2;\n",
+	changed_files: ["src/app.ts"],
+	verification_results: [],
+	known_warnings: [],
+	executor_summary: "set the value to 2",
+};
+
+describe("reviewer dispatch", () => {
+	it("F5: runs the model the review role's fallback chain binds on the selected backend", async () => {
+		const repo = reviewRepo();
+		const cli = installStubCli();
+		const restore = setStubScript(cli.recordPath, { mode: "ok", files: {}, summary: verdictJson("PASS") });
+		try {
+			// No `review_quick` entry and no entry-level `model:`: `quick` is the only
+			// role that names this backend, and the §27 ladder says that is enough.
+			const config = configWith(
+				repo.cwd,
+				{ opencode: { type: "external_harness", vendor: "opencode", command: cli.bin.opencode } },
+				{ quick: { backend: "opencode", model: "cheap" }, balanced: { backend: "opencode", model: "mid" }, strong: { backend: "opencode", model: "big" } },
+			);
+			const outcome = await review(PACKET, "QUICK_REVIEW", "gate", { registry: new BackendRegistry(config), cwd: repo.cwd, config });
+			expect(outcome.verdict.decision).toBe("PASS");
+			expect(outcome.backend).toBe("opencode");
+			expect(outcome.model).toBe("cheap");
+			// The model the reviewer was actually launched with, not just the reported one.
+			expect(cli.records()[0]?.argv).toContain("cheap");
+		} finally {
+			restore();
+		}
+	});
+
+	it("F5: a review role the config binds keeps its own model", async () => {
+		const repo = reviewRepo();
+		const scripted = scriptedRunner(verdictJson("PASS"));
+		const config = configWith(
+			repo.cwd,
+			{ a: nativeBackend("http://127.0.0.1:1/v1/a", { model: "entry-model" }) },
+			{ review_quick: { backend: "a", model: "review-cheap" } },
+		);
+		const outcome = await review(PACKET, "QUICK_REVIEW", "gate", {
+			registry: new BackendRegistry(config),
+			cwd: repo.cwd,
+			config,
+			runner: scripted.runner,
+		});
+		expect(outcome.model).toBe("review-cheap");
+		expect(scripted.calls[0]?.packet.model).toBe("review-cheap");
+	});
+
+	it("F5: leaves the model unresolved rather than fabricating one", async () => {
+		const { cwd } = fixtureRepo();
+		const config = configWith(cwd, { local: nativeBackend("http://127.0.0.1:1/v1/local") }, {});
+		const outcome = await review(PACKET, "QUICK_REVIEW", "gate", { registry: new BackendRegistry(config), cwd, config });
+		expect(outcome.verdict.decision).toBe("ESCALATE");
+		expect(outcome.model).toBeNull();
+		expect(outcome.reason ?? "").toContain('declares no model for role "review_quick"');
+	});
+
+	it("F4: prefers the second candidate when the executor's identity is the first candidate's", async () => {
+		const repo = reviewRepo();
+		const scripted = scriptedRunner(verdictJson("PASS"));
+		const config = twoBackendConfig(repo.cwd);
+		const outcome = await review(PACKET, "QUICK_REVIEW", "gate", {
+			registry: new BackendRegistry(config),
+			cwd: repo.cwd,
+			config,
+			executor: { backend: "a", model: "exec-ma" },
+			runner: scripted.runner,
+		});
+		expect(outcome.backend).toBe("b");
+		expect(outcome.independence).toBe("independent");
+		expect(scripted.calls[0]?.backend.name).toBe("b");
 	});
 });

@@ -96,7 +96,16 @@ export interface ExecutionContract {
 	reasoning: { effort: "low" | "medium" | "high" };
 	capabilities: CapabilitySlots;
 	context: { strategy: "targeted" | "broad"; budget_tokens: number };
-	verification: { required: string[] };
+	verification: {
+		required: string[];
+		/**
+		 * PRD-009's per-criterion attribution (FR-124): which verifier kinds prove
+		 * each criterion, and over what surface. The compiler fills this only when
+		 * it can name a surface — a criterion whose surface is unknown carries no
+		 * scope rather than a guessed one.
+		 */
+		criteria?: Array<{ id: string; verifiers?: string[]; scope?: string }>;
+	};
 	limits: {
 		/** A hard total: every backend invocation the turn makes, escalations included. */
 		execution_attempts: number;

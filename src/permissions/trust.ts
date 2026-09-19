@@ -405,6 +405,15 @@ export interface ResolvedPermissions extends PermissionsConfig {
 const LOOSENING_REASON = "project scope may only tighten permissions";
 
 /**
+ * The secrets fields tighten in different directions, so each has its own
+ * reason rather than `LOOSENING_REASON`: a lower `minLength` redacts more, an
+ * extra `secretNames` entry matches more, and an extra `passthrough` entry
+ * forwards more to spawned children.
+ */
+const MIN_LENGTH_RAISE_REASON = "raising minLength would stop redacting shorter values; a project may only lower it";
+const PASSTHROUGH_REASON = "passthrough stays user scope: project-named env vars would otherwise reach spawned children";
+
+/**
  * Effective permissions = built-in defaults ← user scope ← project scope, where
  * a project entry is applied only when it is strictly stricter than what user
  * scope already resolves to. Everything rejected is recorded for `/permissions`.
@@ -469,9 +478,22 @@ export function mergePermissions(input: {
 				reason: "project secrets policy ignored while the project is untrusted",
 			});
 		} else {
-			secrets.passthrough.push(...(project.secrets.passthrough ?? []));
-			secrets.secretNames.push(...(project.secrets.secretNames ?? []));
-			if (typeof project.secrets.minLength === "number") secrets.minLength = project.secrets.minLength;
+			// Lowering the floor redacts more values, so it is the only project
+			// minLength that applies.
+			const projectMinLength = project.secrets.minLength;
+			if (typeof projectMinLength === "number") {
+				if (projectMinLength > secrets.minLength) {
+					ignoredProjectGrants.push({ capability: "permissions.secrets.minLength", decision: "deny", reason: MIN_LENGTH_RAISE_REASON });
+				} else {
+					secrets.minLength = projectMinLength;
+				}
+			}
+			// Extra names only widen what can be matched, so they apply.
+			secrets.secretNames = [...new Set([...secrets.secretNames, ...(project.secrets.secretNames ?? [])])];
+			// Forwarding stays user-owned: a project cannot put env vars into children.
+			if (project.secrets.passthrough?.length) {
+				ignoredProjectGrants.push({ capability: "permissions.secrets.passthrough", decision: "deny", reason: PASSTHROUGH_REASON });
+			}
 		}
 	}
 

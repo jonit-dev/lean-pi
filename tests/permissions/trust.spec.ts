@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/commands/registry.js";
 import { loadConfig } from "../../src/index.js";
-import { assertTrusted, loadPermissionState, registerPermissionsCommand, type PermissionState } from "../../src/permissions/index.js";
+import { assertTrusted, BUILTIN_SECRETS_POLICY, loadPermissionState, mergePermissions, registerPermissionsCommand, type PermissionState } from "../../src/permissions/index.js";
 import { nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
 import { STUB_MODEL, bootGuardedSession, call, drive, toolMessages } from "./harness.js";
@@ -191,5 +191,59 @@ describe("PRD-017 AC-8 — trust runs the project once, an edit revokes it", () 
 		expect(status.trusted).toBe(false);
 		expect(status.status).toBe("changed");
 		expect(status.changedFile).toContain("SKILL.md");
+	});
+});
+
+/**
+ * B3. The three secrets fields tighten in different directions, so the merge
+ * cannot apply one uniform rule: a lower `minLength` redacts more, an extra
+ * `secretNames` entry matches more, and an extra `passthrough` entry forwards
+ * more to children. A trusted project may do the first two and never the third.
+ */
+describe("B3 — a trusted project cannot loosen its own secrets policy", () => {
+	/** mergePermissions only reads `trusted`; the rest of the status is irrelevant here. */
+	const status = (trusted: boolean) => ({ trusted, status: trusted ? "trusted" : "untrusted" }) as never;
+	const userState = (secrets: Partial<typeof BUILTIN_SECRETS_POLICY> = {}) => ({
+		defaults: {},
+		rules: [],
+		trust: {},
+		secrets: { ...BUILTIN_SECRETS_POLICY, ...secrets },
+	});
+
+	it("ignores a raised minLength and a passthrough addition, and accepts and dedupes extra secret names", () => {
+		const merged = mergePermissions({
+			user: userState({ minLength: 12, passthrough: ["USER_FORWARD"], secretNames: ["USER_SECRET"] }),
+			project: { secrets: { minLength: 999999, passthrough: ["SOME_SECRET"], secretNames: ["EXTRA", "EXTRA", "USER_SECRET"] } },
+			trust: status(true),
+		});
+
+		expect(merged.secrets.minLength).toBe(12);
+		expect(merged.secrets.passthrough).not.toContain("SOME_SECRET");
+		expect(merged.secrets.passthrough).toContain("USER_FORWARD");
+		expect(merged.secrets.secretNames).toContain("EXTRA");
+		expect(merged.secrets.secretNames).toEqual([...new Set(merged.secrets.secretNames)]);
+		expect(merged.ignoredProjectGrants.map((grant) => grant.capability)).toEqual(["permissions.secrets.minLength", "permissions.secrets.passthrough"]);
+		expect(merged.ignoredProjectGrants[0]!.reason).toContain("minLength");
+		expect(merged.ignoredProjectGrants[1]!.reason).toContain("user scope");
+	});
+
+	it("applies a lower project minLength, keeps the user value over the builtin, and ignores the whole block while untrusted", () => {
+		// Lowering the floor redacts more, so it is the one project minLength that applies.
+		const lowered = mergePermissions({ user: userState(), project: { secrets: { minLength: 3 } }, trust: status(true) });
+		expect(lowered.secrets.minLength).toBe(3);
+		expect(lowered.ignoredProjectGrants).toEqual([]);
+
+		// A user-scope minLength beats the builtin even with no project block in play.
+		expect(mergePermissions({ user: userState({ minLength: 12 }), project: {}, trust: status(true) }).secrets.minLength).toBe(12);
+
+		const untrusted = mergePermissions({
+			user: userState({ minLength: 12, passthrough: ["USER_FORWARD"], secretNames: ["USER_SECRET"] }),
+			project: { secrets: { minLength: 3, passthrough: ["SOME_SECRET"], secretNames: ["EXTRA"] } },
+			trust: status(false),
+		});
+		expect(untrusted.secrets).toEqual({ minLength: 12, passthrough: ["USER_FORWARD"], secretNames: ["USER_SECRET"] });
+		expect(untrusted.ignoredProjectGrants).toEqual([
+			{ capability: "permissions.secrets", decision: "allow", reason: "project secrets policy ignored while the project is untrusted" },
+		]);
 	});
 });

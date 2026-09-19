@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { createArtifactStore } from "../../src/context/artifacts.js";
 import { createJevClient } from "../../src/jev/client.js";
 import { createDecisionLog, decisionLogPath, readDecisions } from "../../src/jev/log.js";
-import type { RegressionScope } from "../../src/verify/select.js";
+import { selectVerifiers, type RegressionScope } from "../../src/verify/select.js";
 import { EvidenceStore } from "../../src/verify/evidence.js";
 import { verifyTask } from "../../src/verify/index.js";
 import { contractOf, gitInit, recordingExec, stubConfig, tempWorkspace, writeFiles, TSC } from "./support.js";
@@ -160,6 +160,83 @@ describe("regression-scope decision (AC-6)", () => {
 
 		expect(result.regressionScope).toBe("BROADER_SUITE_REQUIRED");
 		expect(control.commands).toContain("npm test");
+	});
+});
+
+/**
+ * B1/B4. When the contract's criteria name no scope, the run's own files are the
+ * only surface left: the test files among them are what the targeted test
+ * re-runs, and a diff the deterministic rule scopes as broad widens the suite.
+ * The negative control is the same selector over a diff with no test file — it
+ * must not invent a surface.
+ */
+describe("B1/B4 — the run names its own targeted surface", () => {
+	it("names the changed test files as the targeted surface when the contract declares no scope", async () => {
+		const selection = await selectVerifiers(contractOf({ required: ["affected_tests"] }), {
+			diff: { files: ["src/a.ts", "tests/x.spec.ts"] },
+		});
+
+		const targeted = selection.descriptors.find((descriptor) => descriptor.kind === "targeted_test");
+		expect(targeted?.scope).toBe("tests/x.spec.ts");
+		expect(targeted?.command).toBe("npx vitest run tests/x.spec.ts");
+	});
+
+	it("leaves the targeted test unnamed when the diff names no test file", async () => {
+		const selection = await selectVerifiers(contractOf({ required: ["affected_tests"] }), {
+			diff: { files: ["src/a.ts", "README.md"] },
+		});
+
+		const targeted = selection.descriptors.find((descriptor) => descriptor.kind === "targeted_test");
+		expect(targeted?.scope).toBe("");
+		expect(targeted?.command).toBe("");
+	});
+
+	it("widens to the full suite for a config change and for more files than the threshold", async () => {
+		const configChange = await selectVerifiers(contractOf({ required: ["affected_tests"] }), { diff: { files: ["package.json"] } });
+		expect(configChange.regressionScope).toBe("BROADER_SUITE_REQUIRED");
+		expect(configChange.descriptors.find((descriptor) => descriptor.kind === "full_suite")?.command).toBe("npm test");
+
+		const many = await selectVerifiers(contractOf({ required: ["affected_tests"] }), {
+			diff: { files: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts", "src/f.ts"] },
+		});
+		expect(many.regressionScope).toBe("BROADER_SUITE_REQUIRED");
+		expect(many.descriptors.find((descriptor) => descriptor.kind === "full_suite")?.command).toBe("npm test");
+	});
+
+	it("derives the diff from the run's touched paths when the caller supplies none", async () => {
+		const root = tempWorkspace();
+		writeFiles(root, { "src/a.ts": "export const a = 1;\n" });
+		const control = recordingExec();
+
+		const result = await verifyTask(contractOf({ required: ["typecheck", "affected_tests"] }), root, {
+			exec: control.exec,
+			touchedPaths: ["src/a.ts", "tests/x.spec.ts"],
+		});
+
+		expect(result.commands).toContain("npx vitest run tests/x.spec.ts");
+		expect(result.records.find((record) => record.kind === "targeted_test")?.status).toBe("pass");
+		expect(result.status).toBe("pass");
+	});
+
+	it("widens from the touched paths alone for a change broader than the targeted set", async () => {
+		const root = tempWorkspace();
+		writeFiles(root, { "src/a.ts": "export const a = 1;\n" });
+		const broad = recordingExec();
+
+		const many = await verifyTask(contractOf({ required: ["typecheck", "affected_tests"] }), root, {
+			exec: broad.exec,
+			touchedPaths: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts", "src/f.ts"],
+		});
+		expect(many.regressionScope).toBe("BROADER_SUITE_REQUIRED");
+		expect(many.commands).toContain("npm test");
+
+		const shared = recordingExec();
+		const sharedChange = await verifyTask(contractOf({ required: ["typecheck", "affected_tests"] }), root, {
+			exec: shared.exec,
+			touchedPaths: ["src/a.ts", "package.json"],
+		});
+		expect(sharedChange.regressionScope).toBe("BROADER_SUITE_REQUIRED");
+		expect(sharedChange.commands).toContain("npm test");
 	});
 });
 

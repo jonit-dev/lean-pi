@@ -15,7 +15,7 @@ import { runTurn, type TurnContext, type TurnDeps, type TurnInput } from "../com
 import type { ExecutionContract } from "../compiler/contract.js";
 import { billedRefs, billingOf, type BackendCall, type RunCollector } from "./collect.js";
 import { priceCall, priceRun, resolveCostConfig, type CostConfig } from "./pricing.js";
-import type { CallRow, RunCapabilities, RunResult, RunTelemetry } from "./record.js";
+import type { CallRow, RouteCostBlock, RunCapabilities, RunResult, RunTelemetry } from "./record.js";
 import { appendRun } from "./store.js";
 
 /** The verdicts copied into `result`; never decided here. */
@@ -27,6 +27,11 @@ export interface EmitOptions {
 	cost?: CostConfig;
 	/** The PRD the PRD lane consumed, when one did; null for direct execution. */
 	prdUsed?: string | null;
+	/**
+	 * PRD-020's pre-dispatch prediction for the identity that actually ran
+	 * (`ExecutorOutcome.route_cost`). Absent for a run no router decided.
+	 */
+	routeCost?: RouteCostBlock;
 }
 
 function namesOf(items: readonly unknown[]): string[] {
@@ -104,6 +109,7 @@ export function emitRunTelemetry(
 		capabilities: capabilitiesOf(contract, collector),
 		jev_decisions: [...collector.decisions()],
 		calls: calls.map((call) => callRow(call, collector.taskId, cost)),
+		...(options.routeCost ? { route_cost: options.routeCost } : {}),
 	};
 	appendRun(options.cwd, record, cost);
 	return record;
@@ -135,6 +141,9 @@ export async function runTurnWithTelemetry(
 			cwd: deps.cwd,
 			cost: telemetry.cost ?? resolveCostConfig(deps.config),
 			...(telemetry.prdUsed === undefined ? {} : { prdUsed: telemetry.prdUsed }),
+			// PRD-020's prediction travels on the executor outcome, so the record
+			// carries what the router predicted for the identity that ran.
+			...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
 		});
 	}
 	return context;

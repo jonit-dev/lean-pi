@@ -30,6 +30,25 @@ export interface BackendRef {
 	type: BackendType;
 }
 
+/** One `models:` entry: the backend that serves a role, and the model id it runs on it. */
+export interface ModelBinding {
+	backend: string;
+	model: string;
+}
+
+/**
+ * The `models:` block. The six roles are the §27 map; `specialists` (FR-047) is a
+ * separate map from a language or task-type key to the role that serves it, so its
+ * keys are not roles and it is not a role entry.
+ */
+export type ModelsConfig = Partial<Record<ModelRole, ModelBinding>> & { specialists?: Record<string, ModelRole> };
+
+/** The `verify:` block (PRD-009/PRD-018): the host project's own verifier commands. */
+export interface VerifyConfig {
+	commands: Partial<Record<string, string>>;
+	timeoutMs?: number;
+}
+
 /** Configuration of one backend. Local/self-hosted backends are ordinary `native` entries. */
 export interface BackendConfig {
 	type: BackendType;
@@ -132,7 +151,7 @@ export interface LeanPiConfig {
 	/** Path the config was loaded from, or null when defaults were used. */
 	configPath: string | null;
 	backends: Record<string, BackendConfig>;
-	models: Partial<Record<ModelRole, { backend: string; model: string }>>;
+	models: ModelsConfig;
 	instructions: Required<InstructionsConfig>;
 	jev: Required<Omit<JevConfig, "apiKey">> & { apiKey: string | null };
 	capabilities: Required<CapabilitiesConfig>;
@@ -142,6 +161,8 @@ export interface LeanPiConfig {
 	lsp: LspConfig;
 	mcp: McpConfig;
 	capability: CapabilitySetting;
+	/** Verifier command overrides and timeout; the table in `verify/descriptors.ts` is the default. */
+	verify?: VerifyConfig;
 	/** Effective permission state: built-in defaults merged with user scope, then project scope (PRD-017). */
 	permissions: ResolvedPermissions;
 	thresholds: ThresholdsConfig;

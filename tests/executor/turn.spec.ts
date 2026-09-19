@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { clearLanes, listLanes, ownsExecutionLoop, registerTurnLanes, registerTurnLanesIfOwned, runTurn } from "../../src/index.js";
 import { setCompilerContext } from "../../src/compiler/index.js";
-import { fakeExec, harness, multiBackendConfig, VERIFY_COMMANDS, type ExecHarness } from "./helpers.js";
+import { REVIEW_LEVEL_QUESTION_ID, REVIEW_LEVEL_SITE_ID } from "../../src/review/gate.js";
+import { choice, fakeExec, harness, multiBackendConfig, scriptedJev, VERIFY_COMMANDS, type ExecHarness } from "./helpers.js";
 
 const open: ExecHarness[] = [];
 
@@ -29,6 +30,10 @@ describe("PRD-007 Phase 1 — the turn chain", () => {
 			config: h.config,
 			exec: fakeExec({ pass: true }),
 			verifyCommands: VERIFY_COMMANDS,
+			// This case is about the chain reaching the executor, so PRD-011's level
+			// site answers "no review": otherwise the turn is routed to a reviewer
+			// there is no worker for, and a verdict that did not pass blocks it.
+			jev: scriptedJev({ [REVIEW_LEVEL_SITE_ID]: () => choice(REVIEW_LEVEL_QUESTION_ID, "NO_SEMANTIC_REVIEW") }),
 			worker: async (packet) => {
 				seenObjective = packet.objective;
 				writeFileSync(join(h.cwd, "src", "target.ts"), "export const value = 42;\n");

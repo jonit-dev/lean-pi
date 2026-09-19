@@ -22,7 +22,7 @@ import { loadRanking, type Ranking } from "../capability/index.js";
 import type { CapabilityGap } from "../capability/select.js";
 import { selectCheapestClearing } from "../capability/select.js";
 import type { RequiredCapability } from "../compiler/contract.js";
-import type { LeanPiConfig, ModelRole } from "../core/types.js";
+import { isModelRole, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import type { RouteCandidate } from "./cost.js";
 
 export interface ClearingResult {
@@ -37,8 +37,10 @@ export type ClearingSource = (input: { required: RequiredCapability; config: Lea
 
 /** The roles whose `models:` entry names this (backend, model). */
 function rolesFor(config: LeanPiConfig, backend: string, model: string): ModelRole[] {
+	// `models.specialists` (FR-047) keys are languages, not roles, so the role
+	// guard keeps them out of a candidate's role list.
 	return Object.entries(config.models)
-		.filter(([, entry]) => entry && entry.backend === backend && entry.model === model)
+		.filter(([role, entry]) => isModelRole(role) && entry && entry.backend === backend && entry.model === model)
 		.map(([role]) => role as ModelRole);
 }
 

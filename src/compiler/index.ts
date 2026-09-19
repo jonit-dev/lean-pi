@@ -11,8 +11,10 @@ import { resolvedDefaults } from "../permissions/trust.js";
 import type { JevQuestion, JevResult, JevUsage } from "../jev/types.js";
 import type { LeanPiConfig } from "../core/types.js";
 import type { TaskPacket } from "../scout/index.js";
+import { targetedRunsWithoutScope, targetedSurfaceOf } from "../verify/select.js";
 import { classifyExecution, classifyReviewRisk, deriveRequiredCapability } from "./classify.js";
 import type {
+	AcceptanceCriterion,
 	CapabilityProvider,
 	CapabilitySlots,
 	CompileRecord,
@@ -107,6 +109,7 @@ function fallbackConfig(): LeanPiConfig {
 		lsp: { mode: "auto", servers: {} },
 		mcp: { maxTools: 6, state: {} },
 		capability: { rankingFile: null, stalenessDays: 90, roles: {} },
+		verify: { commands: {} },
 		permissions: resolvedDefaults(),
 		limits: { executionAttempts: 2, semanticReviewRounds: 1 },
 		thresholds: DEFAULT_THRESHOLDS,
@@ -149,6 +152,18 @@ export async function compileTask(
 		lsp: packet.workspace.lsp_available,
 		rtk: "auto",
 	};
+	// A contract may not demand a check no surface can name: `affected_tests` is
+	// required only when a surface exists — the test files this task changed, or a
+	// configured command that runs without one. An unnamed targeted test resolves
+	// no command, records `not_run`, and leaves every external-harness turn
+	// blocked on a verifier that could never have run.
+	const targetedSurface = targetedSurfaceOf(packet.workspace.changed_files);
+	const requiredVerifiers = VERIFICATION_BY_COMPLEXITY[complexity.complexity].filter(
+		(kind) => kind !== "affected_tests" || targetedSurface.length > 0 || targetedRunsWithoutScope(config.verify?.commands ?? {}),
+	);
+	// A direct task's single acceptance criterion is the request itself; the PRD
+	// lane replaces this list with the PRD's own criteria.
+	const acceptanceCriteria: AcceptanceCriterion[] = [{ id: "AC-1", text: request }];
 	const contract: ExecutionContract = {
 		task: {
 			type: inferTaskType(request),
@@ -159,9 +174,7 @@ export async function compileTask(
 			required_capability: capability.required_capability,
 			user_request: request,
 			objective: request,
-			// A direct task's single acceptance criterion is the request itself; the
-			// PRD lane replaces this list with the PRD's own criteria.
-			acceptance_criteria: [{ id: "AC-1", text: request }],
+			acceptance_criteria: acceptanceCriteria,
 		},
 		routing: {
 			executor_class: routing.executor_class,
@@ -172,7 +185,15 @@ export async function compileTask(
 		reasoning: { effort: EFFORT_BY_COMPLEXITY[complexity.complexity] },
 		capabilities: slots,
 		context: CONTEXT_BY_COMPLEXITY[complexity.complexity],
-		verification: { required: [...VERIFICATION_BY_COMPLEXITY[complexity.complexity]] },
+		verification: {
+			required: requiredVerifiers,
+			// PRD-009 attributes evidence per criterion (FR-124), and the targeted
+			// surface is what each criterion is proved by. A packet that names no
+			// test file declares no scope, so no criterion claims one.
+			...(targetedSurface.length > 0
+				? { criteria: acceptanceCriteria.map((criterion) => ({ id: criterion.id, verifiers: ["affected_tests"], scope: targetedSurface })) }
+				: {}),
+		},
 		limits: {
 			execution_attempts: ATTEMPTS_BY_COMPLEXITY[complexity.complexity],
 			max_escalations: MAX_ESCALATIONS_BY_COMPLEXITY[complexity.complexity],

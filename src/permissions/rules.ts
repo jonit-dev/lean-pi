@@ -8,8 +8,8 @@
  * takes the strictest outcome — `shell: allow` therefore cannot buy network
  * egress, a package install or an out-of-root read.
  */
-import { realpathSync } from "node:fs";
-import { isAbsolute, resolve as resolvePath, sep } from "node:path";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, resolve as resolvePath, sep } from "node:path";
 
 export const SCOPES = [
 	"read",
@@ -182,16 +182,6 @@ export interface ClassifiedScope {
 	capability: string;
 }
 
-const DESTRUCTIVE_GIT: RegExp[] = [
-	/\bgit\s+push\b[^\n]*(--force\b|\s-f\b|--delete\b)/,
-	/\bgit\s+reset\s+--hard\b/,
-	/\bgit\s+clean\b[^\n]*\s-[a-z]*f[a-z]*d/,
-	/\bgit\s+clean\b[^\n]*\s-[a-z]*d[a-z]*f/,
-	/\bgit\s+branch\b[^\n]*\s-D\b/,
-	/\bgit\s+checkout\s+--\s/,
-	/\bgit\s+update-ref\s+-d\b/,
-];
-
 const PACKAGE_INSTALL: RegExp[] = [
 	/\b(npm|pnpm|yarn|bun)\b[^\n]*\b(install|add|i)\b/,
 	/\bpip3?\s+install\b/,
@@ -204,9 +194,59 @@ const PACKAGE_INSTALL: RegExp[] = [
 const NETWORK_COMMAND: RegExp[] = [
 	/\b(curl|wget|nc|netcat|telnet|ssh|scp|sftp)\b/,
 	/\brsync\b[^\n]*(@[^\s]+:|[^\s/]+:\S)/,
-	/\bgit\s+(fetch|pull|push|clone|ls-remote)\b/,
-	/\bgit\s+remote\s+(update|show|set-url)\b/,
 ];
+
+/** git global options that eat the next token; the `=x` spellings eat nothing. */
+const GIT_GLOBAL_VALUE: Record<string, true> = { "-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--exec-path": true };
+
+/**
+ * The `git` subcommand and its arguments with git's own global options
+ * consumed, so `git -C . push --force` reads as a push. A token table, not a
+ * shell parser: an option table we cannot step over yields `null` (no claim).
+ */
+function gitInvocation(command: string): { subcommand: string; args: string[] } | null {
+	const tokens = command
+		.split(/[\s|&;()<>`]+/)
+		.map((token) => token.replace(/^['"]+|['"]+$/g, ""))
+		.filter((token) => token.length > 0);
+	const start = tokens.indexOf("git");
+	if (start === -1) return null;
+	let index = start + 1;
+	while (tokens[index]?.startsWith("-")) index += GIT_GLOBAL_VALUE[tokens[index]!] ? 2 : 1;
+	const subcommand = tokens[index];
+	if (subcommand === undefined) return null;
+	return { subcommand, args: tokens.slice(index + 1) };
+}
+
+/** `-fd` carries both `f` and `d`, and `-f -d` carries them apart. */
+function hasShortFlag(args: string[], letter: string): boolean {
+	return args.some((arg) => arg.length > 1 && arg.startsWith("-") && !arg.startsWith("--") && arg.includes(letter));
+}
+
+/** `+refspec` and `--force-with-lease` force a push just as `--force` does. */
+function gitIsDestructive({ subcommand, args }: { subcommand: string; args: string[] }): boolean {
+	switch (subcommand) {
+		case "push":
+			return args.some((arg) => arg.startsWith("+") || arg === "--force" || arg === "-f" || arg === "--delete" || arg.startsWith("--force-"));
+		case "reset":
+			return args.includes("--hard");
+		case "clean":
+			return (args.includes("--force") || hasShortFlag(args, "f")) && (args.includes("--directory") || hasShortFlag(args, "d"));
+		case "branch":
+			return args.includes("-D");
+		case "checkout":
+			return args.includes("--");
+		case "update-ref":
+			return args.includes("-d");
+		default:
+			return false;
+	}
+}
+
+function gitIsNetwork({ subcommand, args }: { subcommand: string; args: string[] }): boolean {
+	if (subcommand === "fetch" || subcommand === "pull" || subcommand === "push" || subcommand === "clone" || subcommand === "ls-remote") return true;
+	return subcommand === "remote" && ["update", "show", "set-url"].includes(args[0] ?? "");
+}
 
 /** Static tool-name tables: which scope a tool name belongs to. */
 const READ_TOOLS: Record<string, true> = { read: true, search: true, grep: true, find: true, ls: true };
@@ -256,22 +296,65 @@ function realRoot(root: string): string {
 	}
 }
 
+/** A dangling link: `lstat` sees it where `realpath` gives up with ENOENT. */
+function linkTarget(path: string): string | null {
+	try {
+		return lstatSync(path).isSymbolicLink() ? resolvePath(dirname(path), readlinkSync(path)) : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * `realpath` of the deepest existing ancestor with the not-yet-created tail
+ * re-appended, so `link/new.txt` is judged by where `link` actually points.
+ * `null` is an unexpected failure (a symlink cycle, an unreadable ancestor):
+ * the caller fails closed rather than guessing.
+ */
+function canonicalize(absolute: string): string | null {
+	let current = absolute;
+	let missing: string[] = [];
+	// Bounded: a cycle of dangling links would otherwise loop for ever.
+	for (let hops = 0; hops < 40; hops++) {
+		try {
+			const real = realpathSync(current);
+			return missing.length === 0 ? real : resolvePath(real, ...missing.reverse());
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			// Nothing exists below a missing or non-directory component: walk up.
+			if (code !== "ENOENT" && code !== "ENOTDIR") return null;
+			const target = linkTarget(current);
+			if (target !== null) {
+				current = missing.length === 0 ? target : resolvePath(target, ...missing);
+				missing = [];
+				continue;
+			}
+			const parent = dirname(current);
+			if (parent === current) return null;
+			missing.push(basename(current));
+			current = parent;
+		}
+	}
+	return null;
+}
+
 /**
  * A path whose `realpath` escapes the session root. Symlinks count: a link
- * inside the root that points outside is an out-of-root read.
+ * inside the root that points outside is an out-of-root read. The candidate is
+ * resolved against the canonical root, so a symlinked session root does not
+ * deny its own files, and the deepest existing ancestor is canonicalized, so a
+ * leaf that does not exist yet cannot smuggle a write out through a link.
  */
 export function escapesRoot(root: string, candidate: string): boolean {
 	if (candidate.length === 0) return false;
 	const expanded = candidate.startsWith("~") ? candidate.replace(/^~/, process.env.HOME ?? "~") : candidate;
-	const absolute = isAbsolute(expanded) ? resolvePath(expanded) : resolvePath(root, expanded);
 	const base = realRoot(root);
-	const contained = (value: string): boolean => value === base || value.startsWith(base.endsWith(sep) ? base : base + sep);
-	if (!contained(absolute)) return true;
-	try {
-		return !contained(realpathSync(absolute));
-	} catch {
-		return false;
-	}
+	const absolute = isAbsolute(expanded) ? resolvePath(expanded) : resolvePath(base, expanded);
+	const canonical = canonicalize(absolute);
+	// Fail closed: an ancestor we cannot canonicalize is not evidence of "in root".
+	if (canonical === null) return true;
+	const prefix = base.endsWith(sep) ? base : base + sep;
+	return canonical !== base && !canonical.startsWith(prefix);
 }
 
 function looksLikePath(token: string): boolean {
@@ -318,9 +401,10 @@ export function classifyScopes(call: CallShape, root: string): ClassifiedScope[]
 	if (SHELL_TOOLS[toolName]) {
 		const command = stringArg(input, "command", "cmd", "script") ?? "";
 		add("shell", command);
-		if (DESTRUCTIVE_GIT.some((pattern) => pattern.test(command))) add("git_destructive", command);
+		const git = command.includes("git") ? gitInvocation(command) : null;
+		if (git !== null && gitIsDestructive(git)) add("git_destructive", command);
 		if (PACKAGE_INSTALL.some((pattern) => pattern.test(command))) add("package_install", command);
-		if (NETWORK_COMMAND.some((pattern) => pattern.test(command))) add("network", command);
+		if (NETWORK_COMMAND.some((pattern) => pattern.test(command)) || (git !== null && gitIsNetwork(git))) add("network", command);
 		for (const token of pathTokens(command)) {
 			if (escapesRoot(root, token)) add("external_dir", token);
 		}

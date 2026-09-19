@@ -26,7 +26,8 @@ import {
 	type WorkerOutcome,
 	type WorkerTaskPacket,
 } from "../backends/index.js";
-import type { ModelRole, SelectedSkill } from "../core/types.js";
+import { ROLE_FALLBACK_CHAINS } from "../core/roles.js";
+import type { LeanPiConfig, ModelRole, SelectedSkill } from "../core/types.js";
 import { renderReviewPrompt, type ReviewProfile } from "./packet.js";
 import {
 	escalateVerdict,
@@ -74,8 +75,14 @@ export interface ReviewDeps {
 	registry: BackendRegistry;
 	cwd: string;
 	agentDir?: string;
+	/**
+	 * The parsed configuration, so the reviewer's model resolves through the same
+	 * `models:` ladder `/models` uses. Without it the registry's role map is all
+	 * the lane has, which is what a caller that already holds a pool passes.
+	 */
+	config?: LeanPiConfig;
 	/** The executor's own binding, so the lane can compare identities (§31). */
-	executor?: { backend: string; model: string };
+	executor?: { backend: string; model: string | null };
 	/** Test seam: replaces the PRD-008 invocation with a scripted worker outcome. */
 	runner?: ReviewRunner;
 	spawn?: HarnessSpawn;
@@ -130,9 +137,29 @@ function identityOf(backend: string, model: string | null): string {
 	return `${backend}/${model ?? ""}`;
 }
 
+/**
+ * The model the reviewer runs under on this backend. `/models` resolves a role
+ * through the §27 ladder, so dispatch does too: the first role in
+ * `ROLE_FALLBACK_CHAINS[role]` whose `models:` entry names this backend is the
+ * one that binds it. Nothing else does — a role and backend nothing names stays
+ * `null` and the worker reports its typed failure rather than a made-up id.
+ */
+function reviewerModel(backend: RegisteredBackend, role: ReviewerRole, config: LeanPiConfig | undefined): string | null {
+	if (config) {
+		for (const candidate of ROLE_FALLBACK_CHAINS[role]) {
+			const entry = config.models[candidate];
+			if (entry?.backend === backend.name) return entry.model;
+		}
+	}
+	// No config, or nothing in the ladder binds this backend: the registry's own
+	// role map is all that is left, exactly as dispatch resolved it before.
+	return modelFor(backend, role);
+}
+
 function selectReviewer(registry: BackendRegistry, role: ReviewerRole, deps: ReviewDeps): ReviewerChoice | null {
 	const candidates = registry.selectBackend(role);
 	if (candidates.length === 0) return null;
+	const modelOf = (backend: RegisteredBackend): string | null => reviewerModel(backend, role, deps.config);
 
 	if (!deps.executor) {
 		// No executor identity was recorded for this turn, so independence is not a
@@ -140,7 +167,7 @@ function selectReviewer(registry: BackendRegistry, role: ReviewerRole, deps: Rev
 		const first = candidates[0]!;
 		return {
 			backend: first,
-			model: modelFor(first, role),
+			model: modelOf(first),
 			independence: "degraded",
 			reason: "the executor's model identity was not recorded for this turn",
 		};
@@ -148,7 +175,7 @@ function selectReviewer(registry: BackendRegistry, role: ReviewerRole, deps: Rev
 
 	const executorIdentity = identityOf(deps.executor.backend, deps.executor.model);
 	for (const backend of candidates) {
-		const model = modelFor(backend, role);
+		const model = modelOf(backend);
 		if (identityOf(backend.name, model) !== executorIdentity) {
 			return { backend, model, independence: "independent", reason: `reviewer ${backend.name}/${model ?? "?"} differs from executor ${executorIdentity}` };
 		}
@@ -157,7 +184,7 @@ function selectReviewer(registry: BackendRegistry, role: ReviewerRole, deps: Rev
 	const first = candidates[0]!;
 	return {
 		backend: first,
-		model: modelFor(first, role),
+		model: modelOf(first),
 		independence: "degraded",
 		reason: `every backend serving ${role} shares the executor's model identity ${executorIdentity}`,
 	};
