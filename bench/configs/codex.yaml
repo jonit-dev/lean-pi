@@ -1,0 +1,11 @@
+id: codex
+label: Codex baseline (owner-gated)
+adapter: external
+vendor: codex
+jev: disabled
+executor_model: gpt-5
+features:
+  []
+owner_gated: true
+subscription: true
+budget_usd: 20.0

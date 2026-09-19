@@ -1,0 +1,21 @@
+id: vite-code-frame-crlf-positions
+prompt: >
+  Vite's code-frame helper computes wrong positions for files with CRLF line endings: the caret underlines the wrong column for any file whose line
+  endings are `\r\n`. Fix the position calculation and cover it with a unit test.
+source:
+  repo: https://github.com/vitejs/vite
+  commit: c8f7b280a2669733b84231c128c4926822b131d7
+  fix_commit: 9913672bee9c34a2df7fff4c2538783cd4f43b4e
+  pinned_via: "git log -1 --format=%P 9913672bee9c34a2df7fff4c2538783cd4f43b4e (blobless clone, 2026-09-19): fix: handle CRLF line endings in code frame positions (#23219)"
+categories:
+  - build-tooling
+setup:
+  - npm install
+golden:
+  kind: upstream-test
+  files:
+    - packages/vite/src/node/__tests__/utils.spec.ts
+  command: "npx vitest run packages/vite/src/node/__tests__/utils.spec.ts"
+  validated_at: null
+notes: >
+  pnpm workspace upstream (this fixture installs with npm, which npm resolves through the workspace field).

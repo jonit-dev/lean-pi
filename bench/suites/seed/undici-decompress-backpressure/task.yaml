@@ -1,0 +1,21 @@
+id: undici-decompress-backpressure
+prompt: >
+  Undici's decompression interceptor ignores backpressure: with `decompress()` in front of a pipeline, decompressed chunks are pushed faster than the
+  downstream consumer reads, so the buffered body grows without bound. Honor backpressure and add a regression test.
+source:
+  repo: https://github.com/nodejs/undici
+  commit: 6933139baebca36b470c6db663d4207f29944867
+  fix_commit: 19901d8b73cb46a48e817dab4afce790f37fd2c1
+  pinned_via: "git log -1 --format=%P 19901d8b73cb46a48e817dab4afce790f37fd2c1 (blobless clone, 2026-09-19): fix: honor backpressure in decompression interceptor (#5829)"
+categories:
+  - dependency-failures
+setup:
+  - npm install
+golden:
+  kind: upstream-test
+  files:
+    - test/interceptors/decompress.js
+  command: "npx borp --timeout 180000 -p 'test/interceptors/decompress.js'"
+  validated_at: null
+notes: >
+  The interceptor's decoder/consumer path is the dependency boundary this task measures.

@@ -1,0 +1,11 @@
+id: claude-code
+label: Claude Code baseline (owner-gated)
+adapter: external
+vendor: claude
+jev: disabled
+executor_model: claude-sonnet-4-5
+features:
+  []
+owner_gated: true
+subscription: true
+budget_usd: 20.0

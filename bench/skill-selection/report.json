@@ -103,8 +103,8 @@
       "request": "babysit the open pull requests in this org",
       "expected": "babysit-prs",
       "loaded": [
-        "babysit-prs",
-        "pr-babysitting"
+        "pr-babysitting",
+        "babysit-prs"
       ],
       "wrong_load": false,
       "unnecessary_load": false,

@@ -1,0 +1,21 @@
+id: hono-jsx-dom-matching-head-lookup
+prompt: >
+  The JSX DOM reconciler's matching-head child lookup scans the whole sibling list per insertion, which dominates reconciliation for large lists. Make
+  the lookup cheaper without changing the DOM output.
+source:
+  repo: https://github.com/honojs/hono
+  commit: 8755b17fbcfdee76511eeb460e18e94e6c9a8d30
+  fix_commit: e8c8c21244f87da80aaa5ac5ab9c92f3faca2489
+  pinned_via: "git log -1 --format=%P e8c8c21244f87da80aaa5ac5ab9c92f3faca2489 (blobless clone, 2026-09-19): perf(jsx/dom): optimize matching-head child lookup during reconciliation (#5329)"
+categories:
+  - performance-work
+setup:
+  - npm install
+golden:
+  kind: upstream-test
+  files:
+    - src/jsx/dom/index.test.tsx
+  command: "npx vitest run src/jsx/dom/index.test.tsx"
+  validated_at: null
+notes: >
+  The upstream commit is a performance change; its own test file is the acceptance evidence.

@@ -24,7 +24,8 @@
     "test": "vitest run",
     "lint": "oxlint src tests",
     "sync:ponytail": "node scripts/sync-ponytail.mjs",
-    "bench:skills": "vitest run --config vitest.bench.config.ts"
+    "bench:skills": "vitest run --config vitest.bench.config.ts",
+    "bench": "tsc -p tsconfig.json && node dist/bench/lane.js"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "^0.73.1",

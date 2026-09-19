@@ -1,0 +1,22 @@
+id: preact-suspense-hook-state-loss
+prompt: >
+  Preact loses hook state when a Suspense boundary re-suspends: a component that suspends again after a successful first reveal resets its `useState`
+  values instead of keeping them. Fix the state loss in the compat suspense path.
+source:
+  repo: https://github.com/preactjs/preact
+  commit: 04b2a8613b4bf81f288a0b68ce9240faeb56257c
+  fix_commit: be33f7af25bb25f3a584591b3951101f48de8910
+  pinned_via: "git log -1 --format=%P be33f7af25bb25f3a584591b3951101f48de8910 (blobless clone, 2026-09-19): Fix hook state loss when Suspense re-suspends"
+categories:
+  - frontend-ui-changes
+setup:
+  - npm install
+golden:
+  kind: upstream-test
+  files:
+    - compat/test/browser/suspense.test.jsx
+    - compat/test/browser/suspense-hydration.test.jsx
+  command: "npx vitest run compat/test/browser/suspense.test.jsx"
+  validated_at: null
+notes: >
+  Browser-path test file; the golden covers the suspense test and its hydration sibling.

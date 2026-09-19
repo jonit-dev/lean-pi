@@ -1,0 +1,13 @@
+id: leanpi-no-jev
+label: LeanPi without JEV
+adapter: leanpi
+jev: disabled
+executor_model: qwen3-coder-480b-a35b
+reviewer_model: gemini-2.5-flash
+features:
+  - deterministic-routing
+  - rtk
+  - context-engine
+  - verification
+  - proof-gate
+budget_usd: 2.0

@@ -1,0 +1,21 @@
+id: flask-ipv6-server-name-parsing
+prompt: >
+  Flask's test client mishandles an IPv6 server name: requests built with a server name such as `[::1]:5000` are misrouted or rejected instead of
+  reaching the app with the right host. Fix the parsing and cover it with a test.
+source:
+  repo: https://github.com/pallets/flask
+  commit: de8429ffda8cfb54db175529e2bae72a24e1fa7e
+  fix_commit: 7203feabf723edae0286ae5dc64fec8ac4c91735
+  pinned_via: "git log -1 --format=%P 7203feabf723edae0286ae5dc64fec8ac4c91735 (blobless clone, 2026-09-19): Fix IPv6 server name parsing"
+categories:
+  - test-creation
+setup:
+  - python -m pip install -e . pytest
+golden:
+  kind: upstream-test
+  files:
+    - tests/test_basic.py
+  command: "python -m pytest tests/test_basic.py -q"
+  validated_at: null
+notes: >
+  Python project: the acceptance evidence for the fix is the case added to tests/test_basic.py.

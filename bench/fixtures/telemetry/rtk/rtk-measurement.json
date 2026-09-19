@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-19T00:00:00.000Z",
+  "fixture_set": "bench/fixtures/telemetry/rtk (fixture)",
+  "model_role": "balanced",
+  "tasks": 3,
+  "arms": {
+    "off": {
+      "arm": "off",
+      "tasks": 3,
+      "shell_output_bytes": 40960,
+      "context_tokens": 999999,
+      "model_calls": 999999,
+      "retries": 999999,
+      "solve_rate": 0.999,
+      "wall_ms": 999999,
+      "cost_per_success": 999999
+    },
+    "on": {
+      "arm": "on",
+      "tasks": 3,
+      "shell_output_bytes": 12288,
+      "context_tokens": 999999,
+      "model_calls": 999999,
+      "retries": 999999,
+      "solve_rate": 0.999,
+      "wall_ms": 999999,
+      "cost_per_success": 999999
+    }
+  },
+  "verdict": "no_benefit"
+}

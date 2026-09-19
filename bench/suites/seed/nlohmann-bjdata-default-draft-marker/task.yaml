@@ -1,0 +1,21 @@
+id: nlohmann-bjdata-default-draft-marker
+prompt: >
+  `to_bjdata()` emits the Draft-3-only `B` marker for integer values under the default options, which encode for Draft-2 as `i`. Fix the default-mode
+  encoding and extend the BJData unit tests.
+source:
+  repo: https://github.com/nlohmann/json
+  commit: e8e1ba0db9ed3d760da1e9d55ce3dc4f44cc597e
+  fix_commit: 502e9d66f64feb378b7a89b17fc4a40d4c63a45b
+  pinned_via: "git log -1 --format=%P 502e9d66f64feb378b7a89b17fc4a40d4c63a45b (blobless clone, 2026-09-19): Fix to_bjdata() emitting the Draft-3-only 'B' marker in default Draft-2 mode (#5479)"
+categories:
+  - native-cpp
+setup:
+  - cmake -S . -B build -DJSON_BuildTests=ON
+golden:
+  kind: upstream-test
+  files:
+    - tests/src/unit-bjdata.cpp
+  command: "ctest --test-dir build -R '^test-bjdata$' --output-on-failure"
+  validated_at: null
+notes: >
+  C++ library built with CMake; the ctest target is the upstream test the fix extended.

@@ -1,0 +1,21 @@
+id: zod-instanceof-properties-shape
+prompt: >
+  `z.instanceof()`'s `.properties()` accessor does not key its shape off the instance type: for a schema of a subclass, `.properties()` reports the base
+  class's keys. Key the shape off the instance type and cover it with a test.
+source:
+  repo: https://github.com/colinhacks/zod
+  commit: de65a5cb39ed22a507fac935788f718fa88d104f
+  fix_commit: 56222cd1532c07bcb91b67df529cab4c0a215330
+  pinned_via: "git log -1 --format=%P 56222cd1532c07bcb91b67df529cab4c0a215330 (blobless clone, 2026-09-19): feat(instanceof): key the .properties() shape off the instance type (#6600)"
+categories:
+  - refactoring
+setup:
+  - npm install
+golden:
+  kind: upstream-test
+  files:
+    - packages/zod/src/v4/classic/tests/properties.test.ts
+  command: "npx vitest run packages/zod/src/v4/classic/tests/properties.test.ts"
+  validated_at: null
+notes: >
+  Monorepo; the golden command targets the one upstream test file the change added cases to.

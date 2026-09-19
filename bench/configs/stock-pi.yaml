@@ -1,0 +1,8 @@
+id: stock-pi
+label: Stock Pi with a comparable local model
+adapter: stock-pi
+jev: disabled
+executor_model: qwen3-coder-480b-a35b
+features:
+  []
+budget_usd: 2.0

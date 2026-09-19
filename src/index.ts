@@ -451,6 +451,7 @@ export * from "./capability/index.js";
 export * from "./routing/index.js";
 export * from "./exploration/index.js";
 export * from "./runtime/index.js";
+export * from "./bench/index.js";
 export { levenshtein, upsertCommand } from "./commands/registry.js";
 export type { Command, CommandInit } from "./commands/registry.js";
 export { createCommandSurface, createSessionHost, OWNED_COMMANDS, registerCommandSurface } from "./commands/index.js";

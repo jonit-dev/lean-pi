@@ -1,0 +1,18 @@
+id: leanpi-all
+label: LeanPi + all accepted optimizations
+adapter: leanpi
+jev: enabled
+executor_model: claude-sonnet-4-5
+reviewer_model: gpt-5-mini
+features:
+  - jev
+  - subscription-routing
+  - rtk
+  - context-engine
+  - skill-selection
+  - mcp-disclosure
+  - lsp
+  - verification
+  - proof-gate
+subscription: true
+budget_usd: 5.0

@@ -1,0 +1,22 @@
+id: chalk-numeric-force-color-level
+prompt: >
+  Chalk's level detection treats a numeric `FORCE_COLOR` value as a boolean switch: `FORCE_COLOR=2` in the environment should select exactly level 2
+  (256 colours), but the detected level does not match the number. Make a numeric `FORCE_COLOR` select that exact level.
+source:
+  repo: https://github.com/chalk/chalk
+  commit: 8a94e0ebfc495dda27f7090fb1a012790b15a76d
+  fix_commit: e91293130c7d642c7b91152c3c942743a3b910a7
+  pinned_via: "git log -1 --format=%P e91293130c7d642c7b91152c3c942743a3b910a7 (blobless clone, 2026-09-19): Fix: Treat a numeric `FORCE_COLOR` as an exact level (#688)"
+categories:
+  - mechanical-edits
+setup:
+  - npm install
+golden:
+  kind: upstream-test
+  files:
+    - test/force-color.js
+    - test/_force-color-fixture.js
+  command: "npx ava test/force-color.js"
+  validated_at: null
+notes: >
+  The fix added a fixture file beside the test, so the golden checks out both paths from the fix commit.

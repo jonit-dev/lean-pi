@@ -1,0 +1,21 @@
+id: express-send-transfer-encoding-etag
+prompt: >
+  `res.send()` contradicts an application-set `Transfer-Encoding: chunked`: the response ends up with both a computed ETag and a Content-Length that the
+  transfer encoding forbids. Preserve ETag generation for that case without writing a Content-Length.
+source:
+  repo: https://github.com/expressjs/express
+  commit: 3ce6d0eb86e9d93529ff3191c6bb5db8ce6e72c8
+  fix_commit: 9a34acf03cb818ff3f8bc40e44176e277a25cbb9
+  pinned_via: "git log -1 --format=%P 9a34acf03cb818ff3f8bc40e44176e277a25cbb9 (blobless clone, 2026-09-19): fix(res.send): preserve ETag generation with Transfer-Encoding (#7459)"
+categories:
+  - multi-file-bugs
+setup:
+  - npm install
+golden:
+  kind: upstream-test
+  files:
+    - test/res.send.js
+  command: "npx mocha --require test/support/env --check-leaks test/res.send.js"
+  validated_at: null
+notes: >
+  The change spans lib/response.js and its test; the golden runs the upstream test file at the fix commit.
