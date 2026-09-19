@@ -53,6 +53,12 @@ export interface VerifyOptions {
 export interface VerifyResult extends EvidenceView {
 	status: VerificationStatus;
 	/**
+	 * The hash every fresh record in this view is stamped with — the state the
+	 * results describe. A consumer that gates on these records (PRD-010) has to
+	 * read them with this hash, not a freshly computed one.
+	 */
+	workspaceHash: string;
+	/**
 	 * The exact commands this run resolved, in execution order. `records` and
 	 * `staleRecords` cover this run only, so a store reused across attempts never
 	 * folds an earlier attempt's verdict into this one; the store keeps the full
@@ -193,6 +199,7 @@ export async function verifyTask(contract: ExecutionContract, workspaceRoot: str
 		staleRecords: stale,
 		assertions: store.view(finalHash).assertions,
 		status: aggregate(counted(fresh), counted(stale)),
+		workspaceHash: finalHash,
 		commands,
 		regressionScope: selection.regressionScope,
 	};
