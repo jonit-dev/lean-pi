@@ -142,6 +142,18 @@ function parseThresholds(raw: unknown): LeanPiConfig["thresholds"] {
 	};
 }
 
+const LSP_MODES = ["off", "diagnostics", "navigation", "full", "auto"] as const;
+
+function parseLsp(raw: unknown): LeanPiConfig["lsp"] {
+	const record = raw === undefined ? {} : asRecord(raw, "lsp");
+	const mode = record.mode;
+	if (mode !== undefined && !(LSP_MODES as readonly unknown[]).includes(mode)) {
+		throw new ConfigError(`mode must be one of ${LSP_MODES.join(" | ")}`, "lsp.mode");
+	}
+	const servers = record.servers === undefined ? {} : (asRecord(record.servers, "lsp.servers") as Record<string, string>);
+	return { mode: (mode as LeanPiConfig["lsp"]["mode"]) ?? "auto", servers };
+}
+
 function parseContext(raw: unknown): LeanPiConfig["context"] {
 	const record = raw === undefined ? {} : asRecord(raw, "context");
 	const number = (key: keyof LeanPiConfig["context"], fallback: number): number => {
@@ -226,6 +238,7 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		skills: parseSkills(record.skills),
 		bench: parseBench(record.bench),
 		context: parseContext(record.context),
+		lsp: parseLsp(record.lsp),
 		permissions,
 		thresholds: parseThresholds(record.thresholds),
 		limits: {

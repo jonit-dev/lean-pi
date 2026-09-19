@@ -97,6 +97,7 @@ function fallbackConfig(): LeanPiConfig {
 		skills: { maxLoaded: 3, state: {} },
 		bench: { skills: { maxUnnecessaryLoadRate: 0.04 } },
 		context: { artifact_threshold_bytes: 32_768, compaction_threshold_bytes: 48_000, working_state_max_bytes: 3000 },
+		lsp: { mode: "auto", servers: {} },
 		permissions: resolvedDefaults(),
 		limits: { executionAttempts: 2, semanticReviewRounds: 1 },
 		thresholds: DEFAULT_THRESHOLDS,

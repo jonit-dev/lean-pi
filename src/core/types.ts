@@ -91,6 +91,12 @@ export interface ThresholdsConfig {
 	review_risk: number;
 }
 
+/** LSP integration surface (PRD-018): `auto` decides per task; `servers` overrides a language's command. */
+export interface LspConfig {
+	mode?: "off" | "diagnostics" | "navigation" | "full" | "auto";
+	servers?: Record<string, string>;
+}
+
 /** Context engine budgets (PRD-014): artifact threshold, compaction trigger, state ceiling. */
 export interface ContextConfig {
 	artifact_threshold_bytes: number;
@@ -114,6 +120,7 @@ export interface LeanPiConfig {
 	skills: Required<Omit<SkillsConfig, "state">> & { state: NonNullable<SkillsConfig["state"]> };
 	bench: BenchConfig;
 	context: ContextConfig;
+	lsp: LspConfig;
 	/** Effective permission state: built-in defaults merged with user scope, then project scope (PRD-017). */
 	permissions: ResolvedPermissions;
 	thresholds: ThresholdsConfig;

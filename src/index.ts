@@ -413,6 +413,7 @@ export * from "./permissions/index.js";
 // canonical one, so the ambiguity is resolved explicitly here.
 export { billingOf } from "./backends/index.js";
 export * from "./telemetry/index.js";
+export * from "./lsp/index.js";
 export { verifyTask, WORKSPACE_HASH_KIND } from "./verify/index.js";
 // The PRD lane is reached through its gate only: `dispatch.js` holds no lane
 // module, so importing it cannot load the PRD machinery FR-032/AC-7 require to
