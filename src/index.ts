@@ -27,6 +27,7 @@ import { ConfigError, loadConfig, writeSkillsState } from "./core/config.js";
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
+import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { defaultSkillRoots, scanSkills, createSkillControl } from "./capabilities/skills.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
@@ -129,13 +130,23 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// resolves it from the process. `LEANPI_CWD` is the documented override for
 	// launching Pi from outside the project it should configure.
 	const cwd = options.cwd ?? process.env.LEANPI_CWD ?? process.cwd();
-	const config = options.config ?? loadConfig(cwd);
+	// One environment for credentials, the permission store and the guard: the
+	// credential view is a strict subset of `ProcessEnv`'s shape.
+	const env = (options.env ?? process.env) as NodeJS.ProcessEnv & CredentialEnv;
+	const commands = options.commands ?? commandRegistry;
+	const config = options.config ?? loadConfig(cwd, {}, env);
 	registerBackends(pi, config);
 	const tools = registerBaselineTools(pi, cwd);
 	installExecutorPrefix(pi, () => buildStaticPrefix(config));
 
-	const env = options.env ?? process.env;
-	const commands = options.commands ?? commandRegistry;
+	// Permission guard (PRD-017): installed after the baseline tools so the
+	// guarded `execute` wins the name, and registered before any lane can run.
+	// The guard reads only path-ish variables from `env`, which is the same
+	// credential environment the rest of the session resolves against.
+	const permissions = loadPermissionState(cwd, env as NodeJS.ProcessEnv);
+	installPermissionGuard(pi, { cwd, state: permissions, env });
+	registerPermissionsCommand(commands, { cwd, state: permissions, env });
+
 	const jev = createJevClient({
 		config,
 		cwd,
@@ -394,6 +405,7 @@ export type {
 	SiteTelemetryRow,
 } from "./compiler/contract.js";
 export { SCOUT_PACKET_MAX_BYTES, scoutTask } from "./scout/index.js";
+export * from "./permissions/index.js";
 export * from "./backends/index.js";
 export {
 	createSkillControl,

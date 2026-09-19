@@ -15,7 +15,7 @@ import {
 	SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { LEANPI_VERSION, PACKAGE_ROOT, clearLanes, listLanes, registerLane } from "../src/index.js";
+import { LEANPI_VERSION, PACKAGE_ROOT, clearLanes, listLanes, registerLane, writeUserDefault } from "../src/index.js";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubBackend, type StubStep } from "./helpers/stub-backend.js";
 
@@ -109,8 +109,14 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 			backends: { local: nativeBackend(stub.baseUrl) },
 			models: { balanced: { backend: "local", model: "cheap-fast" } },
 		});
+		// PRD-017's guard defaults `shell` to ask, which a non-interactive session
+		// cannot answer. The fixture is the user's own project, so the user scope
+		// allows it explicitly — the same grant a real user makes once.
+		const env = { XDG_CONFIG_HOME: tempDir("leanpi-xdg-"), HOME: tempDir("leanpi-home-") };
+		writeUserDefault("shell", "allow", env);
+		writeUserDefault("edit", "allow", env);
 
-		const session = await bootSession({ cwd, agentDir });
+		const session = await bootSession({ cwd, agentDir, env });
 		let probeFired = 0;
 		registerLane({
 			name: "probe",
