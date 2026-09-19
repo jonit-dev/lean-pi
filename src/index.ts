@@ -136,6 +136,14 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// One environment for credentials, the permission store and the guard: the
 	// credential view is a strict subset of `ProcessEnv`'s shape.
 	const env = (options.env ?? process.env) as NodeJS.ProcessEnv & CredentialEnv;
+	// The default registry is process-wide, so a second activation in one process
+	// (a test file boots several sessions; Pi's loader re-enters) replaces the
+	// previous session's commands instead of colliding with them — the same
+	// replace-not-stack rule the capability providers follow below. An injected
+	// registry belongs to its caller and is left untouched.
+	if (options.commands === undefined) {
+		for (const name of commandRegistry.list()) commandRegistry.unregister(name);
+	}
 	const commands = options.commands ?? commandRegistry;
 	const config = options.config ?? loadConfig(cwd, {}, env);
 	registerBackends(pi, config);
