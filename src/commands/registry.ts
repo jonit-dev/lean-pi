@@ -1,11 +1,16 @@
 /**
- * The minimal command registry (PRD-002 Phase 3).
+ * The command registry (PRD-002 created the dispatcher; PRD-016 owns the
+ * surface).
  *
- * PRD-016 depends on PRD-002, so this PRD cannot wait for the full command
- * surface: it owns `register()` / `dispatch()`, duplicate-name rejection and the
- * unknown-command error, and PRD-016 extends the same module with argument
- * grammar, help and rendering. It holds no grammar, no help text and no
- * rendering of its own.
+ * One `Map<string, Command>` plus `register()` and `dispatch()`. Deliberately a
+ * map and not a plugin framework: no lifecycle hooks, no middleware chain, no
+ * per-command permission layer (permissions are PRD-017's, enforced at the tool
+ * boundary). Every PRD registers its command here rather than standing up a
+ * second dispatcher, which is what makes `/help` complete for free.
+ *
+ * Registration accepts either a `Command` or the positional
+ * `(name, handler, init?)` form the earlier PRDs already use, so extending the
+ * registry added the summary/usage fields without editing callers.
  */
 
 export interface CommandContext {
@@ -22,12 +27,34 @@ export interface CommandResult {
 
 export type CommandHandler = (args: string, context: CommandContext) => Promise<CommandResult> | CommandResult;
 
+/** One registered command: what `/help` renders and `dispatch()` runs. */
+export interface Command {
+	name: string;
+	/** One line, no trailing period required; `/help` prints it verbatim. */
+	summary: string;
+	usage: string;
+	run: CommandHandler;
+}
+
+/** The metadata a positional `register()` call may attach to its handler. */
+export interface CommandInit {
+	summary?: string;
+	usage?: string;
+}
+
 export interface CommandRegistry {
-	register(name: string, handler: CommandHandler): void;
+	register(command: Command): void;
+	register(name: string, handler: CommandHandler, init?: CommandInit): void;
 	unregister(name: string): void;
 	has(name: string): boolean;
 	dispatch(line: string, context: CommandContext): Promise<CommandResult>;
+	/** Registered names, insertion order. */
 	list(): string[];
+	/** Every registered command, insertion order; `/help` renders exactly this. */
+	entries(): Command[];
+	get(name: string): Command | undefined;
+	/** Nearest registered name by Levenshtein distance, or `undefined` for an empty registry. */
+	nearest(name: string): string | undefined;
 }
 
 export class DuplicateCommandError extends Error {
@@ -37,28 +64,95 @@ export class DuplicateCommandError extends Error {
 	}
 }
 
+/** Plain Levenshtein over two short names; no fuzzy-search dependency (PRD-016). */
+export function levenshtein(left: string, right: string): number {
+	if (left === right) return 0;
+	const previous = new Array<number>(right.length + 1);
+	const current = new Array<number>(right.length + 1);
+	for (let column = 0; column <= right.length; column += 1) previous[column] = column;
+	for (let row = 1; row <= left.length; row += 1) {
+		current[0] = row;
+		for (let column = 1; column <= right.length; column += 1) {
+			const substitution = previous[column - 1]! + (left[row - 1] === right[column - 1] ? 0 : 1);
+			current[column] = Math.min(previous[column]! + 1, current[column - 1]! + 1, substitution);
+		}
+		for (let column = 0; column <= right.length; column += 1) previous[column] = current[column]!;
+	}
+	return previous[right.length]!;
+}
+
+function isCommand(value: string | Command): value is Command {
+	return typeof value !== "string";
+}
+
 export function createCommandRegistry(): CommandRegistry {
-	const handlers = new Map<string, CommandHandler>();
+	const commands = new Map<string, Command>();
+
+	const nearest = (name: string): string | undefined => {
+		let best: string | undefined;
+		let bestDistance = Number.POSITIVE_INFINITY;
+		for (const candidate of commands.keys()) {
+			const distance = levenshtein(name, candidate);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				best = candidate;
+			}
+		}
+		return best;
+	};
+
+	const register = (nameOrCommand: string | Command, handler?: CommandHandler, init?: CommandInit): void => {
+		const command: Command = isCommand(nameOrCommand)
+			? nameOrCommand
+			: {
+					name: nameOrCommand,
+					summary: init?.summary ?? "",
+					usage: init?.usage ?? `/${nameOrCommand}`,
+					run: handler as CommandHandler,
+				};
+		if (commands.has(command.name)) throw new DuplicateCommandError(command.name);
+		commands.set(command.name, command);
+	};
+
 	return {
-		register(name, handler) {
-			if (handlers.has(name)) throw new DuplicateCommandError(name);
-			handlers.set(name, handler);
-		},
+		register,
 		unregister(name) {
-			handlers.delete(name);
+			commands.delete(name);
 		},
-		has: (name) => handlers.has(name),
+		has: (name) => commands.has(name),
+		get: (name) => commands.get(name),
+		entries: () => [...commands.values()],
+		list: () => [...commands.keys()],
+		nearest,
 		async dispatch(line, context) {
 			const trimmed = line.trim().replace(/^\//, "");
 			const separator = trimmed.search(/\s/);
 			const name = separator === -1 ? trimmed : trimmed.slice(0, separator);
 			const args = separator === -1 ? "" : trimmed.slice(separator + 1).trim();
-			const handler = handlers.get(name);
-			if (!handler) return { ok: false, text: `unknown command: /${name}` };
-			return handler(args, context);
+			const command = commands.get(name);
+			if (!command) {
+				const suggestion = nearest(name);
+				return { ok: false, text: `unknown command \`/${name}\`${suggestion ? ` — did you mean \`/${suggestion}\`?` : ""}` };
+			}
+			// A handler bug is a message, never a crashed session.
+			try {
+				return await command.run(args, context);
+			} catch (error) {
+				return { ok: false, text: `/${name} failed: ${error instanceof Error ? error.message : String(error)}` };
+			}
 		},
-		list: () => [...handlers.keys()],
 	};
+}
+
+/** Upsert: a later session supersedes the earlier handler of the same name. */
+export function upsertCommand(
+	registry: CommandRegistry,
+	name: string,
+	handler: CommandHandler,
+	init?: CommandInit,
+): void {
+	if (registry.has(name)) registry.unregister(name);
+	registry.register(name, handler, init);
 }
 
 /** The process-wide registry `activate()` registers into; PRD-016 extends it. */
