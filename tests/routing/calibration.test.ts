@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendRun, resolveCostConfig, round6 } from "../../src/telemetry/index.js";
 import type { RunTelemetry } from "../../src/telemetry/record.js";
-import { bucketStats, classifyFailure, failureSignature, selectRoute, type AttemptFailure } from "../../src/routing/index.js";
+import { bucketStats, classifyRouteFailure as classifyFailure, routeFailureSignature as failureSignature, selectRoute, type AttemptFailure } from "../../src/routing/index.js";
 import { bucket, fixtureContract, rankingRecord, routingConfig } from "./fixture.js";
 
 const RANKING = [

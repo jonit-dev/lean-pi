@@ -66,7 +66,7 @@ const EXAMPLES: Array<{
 			executor: "balanced",
 			reviewer: "review_quick",
 			prdRequired: false,
-			verification: ["typecheck", "affected_tests", "targeted_runtime"],
+			verification: ["typecheck", "affected_tests", "runtime_smoke"],
 		},
 		{
 			name: "§64 major feature",
@@ -76,7 +76,7 @@ const EXAMPLES: Array<{
 			executor: "strong",
 			reviewer: "review_strong",
 			prdRequired: true,
-			verification: ["typecheck", "affected_tests", "integration", "runtime_smoke"],
+			verification: ["typecheck", "affected_tests", "full_suite", "runtime_smoke"],
 		},
 	];
 })();

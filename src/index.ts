@@ -32,6 +32,8 @@ import { registerCostCommand } from "./telemetry/index.js";
 import { registerMcpCommand } from "./mcp/index.js";
 import { createSessionHost, registerCommandSurface } from "./commands/index.js";
 import { registerRuntimeVerifiers } from "./runtime/index.js";
+import { BackendRegistry } from "./backends/index.js";
+import { runExecutor } from "./executor/index.js";
 import { resolveCostConfig } from "./telemetry/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -208,6 +210,22 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		supply: async (draft) => {
 			const selection = await selectSkills({ records: scan(), control: skillControl, request: draft.task.user_request, config, client: jev });
 			return selection.skills;
+		},
+	});
+
+	// The executor lane (PRD-007): the only consumer of a compiled contract. It
+	// runs after the compiler lane has put one on the turn context, and it owns
+	// the attempt loop, verification per attempt and the review handoff.
+	registerTurnLane({
+		name: "executor",
+		async run(_turn, context) {
+			if (!context.contract) return;
+			context.executor = await runExecutor(context.contract, {
+				registry: new BackendRegistry(config),
+				cwd,
+				config,
+				jev,
+			});
 		},
 	});
 
@@ -476,6 +494,10 @@ export type { EvidenceRecord, EvidenceStore, EvidenceView, ModelAssertion, Verif
 export { registerRegressionScopeSite, selectVerifiers, verificationBlockOf } from "./verify/select.js";
 export { workspaceHash } from "./verify/hash.js";
 export * from "./backends/index.js";
+export * from "./executor/index.js";
+// Both barrels legitimately name a failure classifier: the executor's is the §33
+// attempt signature, routing's is the telemetry-bucket one. The ambiguity is
+// resolved explicitly here rather than by dropping either.
 export {
 	createSkillControl,
 	defaultSkillRoots,

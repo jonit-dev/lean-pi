@@ -13,6 +13,7 @@ import { buildStaticPrefix } from "../core/instructions/prefix.js";
 import { resolveRole } from "../core/roles.js";
 import type { BackendRef, LeanPiConfig, ModelRole, SelectedSkill } from "../core/types.js";
 import type { ExecutionContract } from "../compiler/contract.js";
+import type { ExecutorOutcome } from "../executor/lane.js";
 
 export interface TurnInput {
 	text: string;
@@ -29,6 +30,8 @@ export interface TurnContext {
 	skills: SelectedSkill[];
 	/** The compiled contract for this turn, when a compiler lane produced one (PRD-004). */
 	contract?: ExecutionContract;
+	/** What the executor lane (PRD-007) did with the contract, when it ran. */
+	executor?: ExecutorOutcome;
 	/** Working-state sources (PRD-009/013/007); stubs when nothing is wired yet. */
 	workingStateSources?: WorkingStateSources;
 	/** STATIC prefix plus the SEMI-STABLE block for this turn. */

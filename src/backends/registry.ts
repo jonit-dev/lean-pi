@@ -290,6 +290,8 @@ export interface RunWorkerTurnOptions {
 	registry: BackendRegistry;
 	cwd: string;
 	agentDir?: string;
+	/** Backends this turn has already burned (PRD-007's `SWITCH_BACKEND`). */
+	exclude?: readonly string[];
 	/** Test seam for the external harness spawn. */
 	spawn?: HarnessSpawn;
 	env?: NodeJS.ProcessEnv;
@@ -306,7 +308,7 @@ export interface RunWorkerTurnOptions {
 export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorkerTurnOptions): Promise<WorkerTurnOutcome> {
 	const { registry, cwd } = options;
 	const now = options.now ?? Date.now;
-	const exclude: string[] = [];
+	const exclude: string[] = [...(options.exclude ?? [])];
 	const attempts: WorkerAttempt[] = [];
 	let sessionId = packet.sessionId;
 

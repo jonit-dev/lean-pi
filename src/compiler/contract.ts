@@ -71,6 +71,12 @@ export interface CapabilityProvider {
 	supply(draft: ExecutionContract, packet: TaskPacket): unknown | Promise<unknown>;
 }
 
+/** One acceptance criterion, as the executor packet and the reviewer packet both carry it. */
+export interface AcceptanceCriterion {
+	id: string;
+	text: string;
+}
+
 export interface ExecutionContract {
 	task: {
 		type: string;
@@ -79,14 +85,27 @@ export interface ExecutionContract {
 		execution_complexity: ExecutionComplexity;
 		review_risk: ReviewRisk;
 		required_capability: RequiredCapability;
+		/** The user's request verbatim; also the objective the executor is given. */
 		user_request: string;
+		/** The executor's objective (§28). A direct task's objective is its request. */
+		objective: string;
+		/** The active acceptance criteria (§28); PRD-012's PRD criteria replace the derived one. */
+		acceptance_criteria: AcceptanceCriterion[];
 	};
 	routing: RoutingBlock;
 	reasoning: { effort: "low" | "medium" | "high" };
 	capabilities: CapabilitySlots;
 	context: { strategy: "targeted" | "broad"; budget_tokens: number };
 	verification: { required: string[] };
-	limits: { execution_attempts: number; semantic_review_rounds: number };
+	limits: {
+		/** A hard total: every backend invocation the turn makes, escalations included. */
+		execution_attempts: number;
+		/** How many times the escalation gate may run at all (PRD-007 §33). */
+		max_escalations: number;
+		semantic_review_rounds: number;
+		/** Where the executor works; PRD-022 implements the `worktree` case. */
+		isolation: "none" | "worktree";
+	};
 }
 
 /** Per-site telemetry row; PRD-015 aggregates this shape and PRD-016 prints it. */

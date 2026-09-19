@@ -4,8 +4,8 @@
  */
 export {
 	bucketStats,
-	classifyFailure,
-	failureSignature,
+	classifyFailure as classifyRouteFailure,
+	failureSignature as routeFailureSignature,
 	historicalSignatures,
 	type AttemptFailure,
 	type BucketKey,

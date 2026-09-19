@@ -103,6 +103,24 @@ const CLASS_LEVELS: Record<ReviewerClass, ReviewLevel> = {
 };
 
 /**
+ * Paths whose change is security-relevant by name. The list lives beside the
+ * floor that consumes it so a caller cannot drift its own weaker copy.
+ */
+const SECURITY_SENSITIVE_PATTERNS: readonly RegExp[] = [
+	/(^|\/)auth[\w-]*\.[jt]sx?$/i,
+	/(^|\/)(auth|security|permissions|credentials|secrets|crypto)(\/|$)/i,
+	/(^|\/)[\w-]*(token|password|secret|credential|session)[\w-]*\.[jt]sx?$/i,
+	/(^|\/)\.env(\.|$)/,
+	/(^|\/)(Dockerfile|docker-compose\.ya?ml)$/,
+	/(^|\/)\.github\/workflows\//,
+];
+
+/** The subset of `files` the floor treats as security-sensitive. */
+export function securitySensitivePathsIn(files: readonly string[]): string[] {
+	return files.filter((file) => SECURITY_SENSITIVE_PATTERNS.some((pattern) => pattern.test(file)));
+}
+
+/**
  * The deterministic side of the gate. Every rule here is a floor the model
  * answer cannot lower, which is what keeps a mis-tuned or unreachable model from
  * skipping the review of a risky change.

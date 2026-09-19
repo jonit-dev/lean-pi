@@ -69,11 +69,17 @@ const EFFORT_BY_COMPLEXITY = { LOW: "low", MEDIUM: "medium", HIGH: "high" } as c
 
 const VERIFICATION_BY_COMPLEXITY: Record<ExecutionComplexity, string[]> = {
 	LOW: ["typecheck", "affected_tests"],
-	MEDIUM: ["typecheck", "affected_tests", "targeted_runtime"],
-	HIGH: ["typecheck", "affected_tests", "integration", "runtime_smoke"],
+	// Canonical PRD-009/PRD-022 verifier kinds only: a kind outside that union is
+	// reported as unsupported and can never be satisfied, so a contract that
+	// required one would be unverifiable by construction.
+	MEDIUM: ["typecheck", "affected_tests", "runtime_smoke"],
+	HIGH: ["typecheck", "affected_tests", "full_suite", "runtime_smoke"],
 };
 
 const ATTEMPTS_BY_COMPLEXITY = { LOW: 2, MEDIUM: 3, HIGH: 4 } as const;
+
+/** Escalations are bounded separately from attempts, and never grant extra attempts. */
+const MAX_ESCALATIONS_BY_COMPLEXITY = { LOW: 1, MEDIUM: 2, HIGH: 2 } as const;
 
 const ZERO_TOKENS: JevUsage = { inputTokens: 0, outputTokens: 0 };
 
@@ -152,6 +158,10 @@ export async function compileTask(
 			review_risk: risk.review_risk,
 			required_capability: capability.required_capability,
 			user_request: request,
+			objective: request,
+			// A direct task's single acceptance criterion is the request itself; the
+			// PRD lane replaces this list with the PRD's own criteria.
+			acceptance_criteria: [{ id: "AC-1", text: request }],
 		},
 		routing: {
 			executor_class: routing.executor_class,
@@ -165,7 +175,9 @@ export async function compileTask(
 		verification: { required: [...VERIFICATION_BY_COMPLEXITY[complexity.complexity]] },
 		limits: {
 			execution_attempts: ATTEMPTS_BY_COMPLEXITY[complexity.complexity],
+			max_escalations: MAX_ESCALATIONS_BY_COMPLEXITY[complexity.complexity],
 			semantic_review_rounds: routing.reviewer_class === "none" ? 0 : routing.reviewer_class === "review_quick" ? 1 : 2,
+			isolation: "none",
 		},
 	};
 
