@@ -414,6 +414,14 @@ export * from "./permissions/index.js";
 export { billingOf } from "./backends/index.js";
 export * from "./telemetry/index.js";
 export { verifyTask, WORKSPACE_HASH_KIND } from "./verify/index.js";
+// The PRD lane is reached through its gate only: `dispatch.js` holds no lane
+// module, so importing it cannot load the PRD machinery FR-032/AC-7 require to
+// stay absent on the quick path. Everything else lives in `src/prd/*` and is
+// imported directly by the lane's consumers.
+export { laneLoads, openPrdLane, registerPrdCommandsLazily, resetLaneLoads } from "./prd/dispatch.js";
+export type { PrdLaneOptions } from "./prd/dispatch.js";
+export { deriveGoal } from "./prd/goal.js";
+export type { GoalCriterion } from "./prd/goal.js";
 export type { VerifyOptions, VerifyResult, VerifySettings } from "./verify/index.js";
 export { aggregate, type VerificationStatus } from "./verify/aggregate.js";
 export type { EvidenceRecord, EvidenceStore, EvidenceView, ModelAssertion, VerifierResult } from "./verify/evidence.js";
