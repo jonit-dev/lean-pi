@@ -75,7 +75,7 @@ None. The executor lane invokes no installed skill: the quick path deliberately 
 
 | Capability | Reachable consumer/trigger | Replaces / disposition | Evidence |
 |---|---|---|---|
-| Executor lane execution | User message → `src/commands/session.ts#runTurn` (created in PRD-001; wired to the lane in Phase 1) → `src/executor/lane.ts#runExecutor` (created in Phase 1) | New capability; the compiler no longer terminates a turn at the contract | AC-1, AC-2 |
+| Executor lane execution | User message → `src/commands/session.ts#runTurn` → the `compiler` and `executor` lanes registered by `src/commands/turn-lanes.ts#registerTurnLanesIfOwned` (called from `activate()`) → `src/executor/lane.ts#runExecutor` | New capability; the compiler no longer terminates a turn at the contract. The chain registers only when the executor roles resolve to an external harness: on a native backend Pi's own agent loop is the executor (§23), and registering the lane there would run the turn twice | AC-1, AC-2, AC-3 — tests/executor/turn.spec.ts |
 | Quick path (no PRD, reviewer, subagent or broad capability scan) | Same session turn with a low-complexity contract → `runExecutor` quick branch (Phase 2) | First implementation of ROADMAP §29; no prior path | AC-3, AC-4 |
 | Bounded retry and escalation | Failed executor attempt → `src/executor/retry.ts#nextAttempt` → `src/executor/escalation.ts#escalate` (Phase 3, Phase 4), calling `src/jev/client.ts#ask` (PRD-002) and registering four sites in PRD-002's decision-site registry; both spend the single `limits.execution_attempts` total plus `limits.max_escalations` | New; the only loop control for executor attempts, and the only attempt counter | AC-5, AC-6, AC-7, AC-8, AC-9 |
 
