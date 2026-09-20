@@ -20,6 +20,7 @@ if (major < 22 || (major === 22 && minor < 19)) {
 import { autoConfigure, jevClientFor, missingBackendKeys, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
 import { loadConfig } from "../dist/core/config.js";
 import { isInformational, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
+import { ensureGitIgnored } from "../dist/runtime/ignore.js";
 
 let flags;
 try {
@@ -37,6 +38,9 @@ try {
 	if (isInformational(flags.rest)) {
 		plan = launchPlan(flags.rest);
 	} else {
+	// Everything LeanPi writes lands in `.leanpi/`. Exclude it before the first
+	// session creates it, or the operator's next `git status` is our state dir.
+	ensureGitIgnored(process.cwd(), ".leanpi");
 	// The key first: JEV allocates the roles the config is written with, so a run
 	// that has no control plane must stop before it writes anything.
 	const jev = requireJev({ allowMissing: flags.allowMissingJev, ...(flags.jevKey === undefined ? {} : { setKey: flags.jevKey }) });

@@ -43,6 +43,7 @@ export {
 export type { BrowserPlan, CliExpectation, CliPlan, ReadinessPlan, RuntimePlan, ScreenshotPlan, SmokePlan } from "./plan.js";
 export { selectRuntimeVerifiers } from "./planner.js";
 export type { RuntimeSelectionOptions, RuntimeVerifierKind } from "./planner.js";
+export { ensureGitIgnored } from "./ignore.js";
 export { decodePng, encodePng, PngError, pixelDiff } from "./png.js";
 export type { DecodedPng, EncodePngOptions, PixelDiff, PixelDiffOptions } from "./png.js";
 export { startProcess } from "./proc.js";

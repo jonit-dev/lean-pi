@@ -35,6 +35,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { LeanPiConfig } from "../core/types.js";
 import { builtinPermissions, capabilityId, resolveAll, type GuardQuestion, type PermissionsConfig, type Resolution } from "../permissions/index.js";
+import { ensureGitIgnored } from "./ignore.js";
 
 /** ROADMAP §47's scope for branch/worktree mutations; PRD-017 owns the name. */
 const DESTRUCTIVE_GIT_SCOPE = "git_destructive";
@@ -232,24 +233,9 @@ export function worktreePath(repoRoot: string, runId: string, root?: string): st
 /**
  * Worktrees live inside the repository, so the run root must be excluded from
  * `git status` or every run would dirty the checkout it was meant to protect.
- * The exclusion goes in `.git/info/exclude` — this clone only — never in a
- * tracked `.gitignore` the operator did not ask to change.
  */
 export function ensureRunRootIgnored(repoRoot: string, root?: string): void {
-	const relativeRoot = relative(repoRoot, worktreeRoot(repoRoot, root));
-	if (relativeRoot.length === 0 || relativeRoot.startsWith("..")) return;
-	const pattern = `${relativeRoot.split(/[\\/]/).join("/")}/`;
-	try {
-		git(repoRoot, ["check-ignore", "-q", relativeRoot]);
-		return;
-	} catch {
-		// Not ignored yet: add the exclusion below.
-	}
-	const excludePath = resolve(repoRoot, git(repoRoot, ["rev-parse", "--git-common-dir"]).trim(), "info", "exclude");
-	const existing = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
-	if (existing.split("\n").some((line) => line.trim() === pattern)) return;
-	mkdirSync(dirname(excludePath), { recursive: true });
-	writeFileSync(excludePath, `${existing}${existing.length > 0 && !existing.endsWith("\n") ? "\n" : ""}${pattern}\n`);
+	ensureGitIgnored(repoRoot, relative(repoRoot, worktreeRoot(repoRoot, root)));
 }
 
 /** Ask PRD-017's permission engine, then honour its answer. A refusal throws before anything is created. */
