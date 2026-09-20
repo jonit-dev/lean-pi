@@ -17,6 +17,12 @@ Its goal is not simply to minimize token usage. Its goal is to:
 
 > **Minimize effective cost per verified successful coding task while preserving the task-completion quality expected from leading coding harnesses such as Claude Code and Codex.**
 
+**Mantra: "Tell me your goal, I figure out the rest."** Every user-facing
+decision resolves that way: LeanPi detects the subscriptions and models a
+machine already has, compiles the task, and picks the capabilities, the models,
+the reasoning effort and the proof it needs. It asks only for what it cannot
+know — a credential, or a goal it was never told.
+
 LeanPi accomplishes this through five core ideas:
 
 1. **Task compilation before execution.**

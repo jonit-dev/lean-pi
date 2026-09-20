@@ -7,6 +7,11 @@ LeanPi's objective is not to use fewer tokens. It is:
 > Minimize effective cost per **verified** successful coding task while preserving
 > the completion quality expected from leading coding harnesses.
 
+**Mantra: "Tell me your goal, I figure out the rest."** LeanPi detects the
+subscriptions and models a machine already has, compiles the task, and picks the
+capabilities, models, reasoning effort and proof it needs. It asks only for what
+it cannot know — a credential, or a goal it was never told.
+
 It does that with five ideas: a **task compiler** that decides what a task needs
 before any expensive model sees it, **progressive capability disclosure** (only
 the relevant skills/MCP/LSP enter context), **cost-aware multi-model routing**,

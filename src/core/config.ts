@@ -331,7 +331,7 @@ function parsePermissions(raw: unknown): RawPermissionsBlock {
 }
 
 export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, env: PermissionEnv = process.env): LeanPiConfig {
-	const path = configPathFor(cwd);
+	const path = configPathFor(cwd, env);
 	const raw = existsSync(path) ? (parseYaml(readFileSync(path, "utf8")) as unknown) : undefined;
 	const record = raw === undefined || raw === null ? {} : asRecord(raw, CONFIG_FILENAME);
 

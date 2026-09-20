@@ -32,6 +32,8 @@ export interface WorkerTaskPacket {
 	outputSchema?: Record<string, unknown>;
 	/** Model id for harness model selection (`opencode run --model`). */
 	model?: string;
+	/** Reasoning effort the compiler decided for this turn (ROADMAP §12). */
+	effort?: "low" | "medium" | "high";
 	/** Harness agent selection (`opencode run --agent`). */
 	agent?: string;
 	/** Vendor session to continue instead of starting a fresh one. */

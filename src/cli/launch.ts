@@ -43,6 +43,45 @@ export function resolvePiCli(root: string = packageRoot()): string {
 	throw new Error(`Pi's CLI was not found at ${bundled}. Run \`npm install\` in ${root}.`);
 }
 
+export interface LeanPiFlags {
+	/** `--no-jev`: start the degraded harness deliberately. */
+	allowMissingJev: boolean;
+	/** `--jev-key <key>`: store the key for this machine, then start. */
+	jevKey?: string;
+	/** Everything else, in order, for Pi. */
+	rest: string[];
+}
+
+/**
+ * LeanPi's own flags, taken out of the argv Pi receives. They are the two
+ * questions the launcher answers before a session exists — where the control
+ * plane's key is, and whether to start without one — so Pi never sees them.
+ */
+export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
+	const rest: string[] = [];
+	let allowMissingJev = false;
+	let jevKey: string | undefined;
+	for (let index = 0; index < argv.length; index += 1) {
+		const argument = argv[index] as string;
+		if (argument === "--no-jev") {
+			allowMissingJev = true;
+			continue;
+		}
+		if (argument === "--jev-key") {
+			jevKey = argv[index + 1];
+			index += 1;
+			continue;
+		}
+		const inline = argument.startsWith("--jev-key=") ? argument.slice("--jev-key=".length) : undefined;
+		if (inline !== undefined) {
+			jevKey = inline;
+			continue;
+		}
+		rest.push(argument);
+	}
+	return { allowMissingJev, ...(jevKey === undefined ? {} : { jevKey }), rest };
+}
+
 /**
  * The command `leanpi <argv>` runs.
  *

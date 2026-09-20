@@ -27,6 +27,9 @@ import {
 
 export const HARNESS_VENDORS = ["claude", "codex", "opencode"] as const;
 
+/** The model id that means "no `--model` flag"; written by the first-run config. */
+export const VENDOR_MODEL_DEFAULT = "default";
+
 export type HarnessVendor = (typeof HARNESS_VENDORS)[number];
 
 export function isHarnessVendor(value: string): value is HarnessVendor {
@@ -49,6 +52,8 @@ export interface HarnessArgvContext {
 	schema?: string;
 	/** Schema file path (Codex takes a file). */
 	schemaPath?: string;
+	/** The environment the vendor will run in; decides Claude's auth mode. */
+	env?: NodeJS.ProcessEnv;
 }
 
 export interface ParsedHarnessEnvelope {
@@ -163,11 +168,21 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 		vendor: "claude",
 		defaultCommand: "claude",
 		schemaAsFile: false,
-		argv: ({ packet, prompt, schema }) => [
+		argv: ({ packet, prompt, schema, env }) => [
 			"-p",
 			// `--bare` skips the vendor's own skill/plugin/MCP/CLAUDE.md discovery so
-			// LeanPi's assembled context is not paid for twice (§24).
-			"--bare",
+			// LeanPi's assembled context is not paid for twice (§24) — but it also
+			// makes auth "strictly ANTHROPIC_API_KEY or apiKeyHelper (OAuth and
+			// keychain are never read)", so on a Claude subscription every call
+			// returned `Not logged in · Please run /login` and the backend was dead.
+			// Verified against the installed CLI: with `--bare` and a subscription
+			// login the request fails; without it the same prompt runs. The context
+			// suppression `--bare` bundled is kept where a flag exists for it.
+			...((env ?? process.env).ANTHROPIC_API_KEY ? ["--bare"] : ["--strict-mcp-config", "--disable-slash-commands"]),
+			// The role's model, when the config names one. Without it the vendor's
+			// own configured default runs and the role map is decoration: `strong`
+			// and `quick` would be the same model at the same price.
+			...(packet.model ? ["--model", packet.model] : []),
 			"--output-format",
 			"json",
 			"--allowedTools",
@@ -197,6 +212,13 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			"--sandbox",
 			"workspace-write",
 			"--json",
+			...(packet.model ? ["--model", packet.model] : []),
+			// Codex takes reasoning effort as a config override, not a flag. The
+			// compiler decides it per turn from execution complexity
+			// (`EFFORT_BY_COMPLEXITY`); without this the vendor's own
+			// `model_reasoning_effort` — `xhigh` on the machine this was written on —
+			// runs on every turn including the mechanical ones.
+			...(packet.effort ? ["-c", `model_reasoning_effort="${packet.effort}"`] : []),
 			...(schemaPath ? ["--output-schema", schemaPath] : []),
 			prompt,
 		],
@@ -365,6 +387,13 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 	if (!descriptor) {
 		return { status: "failed", failure: "spawn", reason: `backend "${backend.name}" has no harness descriptor` };
 	}
+	// `default` is the config's way of saying "this vendor names no model, let
+	// its CLI choose" (see `cli/allocate.ts`); passing it as an id would make the
+	// vendor look up a model called "default" and fail.
+	if (packet.model === VENDOR_MODEL_DEFAULT) {
+		const { model: _ignored, ...rest } = packet;
+		packet = rest;
+	}
 	const spawnImpl = deps.spawn ?? spawnProcess;
 	const files = packet.files ?? [];
 	const before = snapshotFiles(deps.cwd, files);
@@ -385,7 +414,7 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 	}
 
 	try {
-		const args = descriptor.argv({ packet, prompt, schema: schemaJson, schemaPath });
+		const args = descriptor.argv({ packet, prompt, schema: schemaJson, schemaPath, env: deps.env ?? process.env });
 		const result = await spawnImpl({
 			command: backend.command,
 			args,

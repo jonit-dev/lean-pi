@@ -330,6 +330,11 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 				allowedTools: [...EXECUTOR_TOOLS],
 				budget: task.budget,
 				...(routedIdentity ? { model: routedIdentity.model } : {}),
+				// The effort the compiler decided for this turn. On a native backend
+				// it arrives as the session thinking level; a vendor CLI has its own
+				// setting — `xhigh` by default on the machine this was written on —
+				// and only sees LeanPi's decision if the packet carries it.
+				effort: contract.reasoning.effort,
 			},
 			route,
 			deps.config,

@@ -45,12 +45,18 @@ function fail(message, code) {
 /** flag → does it consume a value */
 const FLAGS = {
 	claude: {
-		bool: ["-p", "--print", "--bare"],
-		value: ["--output-format", "--json-schema", "--allowedTools", "--allowed-tools", "--resume", "-r"],
+		// `--strict-mcp-config` and `--disable-slash-commands` are what LeanPi sends
+		// instead of `--bare` on a subscription login, where `--bare` disables OAuth
+		// entirely; `--model` selects the role's model. All three exist on the
+		// installed CLI (`claude --help`).
+		bool: ["-p", "--print", "--bare", "--strict-mcp-config", "--disable-slash-commands"],
+		value: ["--output-format", "--json-schema", "--allowedTools", "--allowed-tools", "--resume", "-r", "--model"],
 	},
 	codex: {
 		bool: ["--json", "--skip-git-repo-check"],
-		value: ["--sandbox", "-s", "--output-schema", "--cd", "-C"],
+		// `-c key=value` is how Codex takes reasoning effort; `-m/--model` selects
+		// the role's model.
+		value: ["--sandbox", "-s", "--output-schema", "--cd", "-C", "--model", "-m", "-c", "--config"],
 	},
 	opencode: {
 		bool: ["--pure", "--print-logs"],
@@ -99,7 +105,10 @@ if (prompt.length === 0) fail("no prompt given", 2);
 const requireSchema = script.requireSchema === true;
 if (requireSchema && vendor === "claude" && options["--json-schema"] === undefined) fail("missing --json-schema", 2);
 if (requireSchema && vendor === "codex" && options["--output-schema"] === undefined) fail("missing --output-schema", 2);
-if (vendor === "claude" && options["--bare"] !== true) fail("missing --bare", 2);
+// `--bare` is required only when the vendor authenticates by API key: with an
+// OAuth/subscription login it turns auth off entirely (`claude --help`), so
+// LeanPi sends the narrower context flags instead.
+if (vendor === "claude" && process.env.ANTHROPIC_API_KEY && options["--bare"] !== true) fail("missing --bare", 2);
 if (vendor === "claude" && options["--output-format"] !== "json") fail("missing --output-format json", 2);
 if (vendor === "codex" && typeof options["--sandbox"] !== "string") fail("missing --sandbox", 2);
 if (vendor === "codex" && options["--json"] !== true) fail("missing --json", 2);

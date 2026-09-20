@@ -24,7 +24,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DeviationInput, ExecutorClass } from "../compiler/contract.js";
 import type { LeanPiConfig, ModelRole } from "../core/types.js";
-import { HARNESS_DESCRIPTORS, isHarnessVendor, type HarnessVendor } from "./harness.js";
+import { HARNESS_DESCRIPTORS, HARNESS_VENDORS, isHarnessVendor, type HarnessVendor } from "./harness.js";
 
 /** Where each vendor documents the credential its login writes. */
 const CREDENTIAL_PATHS: Record<HarnessVendor, (home: string) => readonly string[]> = {
@@ -59,33 +59,50 @@ function onPath(command: string, env: NodeJS.ProcessEnv): boolean {
 	return path.split(":").some((dir) => dir.length > 0 && existsSync(join(dir, command)));
 }
 
+/** One vendor, as this machine has it: installed, and logged into. */
+export function probeVendor(
+	vendor: HarnessVendor,
+	options: { backend?: string; command?: string; env?: NodeJS.ProcessEnv; home?: string } = {},
+): SubscriptionState {
+	const env = options.env ?? process.env;
+	const home = options.home ?? env.HOME ?? homedir();
+	const command = options.command ?? HARNESS_DESCRIPTORS[vendor].defaultCommand;
+	const found = onPath(command, env);
+	const credential = CREDENTIAL_PATHS[vendor](home).find((path) => existsSync(path));
+	const variable = CREDENTIAL_ENV[vendor].find((key) => (env[key] ?? "").length > 0);
+	return {
+		backend: options.backend ?? vendor,
+		vendor,
+		command,
+		onPath: found,
+		signedIn: credential !== undefined || variable !== undefined,
+		evidence: found
+			? (credential ?? (variable ? `$${variable}` : `no credential for ${vendor} (looked in ${CREDENTIAL_PATHS[vendor](home).join(", ")})`))
+			: `${command} is not on PATH`,
+	};
+}
+
+/**
+ * Every vendor this machine could run, config or no config. This is what the
+ * first run reads: a user who has already logged into Claude Code or Codex has
+ * told the machine something LeanPi can act on without asking them again.
+ */
+export function detectVendors(options: { env?: NodeJS.ProcessEnv; home?: string } = {}): SubscriptionState[] {
+	return HARNESS_VENDORS.map((vendor) => probeVendor(vendor, options));
+}
+
 /** Every configured subscription backend, with what the machine says about it. */
 export function detectSubscriptions(
 	config: LeanPiConfig,
 	options: { env?: NodeJS.ProcessEnv; home?: string } = {},
 ): SubscriptionState[] {
-	const env = options.env ?? process.env;
-	const home = options.home ?? env.HOME ?? homedir();
 	const states: SubscriptionState[] = [];
 	for (const [name, raw] of Object.entries(config.backends)) {
 		const entry = raw as { type?: string; vendor?: string; command?: string; enabled?: boolean };
 		if (entry.type !== "external_harness" || entry.enabled === false) continue;
 		const declared = entry.vendor ?? name;
 		if (!isHarnessVendor(declared)) continue;
-		const command = entry.command ?? HARNESS_DESCRIPTORS[declared].defaultCommand;
-		const found = onPath(command, env);
-		const credential = CREDENTIAL_PATHS[declared](home).find((path) => existsSync(path));
-		const variable = CREDENTIAL_ENV[declared].find((key) => (env[key] ?? "").length > 0);
-		states.push({
-			backend: name,
-			vendor: declared,
-			command,
-			onPath: found,
-			signedIn: credential !== undefined || variable !== undefined,
-			evidence: found
-				? (credential ?? (variable ? `$${variable}` : `no credential for ${declared} (looked in ${CREDENTIAL_PATHS[declared](home).join(", ")})`))
-				: `${command} is not on PATH`,
-		});
+		states.push(probeVendor(declared, { backend: name, ...(entry.command ? { command: entry.command } : {}), ...options }));
 	}
 	return states;
 }
