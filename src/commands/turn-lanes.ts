@@ -6,7 +6,7 @@
  * Order is load-bearing: `compiler` puts the contract on the turn context and
  * `executor` is the only thing that consumes it.
  */
-import { BackendRegistry } from "../backends/index.js";
+import { BackendRegistry, detectSubscriptions, subscriptionDeviations } from "../backends/index.js";
 import { compileRecordOf, compileTask } from "../compiler/index.js";
 import type { JevClient } from "../jev/client.js";
 import type { LeanPiConfig, ModelRole } from "../core/types.js";
@@ -64,6 +64,8 @@ export interface TurnLaneDeps {
 	reviewRunner?: ExecutorDeps["reviewRunner"];
 	/** Skip the executor for turns the session only wants compiled (e.g. `/route`). */
 	execute?: boolean;
+	/** The environment subscription detection reads (PATH and the vendors' keys). */
+	env?: NodeJS.ProcessEnv;
 }
 
 /** Stage 0 + §8: the deterministic packet, then the compiled contract. */
@@ -75,7 +77,12 @@ export function compilerLane(deps: TurnLaneDeps): Lane {
 			// PRD-023's seed: the executor lane's pre-generation hook explores from
 			// the packet the compiler already built rather than walking the repo twice.
 			context.packet = packet;
-			context.contract = await compileTask(turn.text, packet);
+			// §14's `subscription_availability`: a class bound to a vendor CLI this
+			// machine cannot use (missing, or signed out) is routed away from here,
+			// rather than discovered by spending an attempt on it. Detection is two
+			// file questions per backend, so it costs nothing on the turn that routes.
+			const deviations = subscriptionDeviations(deps.config, detectSubscriptions(deps.config, deps.env ? { env: deps.env } : {}));
+			context.contract = await compileTask(turn.text, packet, deviations);
 		},
 	};
 }

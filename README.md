@@ -38,28 +38,53 @@ fail-before is unverified in the retained artifact.
 | tool calls | 119 | 169 | 0.70 |
 
 > **Independent audit, 2026-09-19 — read before quoting.** The published table is
-> retained and recomputes, but a fresh repeat did **not** reproduce the LeanPi
-> advantage: on the one task both arms re-ran, LeanPi was slower, failed the
-> held-out golden, and cost more even after a benchmark cost-accounting
-> correction, and its next attempt was interrupted with unknown spend. No fresh
-> 4×2 comparison exists, so the ratio is not yet robust. Details:
-> [`docs/benchmarks/2026-09-19-leanpi-vs-omp.md`](docs/benchmarks/2026-09-19-leanpi-vs-omp.md#addendum--independent-audit-2026-09-19-docsauditsproduction-readiness-auditmd)
-> and [`docs/audits/production-readiness-audit.md`](docs/audits/production-readiness-audit.md).
+> retained and recomputes, but its fresh repeat did **not** reproduce the LeanPi
+> advantage — and the reason turned out to be the measurement, not the harness:
+> those repeat rows ran without the benchmark's own permission profile, so LeanPi
+> could not write a file. Re-run with it, the same arm is **4/4 for $0.055814**.
+> The audit's three serious findings (cost accounting never fed, no deadline on
+> the native path, a silent-success shape after a partial provider error) are
+> fixed, with two more the fix surfaced. Details:
+> [`docs/audits/production-readiness-audit.md`](docs/audits/production-readiness-audit.md)
+> and [`docs/benchmarks/2026-09-19-leanpi-vs-omp.md`](docs/benchmarks/2026-09-19-leanpi-vs-omp.md#addendum--independent-audit-2026-09-19-docsauditsproduction-readiness-auditmd).
 
 Solve rate is decided by a held-out adjudicator: after the attempt is sealed, the
 upstream fix commit's test files are checked out and the project's own test
 command runs. Neither harness sees those files during its turn, and neither
 harness's self-reported success is used.
 
-**Read this before quoting the number.** The measured LeanPi configuration is its
-native-backend path — Pi's agent loop under LeanPi's Ponytail prefix, five-tool
-surface and permission guard. LeanPi's task compiler, JEV control plane and skill
-disclosure do not run on a native backend (Pi's loop *is* the executor there), so
-this compares prompts and tool surfaces, not the control plane. One run, four
-tasks; no variance estimate.
+**What the omp comparison measures.** Both arms run the same model on the same
+endpoint. Until 2026-09-19 LeanPi's task compiler did not run on a native backend
+at all (Pi's loop is the executor there, and the lane registration switched off
+the *decisions* with the execution), so that table compares prompts and tool
+surfaces. The compiler runs on every path now; the numbers above have not been
+re-measured against omp since. One run, four tasks, no variance estimate.
 
-Methodology, suite validation, excluded fixtures, caveats and the four harness
-defects this benchmark surfaced: **[`docs/benchmarks/2026-09-19-leanpi-vs-omp.md`](docs/benchmarks/2026-09-19-leanpi-vs-omp.md)**.
+### Cost work: what is measured, and where it is
+
+| measurement | result | evidence |
+| --- | --- | --- |
+| this harness against its own previous revision (`ed05f8d`), validated suite, one pair | **$0.126762 → $0.082834, ×0.65**, both arms **4/4**; cost per verified solve $0.031691 → $0.020709 | `bench/out/cost-z1-{base,treat}/` |
+| the stable part of that, on the two tasks whose baseline agrees with its own history | **×0.84 / ×0.88** — the same order as the input rows' 13% | same rows |
+| removing this machine's skill catalog from every request | 82,343 bytes (~20.6k tokens) per call; uncached input −17%, cached −29% | `bench/out/cost-t1-*`, F1 in the report |
+| blanket `thinkingLevel: off` | suite ×0.96 but **3/4 solved** — 27.5% *worse* per verified solve; withdrawn | `bench/out/cost-s1-*`, F4/F6 |
+| JEV's contribution | **not yet measurable**: no run before 2026-09-19 had a credential (the key was in `.env` and nothing read it), and graded effort is a no-op on this endpoint's binary thinking control | S4/S5 in the audit, F5/F6 in the report |
+
+Full write-up, including what is *not* established and the experiment that would
+settle the reasoning policy: **[`docs/reports/reasoning-cost-2026-09-19.md`](docs/reports/reasoning-cost-2026-09-19.md)**.
+
+Every run is kept. `bench/out/<run-id>/` holds the ledger, the §52 telemetry, the
+report and the patches for each arm; `bench/cost/series.json` records which runs
+belong to which comparison, and `bench/cost/fold.py` is the only thing that turns
+them into the numbers above (it refuses partial runs and mismatched task sets).
+
+```sh
+bench/cost/fold.py bench/cost/series.json     # re-fold every recorded comparison
+bench/cost/run-pair.sh bench/suites/validated z2   # one alternating pair, both arms
+```
+
+Methodology, suite validation, excluded fixtures and the harness defects the
+benchmark surfaced: **[`docs/benchmarks/2026-09-19-leanpi-vs-omp.md`](docs/benchmarks/2026-09-19-leanpi-vs-omp.md)**.
 Raw evidence: [`docs/benchmarks/2026-09-19-golden-validation.json`](docs/benchmarks/2026-09-19-golden-validation.json),
 plus the ledgers under `bench/out/`.
 
@@ -126,11 +151,13 @@ been proven fail-before/pass-after on this machine. Adapters: `leanpi`,
 | `bench/` | the benchmark harness, suite, configuration matrix and reports |
 | `docs/PRDs/` | the roadmap and per-PRD specification and acceptance criteria |
 | `docs/benchmarks/` | measured runs and their evidence |
+| `docs/reports/` | the cost investigation and the wiring audit behind the numbers |
+| `bench/out/` | every recorded run: ledger, §52 telemetry, report, patches |
 | `skills/` | the bundled skill pack |
 | `tests/` | the suite: every PRD's acceptance criteria, run with `npm test` |
 
 ```sh
-npm test        # acceptance criteria, end to end (469 tests)
+npm test        # acceptance criteria, end to end (548 tests, 7 skipped)
 npm run lint
 npm run typecheck
 ```

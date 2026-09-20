@@ -19,6 +19,7 @@ export {
 	type RunHarnessDeps,
 } from "./harness.js";
 export { DEFAULT_NATIVE_BUDGET, nativeStop, runNative, type NativeStop, type RunNativeDeps } from "./native.js";
+export { detectSubscriptions, subscriptionDeviations, type SubscriptionState } from "./subscriptions.js";
 export {
 	BackendRegistry,
 	billingOf,

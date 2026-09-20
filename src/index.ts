@@ -488,6 +488,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		todos: todoCarrier,
 		sessionId: manager.getSessionId(),
 		skills: { records: scan, control: skillControl },
+		env,
 	});
 
 	const declinedFor = credentialsPath(env);
