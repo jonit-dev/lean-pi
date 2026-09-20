@@ -7,7 +7,8 @@
  * without spawning anything.
  */
 import { spawn } from "node:child_process";
-import { autoConfigure, jevClientFor, MissingJevKeyError, requireJev } from "../dist/cli/bootstrap.js";
+import { autoConfigure, jevClientFor, MissingJevKeyError, requireJev, startupBanner } from "../dist/cli/bootstrap.js";
+import { loadConfig } from "../dist/core/config.js";
 import { launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 
 const flags = parseLeanPiFlags(process.argv.slice(2));
@@ -20,6 +21,7 @@ try {
 	if (jev.stored) process.stderr.write(`leanpi: JEV key stored at ${jev.stored}\n`);
 	const configured = await autoConfigure({ client: jevClientFor() });
 	if (configured.created) process.stderr.write(`leanpi: ${configured.summary}\n`);
+	process.stderr.write(`${startupBanner(loadConfig(process.cwd()), jev)}\n`);
 	plan = launchPlan(flags.rest);
 } catch (error) {
 	if (error instanceof MissingJevKeyError) {

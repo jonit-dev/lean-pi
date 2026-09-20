@@ -13,6 +13,7 @@ import { candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type Mode
 import type { JevResult } from "../src/jev/types.js";
 import { HARNESS_DESCRIPTORS, runHarness } from "../src/backends/harness.js";
 import { parseLeanPiFlags } from "../src/cli/launch.js";
+import { statusLine } from "../src/cli/statusline.js";
 import { loadConfig } from "../src/core/config.js";
 
 /** A machine with the vendor CLIs installed and logged in. */
@@ -257,5 +258,31 @@ describe("what the vendor actually runs", () => {
 		);
 		expect(spawned[0]).not.toContain("--model");
 		expect(spawned[0]).not.toContain(VENDOR_DEFAULT);
+	});
+});
+
+describe("the status line", () => {
+	it("shows what this turn routed to, how hard it thinks, and what it was classified as", () => {
+		const config = {
+			backends: { claude: { type: "external_harness", vendor: "claude" } },
+			models: { strong: { backend: "claude", model: "opus[1m]" }, balanced: { backend: "claude", model: "opus[1m]" } },
+		} as never;
+		const contract = {
+			task: { execution_complexity: "MEDIUM" },
+			routing: { executor_class: "strong" },
+			reasoning: { effort: "medium" },
+		} as never;
+
+		const line = statusLine({ config, contract, lane: "executor" });
+
+		// The vendor's bracket alias is not a model name a human reads.
+		expect(line).toBe("Auto: opus (1m) (Medium) — MEDIUM complexity — Executor lane");
+	});
+
+	it("names the role when the config has no model for it, instead of throwing mid-turn", () => {
+		const config = { backends: {}, models: {} } as never;
+		const contract = { task: { execution_complexity: "LOW" }, routing: { executor_class: "quick" }, reasoning: { effort: "low" } } as never;
+
+		expect(statusLine({ config, contract, lane: "compiler" })).toContain("quick");
 	});
 });

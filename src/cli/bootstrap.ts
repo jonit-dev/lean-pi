@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type Allocation, type ModelCandidate } from "./allocate.js";
 import { CONFIG_FILENAME, configPathFor } from "../core/config.js";
+import type { LeanPiConfig, ModelRole } from "../core/types.js";
 import { createJevClient, type JevClient } from "../jev/client.js";
 import { describeCredential, resolveCredential, writeStoredKey } from "../jev/credentials.js";
 
@@ -189,4 +190,25 @@ function bootstrapConfig(): Parameters<typeof createJevClient>[0]["config"] {
 export function jevClientFor(options: Partial<BootstrapEnv> = {}): JevClient {
 	const { cwd, env, home } = environment(options);
 	return createJevClient({ config: bootstrapConfig(), cwd, env: { ...env, HOME: home } });
+}
+
+/**
+ * What the user sees when the harness starts: the mantra, then the three facts
+ * that decide what the next turn costs — who executes, who reviews, and whether
+ * the control plane is live. One screen line each, on stderr, so a piped
+ * `--print` run still yields clean stdout.
+ */
+export function startupBanner(config: LeanPiConfig, jev: JevCheck): string {
+	const label = (role: ModelRole): string => {
+		const entry = config.models[role];
+		if (entry === undefined) return "—";
+		return entry.model === VENDOR_DEFAULT ? entry.backend : `${entry.backend} ${entry.model}`;
+	};
+	const roles = [`quick ${label("quick")}`, `balanced ${label("balanced")}`, `strong ${label("strong")}`];
+	return [
+		"leanpi — tell me your goal, I figure out the rest.",
+		`  models   ${roles.join("  ·  ")}`,
+		`  review   ${label("review_quick")} → ${label("review_strong")}`,
+		`  control  JEV ${jev.source}`,
+	].join("\n");
 }

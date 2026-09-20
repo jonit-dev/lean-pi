@@ -50,7 +50,7 @@ function configFor(cli: StubCli, vendor: "claude" | "codex" | "opencode", extra:
 }
 
 describe("PRD-008 Phase 3 — external harness workers", () => {
-	it("AC-4: Claude runs with -p --bare, a restricted tool set, a schema, and resumes its session", async () => {
+	it("AC-4: Claude runs non-interactively with a restricted tool set, a schema, and resumes its session", async () => {
 		const cli = installStubCli();
 		const { cwd } = fixtureRepo();
 		writeConfig(cwd, configFor(cli, "claude"));
@@ -89,7 +89,14 @@ describe("PRD-008 Phase 3 — external harness workers", () => {
 
 		// The configured command, with the documented non-interactive flags.
 		expect(one!.argv).toContain("-p");
-		expect(one!.argv).toContain("--bare");
+		// Not `--bare`: with a subscription (OAuth) login it turns Anthropic auth off
+		// — "strictly ANTHROPIC_API_KEY or apiKeyHelper (OAuth and keychain are never
+		// read)" — and every call came back `Not logged in · Please run /login`.
+		// Verified against the installed CLI. The context suppression `--bare`
+		// bundled is kept through the flags that do not touch auth.
+		expect(one!.argv).not.toContain("--bare");
+		expect(one!.argv).toContain("--strict-mcp-config");
+		expect(one!.argv).toContain("--disable-slash-commands");
 		expect(one!.argv).toContain("--output-format");
 		expect(one!.argv[one!.argv.indexOf("--output-format") + 1]).toBe("json");
 		expect(one!.argv).toContain("--json-schema");

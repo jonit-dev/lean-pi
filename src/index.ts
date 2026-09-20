@@ -63,6 +63,7 @@ import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
 import { resolveRole } from "./core/roles.js";
+import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
@@ -559,6 +560,20 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			const model = ctx.modelRegistry.find(ref.backend, ref.model);
 			if (model) await pi.setModel(model);
 			pi.setThinkingLevel(context.contract.reasoning.effort);
+		}
+		// "Tell me your goal, I figure out the rest" is only trustworthy if the
+		// figuring is visible: the footer carries what this turn routed to, how
+		// hard it was told to think, and what it was classified as.
+		if (context.contract) {
+			ctx.ui.setStatus(
+				LEANPI_STATUS_KEY,
+				statusLine({
+					config,
+					contract: context.contract,
+					lane: ownsExecutionLoop(config) ? "executor" : "compiler",
+					...(ownsExecutionLoop(config) ? {} : { role: context.contract.routing.executor_class }),
+				}),
+			);
 		}
 		// Pi's blanket catalog, on the entry that does not go through the resource
 		// loader: `createLeanPiSession` suppresses it with `skillsOverride`, and
