@@ -22,6 +22,10 @@ export default defineConfig({
 	plugins: [tsSpecifierPlugin],
 	test: {
 		include: ["tests/**/*.spec.ts", "tests/**/*.test.ts"],
+		// `$HOME`/`$XDG_CONFIG_HOME` point at an empty directory: config discovery
+		// falls back to the machine-wide file, so without this the suite reads the
+		// developer's own `~/.config/leanpi/leanpi.config.yaml`.
+		setupFiles: ["tests/setup/machine-isolation.ts"],
 		// Integration specs boot real Pi sessions and real stub HTTP servers.
 		testTimeout: 30_000,
 		hookTimeout: 30_000,

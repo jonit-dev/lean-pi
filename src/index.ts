@@ -107,8 +107,25 @@ export interface LeanPiActivation {
 	readonly jev: JevClient;
 }
 
+/**
+ * The `apiKey` field for a provider registration, or nothing.
+ *
+ * A bare name in LeanPi's config means "the variable of that name". If the
+ * variable is absent, Pi 0.85 reads the bare name as a *literal key* and the
+ * provider answers `401 {"type":"AuthError","message":"Invalid API key."}` —
+ * indistinguishable, to a user who just ran `leanpi --jev-key`, from a verdict
+ * on the key they configured. Registering nothing lets Pi fall back to its own
+ * stored credential for the provider.
+ */
+function apiKeyFor(declared: unknown, env: NodeJS.ProcessEnv): { apiKey: string } | undefined {
+	if (typeof declared !== "string" || declared.length === 0) return undefined;
+	const bareName = /^[A-Za-z_][A-Za-z0-9_]*$/.test(declared);
+	if (bareName && (env[declared] === undefined || env[declared] === "")) return undefined;
+	return { apiKey: toPiConfigValue(declared, env) };
+}
+
 /** Register one Pi provider per `native` backend; every role on it becomes selectable. */
-function registerBackends(pi: ExtensionAPI, config: LeanPiConfig): void {
+function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.ProcessEnv = process.env): void {
 	const modelsByBackend = new Map<string, Set<string>>();
 	for (const [role, entry] of Object.entries(config.models)) {
 		// Only role keys bind a model; `models.specialists` (FR-047) binds a role.
@@ -140,12 +157,15 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig): void {
 		pi.registerProvider(name, {
 			name: backend.name ?? name,
 			baseUrl: backend.baseUrl,
-			// Only when the config names one. The old default — the literal
-			// `LEANPI_BACKEND_API_KEY` — is not an env var on any machine, so
-			// `toPiConfigValue` passed the *name itself* through as the key and
-			// overrode the credential Pi already holds for that provider. A backend
-			// with no declared key means "Pi's own auth for this provider".
-			...(backend.apiKey === undefined || backend.apiKey === null ? {} : { apiKey: toPiConfigValue(backend.apiKey as string) }),
+			// Only when the config names one *and* the machine can supply it. The
+			// old default — the literal `LEANPI_BACKEND_API_KEY` — is not an env var
+			// anywhere, so `toPiConfigValue` passed the name through as the key and
+			// the provider answered `401 Invalid API key`. The same happens to a
+			// declared `apiKey: SOME_VAR` in a shell that does not export it.
+			// Registering no key instead lets Pi use the credential it holds for
+			// that provider, and if it holds none the error is Pi's own auth
+			// message rather than a 401 about a key nobody set.
+			...(apiKeyFor(backend.apiKey, env) ?? {}),
 			api: backend.api ?? "openai-completions",
 			...(declaredHeaders === null
 				? {}
@@ -312,7 +332,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	}
 	const commands = options.commands ?? commandRegistry;
 	const config = options.config ?? loadConfig(cwd, {}, env);
-	registerBackends(pi, config);
+	registerBackends(pi, config, env);
 	const tools = registerBaselineTools(pi, cwd);
 	// PRD-018: the seven LSP tools are registered once and stay inactive until a
 	// turn's compiled mode exposes its group (§15: never on by default). The mode

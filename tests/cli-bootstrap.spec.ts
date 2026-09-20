@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { autoConfigure, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../src/cli/bootstrap.js";
+import { autoConfigure, missingBackendKeys, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../src/cli/bootstrap.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
 import { MODEL_ROLES } from "../src/core/types.js";
 import type { JevResult } from "../src/jev/types.js";
@@ -581,5 +581,62 @@ describe("the status line reaches the footer", () => {
 		// Never the class's model when Pi was not given it: with JEV disabled the
 		// fallback route is what runs, and the line has to name what Pi will dial.
 		expect(entry?.[1]).not.toContain("opus");
+	});
+});
+
+describe("a credential the config names and the shell does not have", () => {
+	it("is reported by name instead of surfacing as `401 Invalid API key`", () => {
+		// What the user hit: `apiKey: OPENCODE_API_KEY` in a shell that does not
+		// export it. Pi 0.85 reads a bare name as a *literal key*, so the provider
+		// answered `401 {"type":"AuthError","message":"Invalid API key."}` — which,
+		// right after `leanpi --jev-key`, reads as a verdict on the key they just
+		// set. The variable was never the JEV key.
+		const config = {
+			backends: {
+				"opencode-go": { type: "native", baseUrl: "https://example.test", apiKey: "OPENCODE_API_KEY" },
+				claude: { type: "external_harness", vendor: "claude" },
+			},
+			models: { balanced: { backend: "opencode-go", model: "flash" } },
+		} as never;
+
+		expect(missingBackendKeys(config, {})).toEqual([{ backend: "opencode-go", variable: "OPENCODE_API_KEY" }]);
+		// Set: nothing to report.
+		expect(missingBackendKeys(config, { OPENCODE_API_KEY: "sk-test" })).toEqual([]);
+		// Pi's own syntax is Pi's to resolve and Pi's to complain about.
+		const piSyntax = { backends: { p: { type: "native", baseUrl: "https://x.test", apiKey: "$SOME_VAR" } }, models: {} } as never;
+		expect(missingBackendKeys(piSyntax, {})).toEqual([]);
+	});
+
+	it("registers no key at all rather than the variable's name, so Pi can use its own credential", async () => {
+		const registered: Array<Record<string, unknown>> = [];
+		const pi = {
+			on: () => {},
+			registerTool: () => {},
+			registerProvider: (_name: string, provider: Record<string, unknown>) => registered.push(provider),
+			setModel: async () => {},
+			setThinkingLevel: () => {},
+		};
+		const { cwd, home, env } = machine({ vendors: [] });
+		writeFileSync(
+			join(cwd, "leanpi.config.yaml"),
+			[
+				"backends:",
+				"  local: { type: native, baseUrl: https://example.test, apiKey: ABSENT_VAR }",
+				"models:",
+				"  balanced:",
+				"    backend: local",
+				"    model: cheap",
+				"jev:",
+				"  mode: disabled",
+				"",
+			].join("\n"),
+		);
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+		clearLanes();
+
+		expect(registered).toHaveLength(1);
+		// Never the literal name: that is what produced the 401.
+		expect(registered[0]?.apiKey).toBeUndefined();
 	});
 });

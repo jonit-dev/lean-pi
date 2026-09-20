@@ -365,3 +365,28 @@ export function sessionModelFor(config: LeanPiConfig): string | undefined {
 	if (entry.model === VENDOR_DEFAULT) return undefined;
 	return `${entry.backend}/${entry.model}`;
 }
+
+/**
+ * Backends whose credential the config names but the environment does not hold.
+ *
+ * `apiKey: OPENCODE_API_KEY` means "the variable of that name". When the
+ * variable is missing, Pi is handed the *name* as the key — a bare name is a
+ * literal in Pi 0.85 — and the provider answers
+ * `401 {"type":"AuthError","message":"Invalid API key."}`, which reads like the
+ * user's key is wrong rather than absent. Worse, it reads like LeanPi's *JEV*
+ * key is wrong, because that is the key they just configured. Checking it here
+ * costs nothing and turns a misleading 401 into the variable's name.
+ */
+export function missingBackendKeys(config: LeanPiConfig, env: NodeJS.ProcessEnv = process.env): Array<{ backend: string; variable: string }> {
+	const missing: Array<{ backend: string; variable: string }> = [];
+	for (const [name, raw] of Object.entries(config.backends)) {
+		const entry = raw as { type?: string; enabled?: boolean; apiKey?: string };
+		if (entry.type !== "native" || entry.enabled === false) continue;
+		const declared = entry.apiKey;
+		// Only a bare name is a variable reference: `$FOO`, `${FOO}` and `!command`
+		// are Pi's own syntax and Pi reports their failures itself.
+		if (typeof declared !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(declared)) continue;
+		if (env[declared] === undefined || env[declared] === "") missing.push({ backend: name, variable: declared });
+	}
+	return missing;
+}
