@@ -58,7 +58,7 @@ import { aggregate } from "./verify/aggregate.js";
 import type { EvidenceRecord } from "./verify/evidence.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultSkillRoots, scanSkills, createSkillControl, type SkillRecord } from "./capabilities/skills.js";
+import { defaultSkillRoots, scanSkills, createSkillControl, withoutSkillCatalog, type SkillRecord } from "./capabilities/skills.js";
 import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
@@ -560,6 +560,12 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			if (model) await pi.setModel(model);
 			pi.setThinkingLevel(context.contract.reasoning.effort);
 		}
+		// Pi's blanket catalog, on the entry that does not go through the resource
+		// loader: `createLeanPiSession` suppresses it with `skillsOverride`, and
+		// `pi --extension` never builds that loader, so the same 82,343 bytes come
+		// back in the system prompt of every request. LeanPi already disclosed the
+		// skills this turn needs (PRD-005); this removes the duplicate library.
+		const systemPrompt = withoutSkillCatalog(event.systemPrompt);
 		if (context.contract) {
 			// The record is written at `agent_end`, not here: with Pi's own loop as
 			// the executor this handler returns *before* the loop spends anything, so
@@ -569,6 +575,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		} else {
 			setLaneCollector(undefined);
 		}
+		return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
 	});
 
 	// PRD-015's sink for the path Pi itself drives: one call per assistant message
@@ -859,6 +866,7 @@ export {
 	resetScanStats,
 	scanSkills,
 	scanStats,
+	withoutSkillCatalog,
 } from "./capabilities/skills.js";
 export type { ScanOptions, ScanStats, SkillControl, SkillRecord, SkillRoot, SkillStateEntry, SourceClass } from "./capabilities/skills.js";
 export { lexicalSelect, registerSkillSite, selectSkills, SKILL_SITE_ID, DEFAULT_TOP_K } from "./capabilities/skill-select.js";

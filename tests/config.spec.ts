@@ -1,10 +1,11 @@
 /**
  * PRD-001 Phase 2 — AC-3, AC-4, AC-9: config validation and the role ladder.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConfigError, loadConfig, resolveRole, type ModelRole } from "../src/index.js";
-import { bootSession, fixtureRepo, nativeBackend, writeConfig } from "./helpers/fixtures.js";
+import { CONFIG_FILENAME, ConfigError, configPathFor, loadConfig, resolveRole, type ModelRole } from "../src/index.js";
+import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "./helpers/stub-backend.js";
 
 describe("PRD-001 Phase 2 — config and role resolution", () => {
@@ -212,5 +213,31 @@ describe("FR-047 / PRD-009 — `models.specialists` and `verify:` are read from 
 		expect(fromFile({ backends, models, verify: { commands: { targeted_test: "" } } })).toThrow("verify.commands.targeted_test");
 		expect(fromFile({ backends, models, verify: { commands: { targeted_test: "npx vitest" }, timeoutMs: 0 } })).toThrow("verify.timeoutMs");
 		expect(fromFile({ backends, models, verify: { commands: [] } })).toThrow("verify.commands");
+	});
+});
+
+describe("configuration discovery", () => {
+	it("finds the project's config from a subdirectory, and the machine's when there is no project one", () => {
+		const root = tempDir("leanpi-discovery-");
+		const project = join(root, "repo");
+		const deep = join(project, "packages", "api", "src");
+		mkdirSync(deep, { recursive: true });
+		writeFileSync(join(project, CONFIG_FILENAME), "backends: {}\n");
+
+		// `leanpi` is run from wherever the user happens to be: one directory
+		// deeper than the config must not be a hard failure with no obvious cause.
+		expect(configPathFor(deep, {})).toBe(join(project, CONFIG_FILENAME));
+		expect(configPathFor(project, {})).toBe(join(project, CONFIG_FILENAME));
+
+		// With no project config anywhere above, the machine's own config answers.
+		const elsewhere = join(root, "elsewhere");
+		const xdg = join(root, "xdg");
+		mkdirSync(elsewhere, { recursive: true });
+		mkdirSync(join(xdg, "leanpi"), { recursive: true });
+		writeFileSync(join(xdg, "leanpi", CONFIG_FILENAME), "backends: {}\n");
+		expect(configPathFor(elsewhere, { XDG_CONFIG_HOME: xdg })).toBe(join(xdg, "leanpi", CONFIG_FILENAME));
+
+		// And with neither, the answer is where a writer should put one.
+		expect(configPathFor(elsewhere, { XDG_CONFIG_HOME: join(root, "empty") })).toBe(join(elsewhere, CONFIG_FILENAME));
 	});
 });

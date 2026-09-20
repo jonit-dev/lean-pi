@@ -5,7 +5,7 @@
  * half-applied config would make every downstream PRD debug the wrong layer.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { assertTrusted, isProjectLocal, mergePermissions, readUserState, type PermissionEnv, type RawPermissionsBlock } from "../permissions/trust.js";
 import {
@@ -38,8 +38,31 @@ export class ConfigError extends Error {
 
 const JEV_MODES: readonly JevMode[] = ["enabled", "disabled", "metadata-only", "redacted"];
 
-export function configPathFor(cwd: string): string {
-	return join(cwd, CONFIG_FILENAME);
+/**
+ * Where a session's configuration comes from.
+ *
+ * `leanpi` is a command a user runs from wherever they happen to be, so the
+ * file is looked up the way every other project tool looks one up: the working
+ * directory, then its ancestors (a monorepo package inherits the repository's
+ * config), then the machine's own `$XDG_CONFIG_HOME/leanpi/`. Without the walk,
+ * running the command one directory deeper than the config is a hard failure
+ * with no obvious cause; without the user-level fallback, it cannot run outside
+ * a configured project at all. The returned path is the project-level one when
+ * nothing exists, so a caller that writes config writes it where it looked.
+ */
+export function configPathFor(cwd: string, env: { XDG_CONFIG_HOME?: string; HOME?: string } = process.env): string {
+	const project = join(cwd, CONFIG_FILENAME);
+	let directory = cwd;
+	for (;;) {
+		const candidate = join(directory, CONFIG_FILENAME);
+		if (existsSync(candidate)) return candidate;
+		const parent = dirname(directory);
+		if (parent === directory) break;
+		directory = parent;
+	}
+	const base = env.XDG_CONFIG_HOME ?? (env.HOME === undefined ? undefined : join(env.HOME, ".config"));
+	const user = base === undefined ? undefined : join(base, "leanpi", CONFIG_FILENAME);
+	return user !== undefined && existsSync(user) ? user : project;
 }
 
 function asRecord(value: unknown, path: string): Record<string, unknown> {

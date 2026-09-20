@@ -270,3 +270,31 @@ export function createSkillControl(initial: Record<string, SkillStateEntry> = {}
 		pinnedRecords: (records) => records.filter((record) => state[record.name]?.pinned === true && state[record.name]?.enabled !== false),
 	};
 }
+
+/** Pi's own catalog block, as its prompt builder writes it (`core/skills.js`). */
+const CATALOG_OPEN = "<available_skills>";
+const CATALOG_CLOSE = "</available_skills>";
+
+/**
+ * The system prompt without Pi's blanket skill catalog.
+ *
+ * LeanPi discloses skills itself (PRD-005): the compiler picks the few a task
+ * needs and the prompt carries those. Pi, meanwhile, enumerates *every*
+ * installed skill into the system prompt of every request — measured on this
+ * machine, 82,343 bytes of an 87,932-byte prompt, ~20.6k tokens, re-sent on
+ * every provider call of every turn.
+ *
+ * The library entry suppresses it where the resource loader is built
+ * (`skillsOverride`). The documented interactive entry — `pi --extension` — does
+ * not build that loader, so the same bytes come back; there the only seam is the
+ * assembled prompt itself, which `before_agent_start` may replace.
+ */
+export function withoutSkillCatalog(systemPrompt: string): string {
+	const open = systemPrompt.indexOf(CATALOG_OPEN);
+	if (open === -1) return systemPrompt;
+	const close = systemPrompt.indexOf(CATALOG_CLOSE, open);
+	if (close === -1) return systemPrompt;
+	const before = systemPrompt.slice(0, open);
+	const after = systemPrompt.slice(close + CATALOG_CLOSE.length);
+	return `${before.trimEnd()}${before.length > 0 && after.trim().length > 0 ? "\n\n" : ""}${after.trimStart()}`;
+}

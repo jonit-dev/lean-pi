@@ -1,53 +1,58 @@
 {
-  "name": "leanpi",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Cost-aware task compiler and coding runtime built on Pi",
-  "type": "module",
-  "engines": {
-    "node": ">=22.19.0"
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
-  "files": [
-    "dist",
-    "skills",
-    "src/capability/models.json",
-    "src/core/instructions/ponytail.md",
-    "src/core/instructions/ponytail.lock.json"
-  ],
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "lint": "oxlint src tests",
-    "sync:ponytail": "node scripts/sync-ponytail.mjs",
-    "bench:skills": "vitest run --config vitest.bench.config.ts",
-    "bench": "tsc -p tsconfig.json && node dist/bench/lane.js",
-    "sync:skills": "node scripts/sync-skills.mjs"
-  },
-  "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.85.1",
-    "@earendil-works/pi-ai": "^0.85.1",
-    "@earendil-works/pi-coding-agent": "^0.85.1",
-    "typebox": "^1.0.0",
-    "yaml": "^2.8.1"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "oxlint": "^1.30.0",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
-  }
+	"name": "leanpi",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Cost-aware task compiler and coding runtime built on Pi",
+	"type": "module",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"bin",
+		"dist",
+		"skills",
+		"src/capability/models.json",
+		"src/core/instructions/ponytail.md",
+		"src/core/instructions/ponytail.lock.json"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"leanpi": "tsc -p tsconfig.json && node ./bin/leanpi.js",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"lint": "oxlint src tests",
+		"sync:ponytail": "node scripts/sync-ponytail.mjs",
+		"bench:skills": "vitest run --config vitest.bench.config.ts",
+		"bench": "tsc -p tsconfig.json && node dist/bench/lane.js",
+		"sync:skills": "node scripts/sync-skills.mjs"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "^0.85.1",
+		"@earendil-works/pi-ai": "^0.85.1",
+		"@earendil-works/pi-coding-agent": "^0.85.1",
+		"typebox": "^1.0.0",
+		"yaml": "^2.8.1"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"esbuild"
+		]
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.0",
+		"oxlint": "^1.30.0",
+		"typescript": "^5.9.3",
+		"vitest": "^3.2.4"
+	},
+	"bin": {
+		"leanpi": "./bin/leanpi.js"
+	}
 }

@@ -17,7 +17,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { clearLanes, compileTask, readRuns, scoutTask } from "../src/index.js";
+import { clearLanes, compileTask, readRuns, scoutTask, withoutSkillCatalog } from "../src/index.js";
 import { registerLane } from "../src/commands/session.js";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend } from "./helpers/stub-backend.js";
@@ -236,5 +236,32 @@ describe("PRD-028 follow-up — the wiring the cost audit found open", () => {
 			session.session.dispose();
 			await backend.close();
 		}
+	});
+	it("strips Pi's own skill catalog from the interactive entry's prompt (PRD-005 §16)", async () => {
+		// `createLeanPiSession` suppresses the catalog at the resource loader, and
+		// `pi --extension` — the documented interactive entry — never builds that
+		// loader. Measured on this machine the block was 82,343 bytes of an 87,932
+		// byte prompt, in every request of every turn.
+		const prompt = [
+			"You are an expert coding assistant.",
+			"",
+			"<available_skills>",
+			"- one: BODY_OF_one",
+			"- two: BODY_OF_two",
+			"</available_skills>",
+			"",
+			"Guidelines: be concise.",
+		].join("\n");
+
+		const stripped = withoutSkillCatalog(prompt);
+		expect(stripped).not.toContain("available_skills");
+		expect(stripped).not.toContain("BODY_OF_one");
+		// Everything Pi said around it survives: this removes a duplicate library,
+		// not the host's instructions.
+		expect(stripped).toContain("You are an expert coding assistant.");
+		expect(stripped).toContain("Guidelines: be concise.");
+		// A prompt without the block is returned untouched, so the handler can tell
+		// "nothing to replace" from "replaced".
+		expect(withoutSkillCatalog("no catalog here")).toBe("no catalog here");
 	});
 });
