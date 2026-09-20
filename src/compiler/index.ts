@@ -67,6 +67,20 @@ const CONTEXT_BY_COMPLEXITY = {
 	HIGH: { strategy: "broad" as const, budget_tokens: 24000 },
 };
 
+/**
+ * The effort a complexity class is billed at.
+ *
+ * `low`/`medium`/`high` are real gradations on most endpoints but not on the
+ * measured one, whose wire control is binary — so `low` costs what `high` does
+ * there, and the only *tested* money decision on that endpoint is thinking on or
+ * off. Turning thinking off is not obviously better: blanket `off` was 27.5%
+ * worse **per verified solve** ($0.055814/4 = $0.01395 against $0.053362/3 =
+ * $0.01779), and on this suite the task that got cheaper with `off` (`express`,
+ * ×0.54) is not the one a heuristic calls simplest — its `slugify` verdict sent
+ * the task whose cost *rose* under `off` ($0.006212 → $0.008480) to no thinking.
+ * A class-gated `off` therefore needs a classifier that picks the winners and a
+ * measurement that shows it; until then the classes keep thinking.
+ */
 const EFFORT_BY_COMPLEXITY = { LOW: "low", MEDIUM: "medium", HIGH: "high" } as const;
 
 const VERIFICATION_BY_COMPLEXITY: Record<ExecutionComplexity, string[]> = {

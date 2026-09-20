@@ -38,8 +38,10 @@ import {
 import { billingOf, HARNESS_DESCRIPTORS, parseBackendPool, runHarness, type HarnessSpawn, type RegisteredBackend } from "../backends/index.js";
 import { runTurn, type TurnContext } from "../commands/session.js";
 import { isModelRole, type LeanPiConfig } from "../core/types.js";
+import { readDecisions } from "../jev/log.js";
 import {
 	appendRun,
+	callsFromMessages,
 	createRunCollector,
 	emitRunTelemetry,
 	priceRun,
@@ -52,7 +54,7 @@ import {
 } from "../telemetry/index.js";
 import { verifyTask } from "../verify/index.js";
 import type { RubricJudge } from "./adjudicate.js";
-import { BenchError, type BenchAttempt, type BenchAttemptExecutor, type BenchAttemptResult, type BenchConfigRow } from "./types.js";
+import { BenchError, type AttemptHooks, type BenchAttempt, type BenchAttemptExecutor, type BenchAttemptResult, type BenchConfigRow } from "./types.js";
 
 /** Explicit owner gate for the subscription baselines (AC-4): unset means they refuse to run. */
 export const EXTERNAL_BASELINES_FLAG = "LEANPI_BENCH_EXTERNAL_BASELINES";
@@ -115,7 +117,12 @@ function appendedRecord(
 					usage: {
 						inputTokens: numbers.usage.input_tokens,
 						cachedInputTokens: numbers.usage.cached_input_tokens,
-						outputTokens: numbers.usage.output_tokens,
+						// Pi's `Usage.output` already includes `reasoning` (pi-ai
+						// `Usage.reasoning` is documented as a subset of `output`), while
+						// `priceCall` adds `reasoningTokens` on top of `outputTokens`.
+						// Hand it the non-reasoning remainder so the single synthetic call
+						// is not double-charged.
+						outputTokens: Math.max(0, numbers.usage.output_tokens - numbers.usage.reasoning_tokens),
 						reasoningTokens: numbers.usage.reasoning_tokens,
 					},
 				},
@@ -165,6 +172,8 @@ export interface LeanPiAttemptOptions {
 	session: (attempt: BenchAttempt, config: LeanPiConfig) => Promise<BenchTurnSession>;
 	/** The §8 ladder's verdicts (PRD-007/009/010). Absent, the attempt claims nothing. */
 	verdict?: (context: TurnContext, attempt: BenchAttempt) => Promise<RunResult>;
+	/** Per-attempt ceiling for one LeanPi turn; `bench.leanpiTimeoutMs` overrides it. */
+	timeoutMs?: number;
 }
 
 /**
@@ -180,26 +189,20 @@ async function verdictFromVerification(context: TurnContext, attempt: BenchAttem
 }
 
 export function leanPiAttempt(options: LeanPiAttemptOptions): BenchAttemptExecutor {
-	return async (attempt: BenchAttempt): Promise<BenchAttemptResult> => {
+	return async (attempt: BenchAttempt, hooks?: AttemptHooks): Promise<BenchAttemptResult> => {
 		const config = configForRow(options.config, attempt.config);
 		const booted = await options.session(attempt, config);
 		const collector = createRunCollector({ taskId: attempt.telemetry_task_id, sessionId: attempt.session_id });
+		const ceilingMs = options.timeoutMs ?? timeoutOf(options.config, "leanpiTimeoutMs", LEANPI_TIMEOUT_MS_DEFAULT);
 		const started = Date.now();
-		const context = await runTurn(
-			{ text: attempt.task.prompt },
-			{ config, cwd: attempt.workspace, session: booted.session, runtime: booted.session.modelRuntime },
-		);
-		const wallMs = Date.now() - started;
-		if (!context.contract) {
-			// PRD-007's ownership rule: with native executor roles Pi's own agent
-			// loop is the executor, so no lane compiles a contract. The turn still
-			// ran under LeanPi's prefix, tool surface and permission guard, so the
-			// attempt is recorded from what the session did — and claims nothing,
-			// exactly as the contract path does without a §8 ladder verdict.
+		// What the session has spent so far, from the session's own counters: the
+		// record an attempt needs when it produced no contract, and the one an
+		// interrupted or ceiling-killed attempt writes before it stops existing.
+		const spentNumbers = (backend: string, model: string) => {
 			const tokens = messageTokens(booted.session);
-			appendedRecord(attempt, config, {
-				backend: context.modelRef.backend,
-				model: context.modelRef.model,
+			return {
+				backend,
+				model,
 				calls: tokens.input + tokens.output > 0 ? 1 : 0,
 				usage: {
 					input_tokens: tokens.input,
@@ -211,18 +214,60 @@ export function leanPiAttempt(options: LeanPiAttemptOptions): BenchAttemptExecut
 					external_harness_calls: 0,
 					subscription_usage: 0,
 				},
-				wallMs,
+				wallMs: Date.now() - started,
 				toolCalls: tokens.toolCalls,
-				result: { verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: false },
-			});
+				result: { verification: "not_run" as const, proof_gate: "not_run" as const, reviewer: "not_run" as const, success: false },
+			};
+		};
+		const configuredBackend = config.models.balanced?.backend ?? Object.keys(config.backends)[0] ?? "leanpi";
+		const configuredModel = config.models.balanced?.model ?? "unknown";
+		hooks?.onInterrupt(() => appendedRecord(attempt, config, spentNumbers(configuredBackend, configuredModel)));
+		let killed = false;
+		const timer = setTimeout(() => {
+			killed = true;
+			booted.session.agent.abort();
+		}, ceilingMs);
+		const context = await runTurn(
+			{ text: attempt.task.prompt },
+			{
+				config,
+				cwd: attempt.workspace,
+				session: booted.session,
+				runtime: booted.session.modelRuntime,
+				// The ceiling is absolute, so it also covers the lanes: a turn whose
+				// compilation overran it must not start a request at all.
+				deadlineMs: started + ceilingMs,
+			},
+		).finally(() => clearTimeout(timer));
+		hooks?.onInterrupt(null);
+		const ceilingNote = `the turn was killed at the ${Math.round(ceilingMs / 60_000)}-minute attempt ceiling`;
+		if (!context.contract) {
+			// PRD-007's ownership rule: with native executor roles Pi's own agent
+			// loop is the executor, so no lane compiles a contract. The turn still
+			// ran under LeanPi's prefix, tool surface and permission guard, so the
+			// attempt is recorded from what the session did — and claims nothing,
+			// exactly as the contract path does without a §8 ladder verdict.
+			appendedRecord(attempt, config, spentNumbers(context.modelRef.backend, context.modelRef.model));
 			return {
 				extensions: ["leanpi"],
 				operator: "leanpi",
 				subscription_usage: 0,
-				note: "native executor roles: Pi's loop ran the turn under LeanPi's prefix and tools, so no contract was compiled and no success is claimed",
+				note: `native executor roles: Pi's loop ran the turn under LeanPi's prefix and tools, so no contract was compiled and no success is claimed${killed ? `; ${ceilingNote}` : ""}`,
 			};
 		}
 		const verdict = await (options.verdict ?? verdictFromVerification)(context, attempt);
+		// Pi's own loop was the executor, so nothing fed the collector while the turn
+		// ran: the session's own message usage is what the record reports, one call
+		// per assistant message. Without this the row is all zeros — the numbers the
+		// accounting exists to carry.
+		const spend = callsFromMessages(booted.session.messages ?? [], { backend: context.modelRef.backend, model: context.modelRef.model });
+		for (const call of spend.calls) collector.add(call);
+		collector.noteToolCall(spend.toolCalls);
+		collector.addWallMs(Date.now() - started);
+		// JEV's own spend, read back from the run's decision log: the compiler asks
+		// five sites per turn on this path, and their tokens are money on the same
+		// account as the model's. A row that omits them flatters the control plane.
+		for (const row of readDecisions(attempt.workspace)) collector.recordJevDecision(row);
 		emitRunTelemetry(collector, context.contract, verdict, {
 			cwd: attempt.workspace,
 			// The run's store, not the workspace's: attempts run in throwaway checkouts
@@ -233,7 +278,11 @@ export function leanPiAttempt(options: LeanPiAttemptOptions): BenchAttemptExecut
 			extensions: ["leanpi"],
 			operator: "leanpi",
 			subscription_usage: attempt.config.subscription ? 1 : 0,
-			note: options.verdict ? null : "no §8 ladder verdict supplied: the attempt records its verifier status and claims no success",
+			note: killed
+				? ceilingNote
+				: options.verdict
+					? null
+					: "no §8 ladder verdict supplied: the attempt records its verifier status and claims no success",
 		};
 	};
 }
@@ -456,6 +505,11 @@ export function externalAttempt(options: ExternalAttemptOptions): BenchAttemptEx
 export const OMP_COMMAND_DEFAULT = "omp";
 /** Per-attempt ceiling for one omp turn; `bench.ompTimeoutMs` overrides it. */
 export const OMP_TIMEOUT_MS_DEFAULT = 2_700_000;
+/**
+ * Per-attempt ceiling for one LeanPi turn; `bench.leanpiTimeoutMs` overrides it.
+ * The omp row's ceiling, so neither arm of a comparison runs unbounded.
+ */
+export const LEANPI_TIMEOUT_MS_DEFAULT = OMP_TIMEOUT_MS_DEFAULT;
 
 /** What omp's `--mode json` stream reports about a finished turn. */
 export interface OmpTurn {
@@ -644,7 +698,11 @@ export function attemptExecutorFor(row: BenchConfigRow, deps: AdapterDeps): Benc
 				"adapter",
 			);
 		}
-		return leanPiAttempt({ config: deps.config, session: deps.session });
+		return leanPiAttempt({
+			config: deps.config,
+			session: deps.session,
+			timeoutMs: timeoutOf(deps.config, "leanpiTimeoutMs", LEANPI_TIMEOUT_MS_DEFAULT),
+		});
 	}
 	if (row.adapter === "stock-pi") return stockPiAttempt({ config: deps.config, env: deps.env, agentDir: deps.agentDir });
 	if (row.adapter === "omp") return ompAttempt({ config: deps.config, env: deps.env });

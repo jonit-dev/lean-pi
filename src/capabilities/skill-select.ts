@@ -32,7 +32,11 @@ export interface SelectSkillsInput {
 	config: LeanPiConfig;
 	client?: Pick<JevClient, "ask" | "fallbackCount"> & Partial<Pick<JevClient, "getMode">>;
 	topK?: number;
-	/** Test seam: the body loader, so a spec can assert what was read. */
+	/**
+	 * The body loader. The native turn lane passes a pointer loader instead —
+	 * inside Pi's own loop a body is re-sent on every provider call — and a spec
+	 * passes one to assert what was read.
+	 */
 	loadBody?: (record: SkillRecord) => string;
 }
 

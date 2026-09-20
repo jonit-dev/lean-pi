@@ -2,7 +2,8 @@
  * PRD-002 Phase 3 — AC-5, AC-6, AC-7: credentials and the `/jev` surface.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	clearLanes,
@@ -23,6 +24,7 @@ import {
 import { bootSession, fixtureRepo, gitCommitAll, gitInit, nativeBackend, tempDir, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend } from "./helpers/stub-backend.js";
 import { startStubJev, type StubJev } from "./helpers/stub-jev.js";
+import { toolMessages } from "./permissions/harness.js";
 
 const QUESTIONS: JevQuestion[] = [
 	{ id: "route", kind: "Choice", text: "Which route?", options: { quick: "cheap", strong: "expensive" } },
@@ -123,7 +125,76 @@ describe("PRD-002 Phase 3 — credentials and /jev", () => {
 		expect(withEnv).toEqual({ key: "stored-key-value", source: "credential store" });
 		const withConfig = resolveCredential(fixtureConfig(cwd, stub.url, { jev: { endpoint: stub.url, apiKey: "config-key" } }), env);
 		expect(withConfig).toEqual({ key: "config-key", source: "config" });
+		session.session.dispose();
+	});
 
+	it("AC-5: a project's .env is a credential source, and never becomes process state", () => {
+		const cwd = tempDir("leanpi-envfile-");
+		writeFileSync(join(cwd, ".env"), "# the project's own key\nexport JEV_API_KEY=\"from-the-file\"\n");
+		const env = { XDG_CONFIG_HOME: tempDir("leanpi-xdg-"), HOME: tempDir("leanpi-home-") };
+		const config = fixtureConfig(cwd, "http://127.0.0.1:1/v1");
+
+		// The file is one source among the documented order, and an exported variable
+		// outranks it: exporting a key is the more explicit intent of the two.
+		expect(resolveCredential(config, env, cwd)).toEqual({ key: "from-the-file", source: "env file" });
+		expect(resolveCredential(config, { ...env, JEV_API_KEY: "exported" }, cwd)).toEqual({ key: "exported", source: "env" });
+		// Reading it must not publish it: every spawned vendor CLI inherits
+		// `process.env`, and FR-054 says no LeanPi credential crosses that boundary.
+		expect(process.env.JEV_API_KEY).not.toBe("from-the-file");
+		// A directory with no `.env` resolves nothing, as before.
+		expect(resolveCredential(config, env, tempDir("leanpi-noenv-"))).toEqual({ key: null, source: null });
+	});
+
+	it("BUG_REVIEW: the .env reader is dotenv-complete — quotes, inline comments, CRLF, export, last assignment wins", () => {
+		const env = { XDG_CONFIG_HOME: tempDir("leanpi-xdg-"), HOME: tempDir("leanpi-home-") };
+		const config = fixtureConfig(tempDir("leanpi-envfile-"), "http://127.0.0.1:1/v1");
+		const keyIn = (content: string) => {
+			const cwd = tempDir("leanpi-envfile-");
+			writeFileSync(join(cwd, ".env"), content);
+			return resolveCredential(config, env, cwd);
+		};
+
+		// The reproductions the hand-rolled matcher got wrong: it kept the inline
+		// comment, took the first assignment, and only tolerated LF.
+		expect(keyIn('JEV_API_KEY="secret" # the project key\n')).toEqual({ key: "secret", source: "env file" });
+		expect(keyIn("JEV_API_KEY=first\nJEV_API_KEY=second\n")).toEqual({ key: "second", source: "env file" });
+		expect(keyIn('JEV_API_KEY="crlf-key"\r\n')).toEqual({ key: "crlf-key", source: "env file" });
+		expect(keyIn('export JEV_API_KEY="exported-key"\n')).toEqual({ key: "exported-key", source: "env file" });
+		// `parseEnv` keeps a BOM on the name, so the reader strips it first.
+		expect(keyIn('\uFEFFJEV_API_KEY="bom-key"\n')).toEqual({ key: "bom-key", source: "env file" });
+		// An empty assignment is "not configured", never the empty string.
+		expect(keyIn("JEV_API_KEY=\n")).toEqual({ key: null, source: null });
+		expect(process.env.JEV_API_KEY).not.toBe("secret");
+	});
+
+	it("AC-9 / FR-054: a key that lives only in the project's .env is redacted out of tool output", async () => {
+		const fileKey = "jev-file-key-2f9c41ab";
+		const agentBackend = await startStubBackend([
+			{ toolCalls: [{ name: "read", args: { path: ".env" } }] },
+			{ text: "done" },
+		]);
+		openBackends.push(agentBackend);
+		const { cwd, agentDir } = fixtureRepo();
+		gitInit(cwd);
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(agentBackend.baseUrl) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+		});
+		writeFileSync(join(cwd, ".env"), `JEV_API_KEY="${fileKey}" # the project's own key\n`);
+		gitCommitAll(cwd);
+		// Neither the environment nor the store holds it: the file is the only source,
+		// so the guard can only redact it if `activate()` hands it the resolved value.
+		const sessionEnv: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: tempDir("leanpi-xdg-"), HOME: tempDir("leanpi-home-") };
+		delete sessionEnv.JEV_API_KEY;
+
+		const session = await bootSession({ cwd, agentDir, env: sessionEnv });
+		await session.session.prompt("read the project's .env");
+
+		const messages = toolMessages(agentBackend);
+		expect(messages).not.toContain(fileKey);
+		expect(messages).toContain("«redacted:JEV_API_KEY»");
+		// The surrounding output survives: the redaction replaced a value, not a line.
+		expect(messages).toContain("the project's own key");
 		session.session.dispose();
 	});
 
@@ -155,7 +226,9 @@ describe("PRD-002 Phase 3 — credentials and /jev", () => {
 			},
 		});
 		await session.runTurn("complete on fallback");
-		const rows = readDecisions(cwd);
+		// PRD-005's disclosure logs its own row on every turn; this AC is about the
+		// fixture site's row.
+		const rows = readDecisions(cwd).filter((row) => row.siteId === "fixture.route");
 		expect(rows).toHaveLength(1);
 		expect(rows[0]!.fallbackUsed).toBe(true);
 		expect(rows[0]!.reason).toBe("no-credential");

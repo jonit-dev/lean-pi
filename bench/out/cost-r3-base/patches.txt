@@ -1,0 +1,32 @@
+express-send-transfer-encoding-etag: changed=['lib/response.js', 'test/res.send.js']
+
+### express-send-transfer-encoding-etag
+diff --git a/lib/response.js b/lib/response.js
+index bc672434..ccbab3f3 100644
+--- a/lib/response.js
++++ b/lib/response.js
+@@ -163,9 +163,11 @@ res.send = function send(body) {
+   var generateETag = !this.get('ETag') && typeof etagFn === 'function'
+ 
+   // Because Content-Length and Transfer-Encoding can't be present in the response headers together,
+-  // Content-Length should be added only if there is no Transfer-Encoding header
++  // Content-Length should be added only if there is no Transfer-Encoding header.
++  // The length is still computed when a Transfer-Encoding is present so an ETag can be generated.
++  var hasTransferEncoding = !!this.get('Transfer-Encoding')
+   var len;
+-  if (chunk !== undefined && !this.get('Transfer-Encoding')) {
++  if (chunk !== undefined) {
+     if (Buffer.isBuffer(chunk)) {
+       // get length of Buffer
+       len = chunk.length
+@@ -179,7 +181,9 @@ res.send = function send(body) {
+       len = chunk.length
+     }
+ 
+-    this.set('Content-Length', len);
++    if (!hasTransferEncoding) {
++      this.set('Content-Length', len);
++    }
+   }
+ 
+   // populate ETag

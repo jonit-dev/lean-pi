@@ -42,6 +42,13 @@ export interface GuardDeps {
 	/** Live state; a function keeps a mid-session `/permissions set` visible. */
 	state: PermissionState | (() => PermissionState);
 	env?: NodeJS.ProcessEnv;
+	/**
+	 * The credential LeanPi resolved for this session, redacted by value like an
+	 * env var. The project `.env` source is the reason this exists: it is never
+	 * copied into `process.env`, so the redactor cannot learn its value any other
+	 * way, and a command that prints the file would otherwise reach the model.
+	 */
+	credential?: () => { name: string; value: string | null };
 	/** `ask` resolution; defaults to Pi's confirmation prompt and denies without a UI. */
 	confirm?: (question: GuardQuestion, ctx: ExtensionContext) => Promise<boolean> | boolean;
 	/** Install an `execute` tool that spawns with the allowlisted environment (default true). */
@@ -97,6 +104,16 @@ export function installPermissionGuard(pi: ExtensionAPI, deps: GuardDeps): Permi
 	const env = deps.env ?? process.env;
 	const current = (): PermissionState => (typeof deps.state === "function" ? deps.state() : deps.state);
 	const policy = (): SecretsPolicy => current().permissions.secrets;
+	/**
+	 * The redaction set is the environment's secret-named values plus the key
+	 * LeanPi resolved, which for the `.env` source sits in no environment at all.
+	 * Resolved per result — like `state` above — so a mid-session `/jev setup` is
+	 * contained without a reboot.
+	 */
+	const resolvedSecrets = (): Array<[string, string | null]> => {
+		const credential = deps.credential?.();
+		return credential ? [[credential.name, credential.value]] : [];
+	};
 	/** Answers are cached per exact capability id, for this session only. */
 	const approvals = new Map<string, boolean>();
 	const audit: PermissionAuditRow[] = [];
@@ -155,7 +172,7 @@ export function installPermissionGuard(pi: ExtensionAPI, deps: GuardDeps): Permi
 	// Output path: redact by value, so a secret echoed by an unrelated command is
 	// caught too, and the artifact store receives the redacted text.
 	pi.on("tool_result", (event) => {
-		const secrets = secretValues(env, policy());
+		const secrets = secretValues(env, policy(), resolvedSecrets());
 		if (secrets.size === 0) return undefined;
 		let changed = false;
 		const content = event.content.map((part) => {

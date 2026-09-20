@@ -70,6 +70,13 @@ export interface WorkerFailure {
 	exitCode?: number | null;
 	sessionId?: string;
 	tokens?: number;
+	/**
+	 * The token breakdown the attempt managed to report before it failed. A failed
+	 * attempt has still spent money, and it is the failed ones retry economics
+	 * most needs priced correctly: without the breakdown the whole total lands in
+	 * the uncached-input bucket and is mispriced.
+	 */
+	usage?: InvocationUsage;
 }
 
 export type WorkerOutcome = WorkerResult | WorkerFailure;
@@ -84,6 +91,8 @@ export function isWorkerFailure(outcome: WorkerOutcome): outcome is WorkerFailur
  */
 export interface BackendInvocation {
 	backend: string;
+	/** The concrete model the call ran on, when the backend resolved one. */
+	model?: string;
 	billing: Billing;
 	quotaClass?: string;
 	catalogModelId?: string;
@@ -91,6 +100,20 @@ export interface BackendInvocation {
 	wallMs: number;
 	exitCode: number | null;
 	tokens?: number;
+	/** The token breakdown, when the backend can report one (PRD-015's pricing reads it). */
+	usage?: InvocationUsage;
+}
+
+/**
+ * Tokens one backend call consumed, as the backend counted them. The coarse
+ * `BackendInvocation.tokens` stays for the billing rollup; a backend that knows
+ * the breakdown reports it here so the run's cost is priced per bucket.
+ */
+export interface InvocationUsage {
+	inputTokens?: number;
+	cachedInputTokens?: number;
+	outputTokens?: number;
+	reasoningTokens?: number;
 }
 
 /** Per-billing rollup; PRD-015's totals and AC-2's separation read this. */

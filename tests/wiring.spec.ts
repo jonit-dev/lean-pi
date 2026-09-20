@@ -13,6 +13,7 @@ import {
 	clearLanes,
 	compileTask,
 	itemsOf,
+	loadConfig,
 	readRuns,
 	registerCapabilityProvider,
 	scoutTask,
@@ -21,7 +22,7 @@ import {
 import { registerLane, runTurn } from "../src/commands/session.js";
 import { clearRoutePins, setRoutePins } from "../src/compiler/pins.js";
 import { laneLoads, resetLaneLoads } from "../src/prd/dispatch.js";
-import { registerTurnLanes } from "../src/commands/turn-lanes.js";
+import { registerTurnLanes, registerTurnLanesIfOwned } from "../src/commands/turn-lanes.js";
 import { fakeExec, VERIFY_COMMANDS } from "./executor/helpers.js";
 import { artifactStoreFor, prdConfig, stagedPrd } from "./prd/helpers.js";
 import { bootSession, fixtureRepo, gitCommitAll, gitInit, nativeBackend, tempDir, writeConfig } from "./helpers/fixtures.js";
@@ -42,6 +43,44 @@ async function booted(steps: Parameters<typeof startStubBackend>[0] = [{ text: "
 	writeUserDefault("edit", "allow", env);
 	const session = await bootSession({ cwd, agentDir, env });
 	return { backend, cwd, session };
+}
+
+/**
+ * A mixed configuration (ROADMAP §23): the role a turn is invoked with is
+ * native, the class the compiler can ask for is an external harness. Pi's own
+ * loop has a provider for the first and none for the second — a harness model is
+ * spawned, never registered with the model runtime — so `serveClass` is the one
+ * variable the two specs below flip: whether the class's backend is reachable.
+ */
+function mixedRoute({ serveClass }: { serveClass: boolean }) {
+	const { cwd } = fixtureRepo();
+	writeConfig(cwd, {
+		backends: {
+			local: nativeBackend("http://127.0.0.1:9/v1", { model: "cheap-model" }),
+			harness: { type: "external_harness", vendor: "claude", command: "claude" },
+		},
+		models: {
+			balanced: { backend: "local", model: "cheap-model" },
+			strong: { backend: "harness", model: "strong-model" },
+		},
+	});
+	const config = loadConfig(cwd);
+	const ran: { model: string | null } = { model: null };
+	const session = {
+		setModel: async (selected: { id?: string }) => {
+			ran.model = String(selected?.id ?? "");
+		},
+		setThinkingLevel: () => undefined,
+		prompt: async () => undefined,
+		getActiveToolNames: () => [],
+		setActiveToolsByName: () => undefined,
+	};
+	const models: Record<string, { id: string; provider: string }> = {
+		local: { id: "cheap-model", provider: "local" },
+		harness: { id: "strong-model", provider: "harness" },
+	};
+	const runtime = { getModel: (backend: string) => (backend === "harness" && !serveClass ? undefined : models[backend]) };
+	return { config, cwd, ran, session, runtime };
 }
 
 describe("activation wiring", () => {
@@ -118,6 +157,145 @@ describe("activation wiring", () => {
 			await session.runTurn("show me the full output");
 			expect(JSON.stringify(backend.requests[3]!.body)).toContain("abcdefghijklmnopqrstuvwxyz0123456789");
 		} finally {
+			session.session.dispose();
+			await backend.close();
+		}
+	});
+
+	it("runs the model and the thinking budget the compiled route decided (PRD-004 §14)", async () => {
+		// The spend decision on a native backend. Pi's loop is the executor, so
+		// nothing else carries the class: the session's own model and level are what
+		// the classification changes, and without this wiring JEV decides nothing
+		// that costs money.
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: {
+				cheap: nativeBackend("http://127.0.0.1:9/v1", { model: "cheap-model" }),
+				strong: nativeBackend("http://127.0.0.1:9/v1", { model: "strong-model" }),
+			},
+			models: {
+				quick: { backend: "cheap", model: "cheap-model" },
+				balanced: { backend: "strong", model: "strong-model" },
+			},
+		});
+		const config = loadConfig(cwd);
+		const session = await bootSession({ cwd, agentDir, config });
+		const ran: { model: string | null; thinking: string | null } = { model: null, thinking: null };
+		const model = { id: "cheap-model", provider: "cheap" };
+		const stub = {
+			setModel: async (selected: { id?: string }) => {
+				ran.model = String(selected?.id ?? "");
+			},
+			setThinkingLevel: (level: string) => {
+				ran.thinking = level;
+			},
+			prompt: async () => undefined,
+			getActiveToolNames: () => [],
+			setActiveToolsByName: () => undefined,
+			modelRuntime: { getModel: () => model },
+		};
+		clearLanes();
+		setRoutePins({ executor_class: "quick" }, "wiring-spec");
+		try {
+			// A native config: the compiler registers, the executor lane does not.
+			expect(registerTurnLanesIfOwned({ cwd, config })).toBe(false);
+			const context = await runTurn(
+				{ text: "change the button text" },
+				{ config, cwd, session: stub as never, runtime: { getModel: () => model } as never },
+			);
+			expect(context.contract!.routing.executor_class).toBe("quick");
+			// Both decisions are the compiled ones, not the session's defaults.
+			expect(ran.model).toBe("cheap-model");
+			expect(context.modelRef.model).toBe("cheap-model");
+			expect(ran.thinking).toBe(context.contract!.reasoning.effort);
+		} finally {
+			clearRoutePins();
+			clearLanes();
+			session.session.dispose();
+		}
+	});
+
+	it("keeps the invoked role when the compiled class needs a backend the loop cannot serve (PRD-004 §14)", async () => {
+		// The compiled class is a request, not an order: on a mixed configuration the
+		// class resolves to the harness, `getModel` finds nothing for it, and the turn
+		// must run the role it was invoked with instead of failing outright.
+		const { config, cwd, ran, session, runtime } = mixedRoute({ serveClass: false });
+		clearLanes();
+		setRoutePins({ executor_class: "strong" }, "wiring-spec");
+		try {
+			expect(registerTurnLanesIfOwned({ cwd, config })).toBe(false);
+			const context = await runTurn(
+				{ text: "rewrite the scheduler" },
+				{ config, cwd, session: session as never, runtime: runtime as never },
+			);
+			expect(context.contract!.routing.executor_class).toBe("strong");
+			expect(context.modelRef).toEqual({ backend: "local", model: "cheap-model", type: "native" });
+			expect(ran.model).toBe("cheap-model");
+		} finally {
+			clearRoutePins();
+			clearLanes();
+		}
+	});
+
+	it("adopts the compiled class when the runtime can serve it (PRD-004 §14)", async () => {
+		// The control for the spec above: same configuration, same pinned class, and
+		// the only difference is that the runtime reaches the class's backend.
+		const { config, cwd, ran, session, runtime } = mixedRoute({ serveClass: true });
+		clearLanes();
+		setRoutePins({ executor_class: "strong" }, "wiring-spec");
+		try {
+			expect(registerTurnLanesIfOwned({ cwd, config })).toBe(false);
+			const context = await runTurn(
+				{ text: "rewrite the scheduler" },
+				{ config, cwd, session: session as never, runtime: runtime as never },
+			);
+			expect(context.modelRef.model).toBe("strong-model");
+			expect(ran.model).toBe("strong-model");
+		} finally {
+			clearRoutePins();
+			clearLanes();
+		}
+	});
+
+	it("still fails a turn whose invoked role has no model (PRD-004 §14)", async () => {
+		// The counterpart to the refusal: an unconfigured role is a configuration
+		// error, and the fallback must not turn it into a silent wrong-model run. A
+		// caller that named the class itself asked for that role, so it stands.
+		const { config, cwd, ran, session, runtime } = mixedRoute({ serveClass: false });
+		clearLanes();
+		registerTurnLanesIfOwned({ cwd, config });
+		try {
+			await expect(
+				runTurn({ text: "rewrite the scheduler", role: "strong" }, { config, cwd, session: session as never, runtime: runtime as never }),
+			).rejects.toThrow();
+			expect(ran.model).toBeNull();
+		} finally {
+			clearLanes();
+		}
+	});
+
+	it("runs the compiled class on the interactive loop's model (PRD-004 §14)", async () => {
+		// The user's own path: Pi's `before_agent_start` runs the lanes, and the model
+		// the request carries is the class's — not the session default.
+		const backend = await startStubBackend([{ text: "ok" }, { text: "ok" }]);
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: {
+				cheap: nativeBackend(backend.baseUrl, { model: "cheap-model" }),
+				strong: nativeBackend(backend.baseUrl, { model: "strong-model" }),
+			},
+			models: {
+				quick: { backend: "cheap", model: "cheap-model" },
+				balanced: { backend: "strong", model: "strong-model" },
+			},
+		});
+		const session = await bootSession({ cwd, agentDir });
+		try {
+			setRoutePins({ executor_class: "quick" }, "wiring-spec");
+			await session.session.prompt("rename the helper");
+			expect(backend.requests[0]?.model).toBe("cheap-model");
+		} finally {
+			clearRoutePins();
 			session.session.dispose();
 			await backend.close();
 		}

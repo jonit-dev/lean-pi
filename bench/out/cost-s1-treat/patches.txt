@@ -1,0 +1,200 @@
+express-send-transfer-encoding-etag: changed=['lib/response.js', 'test/res.send.js', '.leanpi/', 'pnpm-lock.yaml']
+flask-ipv6-server-name-parsing: changed=['src/flask/testing.py', 'tests/test_basic.py', 'tests/test_testing.py', '.leanpi/']
+preact-suspense-hook-state-loss: changed=['compat/src/suspense.js', 'compat/test/browser/suspense-hydration.test.jsx', 'compat/test/browser/suspense.test.jsx', 'hooks/src/index.js', 'mangle.json', '.leanpi/']
+slugify-counter-duplicate-slug: changed=['index.js', 'test.js', '.leanpi/']
+
+### express-send-transfer-encoding-etag
+diff --git a/lib/response.js b/lib/response.js
+index bc672434..9395ace8 100644
+--- a/lib/response.js
++++ b/lib/response.js
+@@ -184,8 +184,11 @@ res.send = function send(body) {
+ 
+   // populate ETag
+   var etag;
+-  if (generateETag && len !== undefined) {
+-    if ((etag = etagFn(chunk, encoding))) {
++  if (generateETag && chunk !== undefined) {
++    // ETag is computed from the body bytes; a Transfer-Encoding forbids
++    // Content-Length but must not suppress the ETag.
++    var entity = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
++    if ((etag = etagFn(entity))) {
+       this.set('ETag', etag);
+     }
+   }
+
+### flask-ipv6-server-name-parsing
+diff --git a/src/flask/testing.py b/src/flask/testing.py
+index 8d058ca0..7f75ab43 100644
+--- a/src/flask/testing.py
++++ b/src/flask/testing.py
+@@ -85,6 +85,27 @@ class EnvironBuilder(werkzeug.test.EnvironBuilder):
+         self.app = app
+         super().__init__(path, base_url, *args, **kwargs)
+ 
++    @property
++    def server_name(self) -> str:
++        """The server name. Unlike Werkzeug's implementation, this parses
++        bracketed IPv6 hosts such as ``[::1]:5000`` correctly.
++        """
++        return urlsplit(f"//{self.host}").hostname or ""
++
++    @property
++    def server_port(self) -> int:
++        """The server port. Unlike Werkzeug's implementation, this parses
++        bracketed IPv6 hosts such as ``[::1]:5000`` correctly.
++        """
++        port = urlsplit(f"//{self.host}").port
++
++        if port is not None:
++            return port
++
++        if self.url_scheme == "https":
++            return 443
++        return 80
++
+     def json_dumps(self, obj: t.Any, **kwargs: t.Any) -> str:
+         """Serialize ``obj`` to a JSON-formatted string.
+ 
+diff --git a/tests/test_testing.py b/tests/test_testing.py
+index 4c014f2e..86b522af 100644
+--- a/tests/test_testing.py
++++ b/tests/test_testing.py
+@@ -185,6 +185,21 @@ def test_session_transaction_ipv6(app):
+     assert client.get("/", base_url=base_url).text == "42"
+ 
+ 
++def test_environ_ipv6_server_name(app, client):
++    app.config["SERVER_NAME"] = "[::1]:5000"
++
++    @app.route("/")
++    def index():
++        return flask.request.host
++
++    builder = EnvironBuilder(app, "/")
++    assert builder.server_name == "::1"
++    assert builder.server_port == 5000
++    assert builder.get_environ()["SERVER_NAME"] == "::1"
++    assert builder.get_environ()["SERVER_PORT"] == "5000"
++    assert client.get("/").text == "[::1]:5000"
++
++
+ def test_session_transactions_no_null_sessions():
+     app = flask.Flask(__name__)
+ 
+
+### preact-suspense-hook-state-loss
+diff --git a/compat/src/suspense.js b/compat/src/suspense.js
+index 15c44f02..5f922c79 100644
+--- a/compat/src/suspense.js
++++ b/compat/src/suspense.js
+@@ -17,6 +17,10 @@ function initSuspenseHooks() {
+ 
+ 			while ((vnode = vnode._parent)) {
+ 				if ((component = vnode._component) && component._childDidSuspend) {
++					// A component that suspends before ever committing has no state
++					// worth keeping; mounted ones keep their hooks while parked.
++					if (oldVNode && !oldVNode._component)
++						newVNode._component.__hooks = UNDEFINED;
+ 					// Don't call oldCatchError if we found a Suspense
+ 					return component._childDidSuspend(error, newVNode);
+ 				}
+@@ -40,12 +44,20 @@ function initSuspenseHooks() {
+ 
+ function detachedClone(vnode, detachedParent, parentDom) {
+ 	if (vnode) {
+-		if (vnode._component && vnode._component.__hooks) {
+-			vnode._component.__hooks._list.forEach(effect => {
+-				if (typeof effect._cleanup == 'function') effect._cleanup();
++		const hooks = vnode._component && vnode._component.__hooks;
++		if (hooks) {
++			hooks._list.forEach(effect => {
++				// Only effects carry `_passive`; clearing `_args` makes them run
++				// again when the tree is revealed, memo/ref state stays intact.
++				if (effect._passive != null) {
++					if (typeof effect._cleanup == 'function') effect._cleanup();
++					effect._cleanup = effect._args = UNDEFINED;
++				}
+ 			});
+-
+-			vnode._component.__hooks = null;
++			// Drop effects queued by the aborted render; `options._render` swaps in
++			// a fresh `_pendingEffects` array before anything is pushed again, so
++			// sharing one empty array here is safe.
++			hooks._pendingEffects = vnode._component._renderCallbacks = [];
+ 		}
+ 
+ 		vnode = assign({ constructor: UNDEFINED }, vnode);
+diff --git a/hooks/src/index.js b/hooks/src/index.js
+index 7e01bc76..f71c60c5 100644
+--- a/hooks/src/index.js
++++ b/hooks/src/index.js
+@@ -299,6 +299,7 @@ export function useLayoutEffect(callback, args) {
+ 	/** @type {import('./internal').EffectHookState} */
+ 	const state = getHookState(currentIndex++, 4);
+ 	if (!options._skipEffects && argsChanged(state._args, args)) {
++		state._passive = false;
+ 		state._value = callback;
+ 		state._pendingArgs = args;
+ 
+diff --git a/mangle.json b/mangle.json
+index 2e8515a0..5193d8cb 100644
+--- a/mangle.json
++++ b/mangle.json
+@@ -32,6 +32,7 @@
+       "$_hydrationMismatch": "__m",
+       "$_list": "__",
+       "$_pendingEffects": "__h",
++      "$_passive": "__P",
+       "$_value": "__",
+       "$_nextValue": "__N",
+       "$_original": "__v",
+
+### slugify-counter-duplicate-slug
+diff --git a/index.js b/index.js
+index 7fb8db5..5c1277f 100644
+--- a/index.js
++++ b/index.js
+@@ -125,6 +125,7 @@ export default function slugify(string, options) {
+ 
+ export function slugifyWithCounter() {
+ 	const occurrences = new Map();
++	const emitted = new Set();
+ 
+ 	const countable = (string, options) => {
+ 		string = slugify(string, options);
+@@ -137,16 +138,33 @@ export function slugifyWithCounter() {
+ 		const numberless = occurrences.get(removeCounterSuffix(stringLower)) || 0;
+ 		const counter = occurrences.get(stringLower);
+ 		occurrences.set(stringLower, typeof counter === 'number' ? counter + 1 : 1);
+-		const newCounter = occurrences.get(stringLower) || 2;
++		let newCounter = occurrences.get(stringLower) || 2;
+ 		if (newCounter >= 2 || numberless > 2) {
++			// Keep bumping until the emitted slug is unique, as an input can itself
++			// collide with a counter suffix handed out for a different input.
++			while (emitted.has(`${stringLower}-${newCounter}`)) {
++				newCounter++;
++			}
++
++			string = `${string}-${newCounter}`;
++		} else if (emitted.has(stringLower)) {
++			// A bare slug can still be taken by an earlier suffixed emission.
++			newCounter = 2;
++			while (emitted.has(`${stringLower}-${newCounter}`)) {
++				newCounter++;
++			}
++
+ 			string = `${string}-${newCounter}`;
+ 		}
+ 
++		emitted.add(string.toLowerCase());
++
+ 		return string;
+ 	};
+ 
+ 	countable.reset = () => {
+ 		occurrences.clear();
++		emitted.clear();
+ 	};
+ 
+ 	return countable;

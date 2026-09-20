@@ -11,6 +11,8 @@ import { compileRecordOf, compileTask } from "../compiler/index.js";
 import type { JevClient } from "../jev/client.js";
 import type { LeanPiConfig, ModelRole } from "../core/types.js";
 import { runExecutor, type ExecutorDeps } from "../executor/index.js";
+import { selectSkills } from "../capabilities/skill-select.js";
+import type { SkillControl, SkillRecord } from "../capabilities/skills.js";
 import { createFileSearch } from "../exploration/gather.js";
 import { explore, type ContextSelection } from "../exploration/governor.js";
 import { createGoalStore, evaluateGoal, prdGoalSource } from "../goal/index.js";
@@ -21,7 +23,21 @@ import { criteriaOf } from "../proof/packet.js";
 import { scoutTask } from "../scout/index.js";
 import { itemsOf, remainingWork, type TodoCarrier } from "../todo/index.js";
 import { workspaceHash } from "../verify/hash.js";
-import { registerLane, type Lane, type TurnContext } from "./session.js";
+import { registerOwnedLanes, type Lane, type TurnContext } from "./session.js";
+import { feedInvocation, type RunCollector } from "../telemetry/index.js";
+
+/**
+ * The accumulator the registered lanes feed while a run is in flight. The lanes
+ * are registered once at activation and the collector is per run, so the run's
+ * owner sets this for the duration: an unset holder means the lanes bill nobody
+ * (a caller that has no record to write, e.g. the bench's own attempt rows).
+ */
+let currentCollector: RunCollector | undefined;
+
+/** Set for the duration of one run; `undefined` once its record is written. */
+export function setLaneCollector(collector: RunCollector | undefined): void {
+	currentCollector = collector;
+}
 
 export interface TurnLaneDeps {
 	cwd: string;
@@ -34,6 +50,8 @@ export interface TurnLaneDeps {
 	jev?: Pick<JevClient, "ask" | "getMode" | "fallbackCount">;
 	/** PRD-014's store: the executor writes diff and diagnostic artifacts against it. */
 	artifacts?: ExecutorDeps["artifacts"];
+	/** PRD-005's registry and enable/pin state, for the disclosure a native turn runs itself. */
+	skills?: { records: () => SkillRecord[]; control: SkillControl };
 	/** PRD-025's list, the "useful work remains" input PRD-013's boundary reads. */
 	todos?: TodoCarrier;
 	/** PRD-015's run identity, for the goal boundary's cost read. */
@@ -58,6 +76,41 @@ export function compilerLane(deps: TurnLaneDeps): Lane {
 			// the packet the compiler already built rather than walking the repo twice.
 			context.packet = packet;
 			context.contract = await compileTask(turn.text, packet);
+		},
+	};
+}
+
+/**
+ * PRD-005's disclosure on a backend LeanPi does not own the loop for.
+ *
+ * The selection is registered as a capability provider, which only `compileTask`
+ * consumes — so on a native backend, where no contract is compiled, it never
+ * ran and Pi disclosed its entire library instead. This lane runs the same JEV
+ * pipeline against the turn's text and puts the result on `context.skills`,
+ * which is the channel `runLanes` already assembles into the prompt. JEV
+ * answering "no skill required" — and JEV being unreachable, which is what the
+ * documented fallback is for — discloses nothing.
+ */
+export function skillLane(deps: TurnLaneDeps): Lane {
+	return {
+		name: "skills",
+		async run(turn, context) {
+			const skills = deps.skills;
+			if (!skills) return;
+			const selection = await selectSkills({
+				records: skills.records(),
+				control: skills.control,
+				request: turn.text,
+				config: deps.config,
+				...(deps.jev ? { client: deps.jev } : {}),
+				// Pointer, not body. A body belongs in the one-shot executor prompt the
+				// contract path builds; here it would sit in the cacheable prefix of
+				// every provider call Pi's loop makes. Measured on the validated suite:
+				// three bodies cost about as much as Pi's whole 199-skill catalog did.
+				// The name, what it is for and where to read it is the affordance.
+				loadBody: (record) => `${record.description}\nFull skill: ${record.source.path}`,
+			});
+			context.skills = selection.skills;
 		},
 	};
 }
@@ -87,8 +140,12 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 						hashWorkspace: () => workspaceHash(deps.cwd),
 					})) ?? undefined;
 			}
+			// PRD-015's accumulator, when the run's owner set one: every backend
+			// invocation this executor makes is billed into the same record, so a
+			// compiled run's `/cost` is what the run actually spent.
+			const collector = currentCollector;
 			context.executor = await runExecutor(contract, {
-				registry: new BackendRegistry(deps.config),
+				registry: new BackendRegistry(deps.config, collector ? { onInvocation: (record) => feedInvocation(collector, record) } : {}),
 				cwd: deps.cwd,
 				config: deps.config,
 				...(deps.jev ? { jev: deps.jev } : {}),
@@ -205,13 +262,20 @@ export function ownsExecutionLoop(config: LeanPiConfig): boolean {
 
 /** Registers the chain when this configuration puts LeanPi in charge of the loop. */
 export function registerTurnLanes(deps: TurnLaneDeps): void {
-	registerLane(compilerLane(deps));
-	registerLane(executorLane(deps));
+	registerOwnedLanes([compilerLane(deps), executorLane(deps)]);
 }
 
-/** What `activate()` calls: the chain, but only when LeanPi owns the loop. */
+/**
+ * What `activate()` calls. The compiler always runs: who executes is a separate
+ * question from who decides. The compiler is what classifies the task (JEV), and
+ * its route is what picks the model class and the reasoning budget the turn is
+ * billed for — with Pi's own loop as the executor, `runTurn` applies those
+ * decisions to the session, so a native backend costs what the classification
+ * says it should. Only the executor lane is conditional, because a lane that ran
+ * a second worker on Pi's own loop would run the task twice.
+ */
 export function registerTurnLanesIfOwned(deps: TurnLaneDeps): boolean {
-	if (!ownsExecutionLoop(deps.config)) return false;
-	registerTurnLanes(deps);
-	return true;
+	const owned = ownsExecutionLoop(deps.config);
+	registerOwnedLanes(owned ? [compilerLane(deps), executorLane(deps)] : [compilerLane(deps)]);
+	return owned;
 }

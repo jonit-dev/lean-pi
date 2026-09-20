@@ -8,7 +8,7 @@
  *
  * `export default activate` is what `pi --extension ./dist/index.js` loads.
  */
-import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -33,8 +33,17 @@ import { registerCostCommand } from "./telemetry/index.js";
 import { registerMcpCommand, registerMcpDisclosure } from "./mcp/index.js";
 import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS } from "./commands/index.js";
 import { registerRuntimeVerifiers } from "./runtime/index.js";
-import { registerTurnLanesIfOwned } from "./commands/turn-lanes.js";
-import { createRunCollector, emitRunTelemetry, resolveCostConfig, runTurnWithTelemetry, type RunVerdict } from "./telemetry/index.js";
+import { ownsExecutionLoop, registerTurnLanesIfOwned, setLaneCollector } from "./commands/turn-lanes.js";
+import type { ExecutionContract } from "./compiler/contract.js";
+import {
+	callsFromMessages,
+	createRunCollector,
+	emitRunTelemetry,
+	resolveCostConfig,
+	runTurnWithTelemetry,
+	type RunCollector,
+	type RunVerdict,
+} from "./telemetry/index.js";
 import { createArtifactStore, type ArtifactStore } from "./context/artifacts.js";
 import type { WorkingStateSources } from "./context/working-state.js";
 import { reduceToolOutput } from "./rtk/index.js";
@@ -49,7 +58,7 @@ import { aggregate } from "./verify/aggregate.js";
 import type { EvidenceRecord } from "./verify/evidence.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultSkillRoots, scanSkills, createSkillControl } from "./capabilities/skills.js";
+import { defaultSkillRoots, scanSkills, createSkillControl, type SkillRecord } from "./capabilities/skills.js";
 import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
@@ -120,6 +129,12 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig): void {
 		// `toPiConfigValue()` reconciles that rule with LeanPi's env-name syntax.
 		const headers = backend.headers;
 		const declaredHeaders = headers !== null && typeof headers === "object" && !Array.isArray(headers) ? headers : null;
+		// Pi detects a vendor's dialect from the provider id and base URL, and this
+		// provider is registered under the operator's own name for it, so an
+		// endpoint that does not speak OpenAI's `reasoning_effort` has to say so.
+		// Without the declaration Pi sends no thinking control at all and the model
+		// thinks at the server's default on every call.
+		const compat = backend.compat !== null && typeof backend.compat === "object" && !Array.isArray(backend.compat) ? (backend.compat as ProviderModelConfig["compat"]) : undefined;
 		pi.registerProvider(name, {
 			name: backend.name ?? name,
 			baseUrl: backend.baseUrl,
@@ -132,6 +147,7 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig): void {
 				id,
 				name: id,
 				reasoning: backend.reasoning === true,
+				...(compat === undefined ? {} : { compat }),
 				input: (backend.input as ("text" | "image")[] | undefined) ?? ["text"],
 				cost: (backend.cost as { input: number; output: number; cacheRead: number; cacheWrite: number } | undefined) ?? {
 					input: 0,
@@ -322,6 +338,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		cwd,
 		state: permissions,
 		env,
+		// The same resolution the JEV client uses, read at the moment a result
+		// arrives: a key that lives only in the project's `.env` never enters
+		// `process.env`, so this is the redactor's only sight of its value.
+		credential: () => ({ name: "JEV_API_KEY", value: resolveCredential(config, env, cwd).key }),
 		onOutput: (redacted) => {
 			try {
 				artifacts.capture({ output: redacted, kind: "tool_output", sourceRef: "guard" });
@@ -392,7 +412,19 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	registerCapabilityProvider({
 		kind: "skills",
 		supply: async (draft) => {
-			const selection = await selectSkills({ records: scan(), control: skillControl, request: draft.task.user_request, config, client: jev });
+			const selection = await selectSkills({
+				records: scan(),
+				control: skillControl,
+				request: draft.task.user_request,
+				config,
+				client: jev,
+				// A body belongs in the one-shot executor prompt the compiled path
+				// builds. With Pi's own loop as the executor the disclosed block sits
+				// in the cacheable prefix of every provider call, and three bodies
+				// there cost about what Pi's whole skill catalog did — so that path
+				// gets the pointer: name, what it is for, where to read it.
+				...(ownsExecutionLoop(config) ? {} : { loadBody: (record: SkillRecord) => `${record.description}\nFull skill: ${record.source.path}` }),
+			});
 			return selection.skills;
 		},
 	});
@@ -425,6 +457,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	registerReviewCommand(commands, reviewDeps);
 	registerPrdCommandsLazily(commands, { cwd, config, artifactStore: artifacts, jev });
 
+	// The run that is still open: a compiled turn's collector and context, held from
+	// `before_agent_start` until `agent_end` reports what the loop spent.
+	let pendingRun: { collector: RunCollector; context: TurnContext } | undefined;
+
 	// The per-turn fan-in: lanes write the turn's compiled state onto the context,
 	// the entry points hand it back here, and the command surfaces, the working
 	// state and the todo gate read it. Nothing else stores per-turn state here.
@@ -444,7 +480,15 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// The compiler → executor chain (PRD-004 → PRD-007): the compiler lane puts a
 	// contract on the turn context and the executor lane is its only consumer.
-	registerTurnLanesIfOwned({ cwd, config, jev, artifacts, todos: todoCarrier, sessionId: manager.getSessionId() });
+	registerTurnLanesIfOwned({
+		cwd,
+		config,
+		jev,
+		artifacts,
+		todos: todoCarrier,
+		sessionId: manager.getSessionId(),
+		skills: { records: scan, control: skillControl },
+	});
 
 	const declinedFor = credentialsPath(env);
 	registerJevCommands(commands, {
@@ -458,7 +502,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// first-class path that leaves the harness working on deterministic fallback.
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		if (resolveCredential(config, env).key !== null) return;
+		if (resolveCredential(config, env, cwd).key !== null) return;
 		if (declined.has(declinedFor)) return;
 		const key = await ctx.ui.input("LeanPi needs a JEV API key (leave empty to use deterministic fallback):");
 		if (!key) {
@@ -482,8 +526,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// context is handed to the same fan-in the programmatic path uses, and a turn
 	// that compiled a contract writes its §52 record here: this path owns no
 	// session object, so the verdict is read off the executor's own outcome.
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (isTurnInFlight()) return;
+		// PRD-015's accumulator is created before the lanes run, not after: the
+		// executor lane's backend calls are what the record has to carry, and they
+		// are spent while the lane runs.
+		const collector = createRunCollector({ taskId: event.prompt.slice(0, 64), sessionId: manager.getSessionId() });
+		setLaneCollector(collector);
 		const context = await runLanes(
 			{ text: event.prompt },
 			{
@@ -499,13 +548,43 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			},
 		);
 		observeTurn(context);
-		if (context.contract) {
-			emitRunTelemetry(createRunCollector({ taskId: event.prompt.slice(0, 64), sessionId: manager.getSessionId() }), context.contract, verdictOf(context), {
-				cwd,
-				cost: resolveCostConfig(config),
-				...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
-			});
+		// The compiled route is this turn's spend decision here too, and here Pi's
+		// own loop is the executor: the session's model and thinking level are the
+		// only things the classification can change. `setModel` is skipped when Pi
+		// has no authenticated model for the class (an external-harness role), and
+		// the level is clamped to the model's own capabilities by the host.
+		if (context.contract && !ownsExecutionLoop(config)) {
+			const ref = resolveRole(config, context.contract.routing.executor_class);
+			const model = ctx.modelRegistry.find(ref.backend, ref.model);
+			if (model) await pi.setModel(model);
+			pi.setThinkingLevel(context.contract.reasoning.effort);
 		}
+		if (context.contract) {
+			// The record is written at `agent_end`, not here: with Pi's own loop as
+			// the executor this handler returns *before* the loop spends anything, so
+			// emitting now would write a zeroed row for every native turn. The holder
+			// keeps the run open until the loop reports what it used.
+			pendingRun = { collector, context };
+		} else {
+			setLaneCollector(undefined);
+		}
+	});
+
+	// PRD-015's sink for the path Pi itself drives: one call per assistant message
+	// the loop produced, plus the tool calls it made, then exactly one record.
+	pi.on("agent_end", (event) => {
+		const run = pendingRun;
+		pendingRun = undefined;
+		setLaneCollector(undefined);
+		if (!run) return;
+		const spend = callsFromMessages(event.messages, run.context.modelRef);
+		for (const call of spend.calls) run.collector.add(call);
+		run.collector.noteToolCall(spend.toolCalls);
+		emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdictOf(run.context), {
+			cwd,
+			cost: resolveCostConfig(config),
+			...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
+		});
 	});
 
 	return {
@@ -569,6 +648,14 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 		cwd,
 		agentDir: options.agentDir,
 		resourceLoaderOptions: {
+			// LeanPi owns skill disclosure (PRD-005): the contract's skill slots are
+			// filled by `selectSkills`, so Pi's blanket `<available_skills>` block is
+			// duplicate surface — and it is not small. Measured on this machine it
+			// was 82,343 bytes of an 87,932-byte system prompt (~20.6k tokens), in
+			// every request of every turn. The same reasoning as `noTools:
+			// "builtin"` below: LeanPi supplies the surface, so Pi should not also
+			// supply its own.
+			skillsOverride: (base) => ({ skills: [], diagnostics: base.diagnostics }),
 			extensionFactories: [
 				(pi: ExtensionAPI) => {
 					activation = activate(pi, {
@@ -632,6 +719,10 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 		leanpi: { name: LEANPI_EXTENSION_NAME, version: LEANPI_VERSION },
 		runTurn: (turn) => {
 			const input = typeof turn === "string" ? { text: turn } : turn;
+			// One accumulator per run, set before the lanes execute so the executor
+			// lane's invocations land in the same record this call emits.
+			const collector = createRunCollector({ taskId: input.text.slice(0, 64), sessionId });
+			setLaneCollector(collector);
 			return runTurnWithTelemetry(
 				input,
 				{
@@ -644,11 +735,11 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 					onContext: (context) => loaded.observeTurn(context),
 				},
 				{
-					collector: createRunCollector({ taskId: input.text.slice(0, 64), sessionId }),
+					collector,
 					verdict: (context) => verdictOf(context),
 					cost: resolveCostConfig(loaded.config),
 				},
-			);
+			).finally(() => setLaneCollector(undefined));
 		},
 		modelFor(role) {
 			const roleRef = resolveRole(loaded.config, role);
@@ -672,6 +763,7 @@ export {
 	getActivePrefix,
 	listLanes,
 	registerLane,
+	registerOwnedLanes,
 	runLanes,
 	runTurn,
 	setActivePrefix,

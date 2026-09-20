@@ -22,6 +22,36 @@ export interface StubJevReply {
 
 export type StubJevResponder = (body: Record<string, unknown>, requestIndex: number) => StubJevReply;
 
+/**
+ * Requests other than PRD-005's skill disclosure.
+ *
+ * Every native turn now runs the disclosure (it is what narrows the skill
+ * library instead of Pi enumerating all of it), so a spec about one other site
+ * counts that site's requests, not every request the turn made. The disclosure
+ * is recognised by its question ids: `any_skill`, `relevance:<name>`,
+ * `fit:<name>`.
+ */
+export function withoutSkillDisclosure(requests: StubJevRequest[]): StubJevRequest[] {
+	return requests.filter((request) => {
+		const ids = Object.keys((request.body.questions ?? {}) as Record<string, unknown>);
+		return !ids.some((id) => id === "any_skill" || id.startsWith("relevance:") || id.startsWith("fit:"));
+	});
+}
+
+/**
+ * The requests that asked one question id.
+ *
+ * Every native turn now runs the compiler, so a spec that used to count "the
+ * requests this turn made" is counting the compiler's sites too. The question id
+ * is what identifies the asker: a fixture site's ids are its own.
+ */
+export function requestsForQuestion(requests: StubJevRequest[], questionId: string): StubJevRequest[] {
+	return requests.filter((request) => {
+		const ids = Object.keys((request.body.questions ?? {}) as Record<string, unknown>);
+		return ids.includes(questionId);
+	});
+}
+
 export interface StubJev {
 	url: string;
 	requests: StubJevRequest[];

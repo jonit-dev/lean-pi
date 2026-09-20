@@ -87,6 +87,27 @@ describe("PRD-004 Phase 3 — routing matrix", () => {
 		expect(matrixDefault(false, "LOW", "R2").reviewer_class).toBe("review_quick");
 	});
 
+	it("bills the reasoning gradation the class decided", async () => {
+		// The classes carry Pi's own ladder. On the measured endpoint `low` and
+		// `high` are the same wire request, so this is a *gradation* claim for the
+		// endpoints that read one — the decision with money in it on a
+		// binary-thinking endpoint is the operator's `off`, which caps this (see
+		// `cappedThinkingLevel`).
+		const efforts: Array<[ExecutionComplexity, string, string]> = [
+			["LOW", "quick", "low"],
+			["MEDIUM", "balanced", "medium"],
+			["HIGH", "strong", "high"],
+		];
+		for (const [complexity, executor, effort] of efforts) {
+			active = await harness([answerScript(scriptFor(false, complexity, "R0"))]);
+			const contract = await compileTask(REQUESTS[complexity]!, PACKETS[complexity]);
+			expect(contract.routing.executor_class, complexity).toBe(executor);
+			expect(contract.reasoning.effort, complexity).toBe(effort);
+			await active.close();
+			active = undefined;
+		}
+	});
+
 	it("AC-6: a deviation is applied and recorded, or absent when nothing deviates", async () => {
 		active = await harness([answerScript(scriptFor(false, "LOW", "R0"))]);
 		const plain = await compileTask(REQUESTS.LOW, PACKETS.LOW);

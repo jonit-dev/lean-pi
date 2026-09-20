@@ -21,6 +21,9 @@ import type { PrdManager } from "../prd/manager.js";
 import type { TaskPacket } from "../scout/index.js";
 import { itemsOf, withTodo, type TodoCarrier } from "../todo/index.js";
 import { lspSelectionOf } from "../lsp/provider.js";
+// The session's own level type, which includes `off`; pi-ai's `ThinkingLevel`
+// is the subset a request can ask for and cannot express "do not think".
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { applyLspTools, type LspSessionTools } from "../lsp/tools.js";
 
 export interface TurnInput {
@@ -79,6 +82,14 @@ export interface TurnDeps {
 	 * state out to the command surfaces and the todo gate.
 	 */
 	onContext?: (context: TurnContext) => void;
+	/**
+	 * Absolute epoch-ms deadline for the whole turn (PRD-021's per-attempt
+	 * ceiling). Lane work counts against it: a ceiling that only aborts a stream
+	 * cannot stop a turn whose compilation already overran it — the request would
+	 * start anyway and run without any bound. When it has passed, the turn returns
+	 * compiled but unspent, and the caller records what the lanes cost.
+	 */
+	deadlineMs?: number;
 }
 
 const lanes: Lane[] = [];
@@ -88,16 +99,66 @@ export function registerLane(lane: Lane): void {
 	lanes.push(lane);
 }
 
+/**
+ * The set `registerOwnedLanes` installed last. A process that boots several
+ * sessions — the bench boots one per task, and any long-lived process can boot
+ * more — must have its second boot supersede the first rather than stack on it:
+ * stacked, task N pays N compilations and the lanes of every earlier boot still
+ * close over that boot's workspace. The same replace-not-stack rule the owned
+ * twelve follow in `activate()`.
+ */
+let ownedLanes: readonly Lane[] = [];
+
+/**
+ * Install the lanes LeanPi owns, replacing the ones the previous call installed.
+ * Lanes a caller registered by hand are left where they are.
+ */
+export function registerOwnedLanes(owned: readonly Lane[]): void {
+	for (const lane of ownedLanes) {
+		const index = lanes.indexOf(lane);
+		if (index >= 0) lanes.splice(index, 1);
+	}
+	ownedLanes = [...owned];
+	lanes.push(...ownedLanes);
+}
+
 export function listLanes(): readonly Lane[] {
 	return lanes;
 }
 
 export function clearLanes(): void {
 	lanes.length = 0;
+	ownedLanes = [];
 }
 
 let activePrefix = "";
 let turnInFlight = false;
+
+/** Pi's own ladder, least to most thinking; `off` is below all of them. */
+const THINKING_ORDER: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * The lower of the compiled effort and the operator's declared level.
+ *
+ * The compiled effort is what the classification asked for; the declared level is
+ * the operator's ceiling on it. `off` on either side wins, because that is the
+ * only level that is a spending policy rather than a gradation, and an operator
+ * who declared it must not have it raised by a classifier.
+ */
+function cappedThinkingLevel(effort: ThinkingLevel | undefined, declared: ThinkingLevel | undefined): ThinkingLevel | undefined {
+	if (effort === undefined) return declared;
+	if (declared === undefined) return effort;
+	return THINKING_ORDER.indexOf(effort) <= THINKING_ORDER.indexOf(declared) ? effort : declared;
+}
+
+/**
+ * The thinking level an operator declared for a backend. Read through the config
+ * on every turn so a config edit is visible without restarting the session.
+ */
+function declaredThinkingLevel(config: LeanPiConfig, backend: string): ThinkingLevel | undefined {
+	const declared = config.backends[backend]?.thinkingLevel;
+	return typeof declared === "string" ? declared : undefined;
+}
 
 /** The prefix `activate()`'s request handler applies to the request in flight. */
 export function getActivePrefix(): string {
@@ -125,7 +186,9 @@ export async function runLanes(turn: TurnInput, context: TurnContext): Promise<T
 	for (const lane of lanes) await lane.run(turn, context);
 	// PRD-005's disclosure reaches the request through the contract slot the
 	// provider filled; the lane that compiled the contract does not restate it.
-	if (context.contract && context.skills.length === 0) context.skills = context.contract.capabilities.skills;
+	// A compiled slot wins over the native lane's own selection: both run the
+	// same pipeline, and the contract's is the one the executor was routed on.
+	if (context.contract && context.contract.capabilities.skills.length > 0) context.skills = context.contract.capabilities.skills;
 	if (context.prefix.length === 0) {
 		const assembled = assemble({
 			config: context.config,
@@ -175,6 +238,22 @@ export async function runTurn(turn: TurnInput, deps: TurnDeps): Promise<TurnCont
 		return context;
 	}
 
+	// The compiler's class is this turn's spend decision (§14). When Pi's own loop
+	// is the executor there is no executor outcome to carry it, so the session runs
+	// the model the class resolves to; a role that resolves to nothing falls down
+	// its ladder, and a turn that compiled nothing keeps the role it was invoked
+	// with. A caller that named a role asked for that role — `/model`, a bench row,
+	// a spec — so the decision applies to the turns nobody pinned.
+	if (turn.role === undefined && context.contract && context.executor === undefined) {
+		const compiled = resolveRole(deps.config, context.contract.routing.executor_class);
+		// The class is a request this loop can refuse: a mixed configuration — a
+		// native `balanced` beside an external-harness `strong` — resolves the class
+		// to a backend Pi's loop has no provider for. Adopting it would fail the turn
+		// outright, so the role the turn was invoked with stands, which is what the
+		// interactive path's `modelRegistry.find` guard does with the same class.
+		// A class *and* an invoked role the runtime cannot serve still throws below.
+		if (deps.runtime?.getModel(compiled.backend, compiled.model)) context.modelRef = compiled;
+	}
 	const model = deps.runtime?.getModel(context.modelRef.backend, context.modelRef.model);
 	if (!model) {
 		throw new Error(
@@ -183,7 +262,26 @@ export async function runTurn(turn: TurnInput, deps: TurnDeps): Promise<TurnCont
 	}
 	turnInFlight = true;
 	try {
+		// The attempt's ceiling is absolute and covers the lane work: if it passed
+		// while this turn was being compiled, the request must not start — the loop
+		// that would run it has no bound left, and the caller records what the lanes
+		// spent instead of paying for an unbounded turn.
+		if (deps.deadlineMs !== undefined && Date.now() >= deps.deadlineMs) {
+			return context;
+		}
 		await deps.session.setModel(model);
+		// After `setModel`, which resets the level: the compiler decides a reasoning
+		// effort per complexity (`EFFORT_BY_COMPLEXITY`) and this is the only place
+		// that decision reaches the session. The operator's declared level is a
+		// *ceiling* on it rather than a default it replaces — otherwise the one
+		// switch an operator has (`backends.<name>.thinkingLevel: off`, the only
+		// value that changes the bill on a binary-thinking endpoint) would be
+		// overridden by every turn that compiled an effort. With nothing compiled
+		// and no declared level, the session's own level (Pi's or the user's)
+		// stands: LeanPi does not invent one.
+		const level = cappedThinkingLevel(context.contract?.reasoning.effort, declaredThinkingLevel(deps.config, context.modelRef.backend));
+		const thinking = deps.session as unknown as { setThinkingLevel?: (level: ThinkingLevel) => void };
+		if (level !== undefined && typeof thinking.setThinkingLevel === "function") thinking.setThinkingLevel(level);
 		await deps.session.prompt(turn.text);
 	} finally {
 		turnInFlight = false;

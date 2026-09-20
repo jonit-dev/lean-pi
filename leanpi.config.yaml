@@ -11,6 +11,34 @@ backends:
     api: openai-completions
     apiKey: OPENCODE_API_KEY
     reasoning: true
+    # This endpoint serves the model with DeepSeek's `thinking` field, not
+    # OpenAI's `reasoning_effort`: measured directly, `reasoning_effort` from
+    # `minimal` to `high` moves reasoning tokens by noise (<1%), while
+    # `thinking: {type: disabled}` removes them entirely (4,000 → 0 on a coding
+    # prompt, where the responding run burned its whole budget on thinking and
+    # emitted no answer). Pi only sends that field when the model declares this
+    # dialect, so without it every call thinks at the server's default — which
+    # is ~88% of output tokens, i.e. ~60% of the bill on this suite.
+    compat:
+      thinkingFormat: deepseek
+    # The vendor's dialect, available but not declared here. Pi sends no thinking
+    # control at all unless a model declares one, which is what the published
+    # benchmark measured; declaring it *enables* thinking explicitly when the
+    # session level is not `off`, and measured on the four-task suite that made
+    # one task 3x more expensive in reasoning (flask: 22,707 against 7,050).
+    # Declare it when the point is to suppress thinking (`thinkingLevel: off`);
+    # leave it out when the point is to change nothing but the prompt. See
+    # docs/reports/reasoning-cost-2026-09-19.md.
+    #
+    # compat:
+    #   thinkingFormat: deepseek
+    # The operator's spending policy for turns the compiler decided nothing for,
+    # which on a native backend is every turn. Left at the session's default
+    # here: measured on the four-task suite, `off` saved nothing at suite level
+    # (x0.96 against the baseline) and cost a solve (3/4 against 4/4) — the
+    # reasoning it removed came back as 65 more tool calls.
+    #
+    # thinkingLevel: off
     # OpenCode Go refuses a request with no session header and keys its prompt
     # cache off it, so the value must stay stable for the whole session: Pi
     # re-resolves a `!command` on every request, an env name only once per run.

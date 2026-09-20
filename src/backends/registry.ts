@@ -16,6 +16,7 @@ import {
 	modelFor,
 	type BackendInvocation,
 	type Billing,
+	type InvocationUsage,
 	type WorkerAttempt,
 	type WorkerFailureKind,
 	type WorkerOutcome,
@@ -263,14 +264,15 @@ export class BackendRegistry {
 	}
 }
 
-function outcomeFacts(outcome: WorkerOutcome): { exitCode: number | null; tokens: number | undefined } {
+function outcomeFacts(outcome: WorkerOutcome): { exitCode: number | null; tokens: number | undefined; usage: InvocationUsage | undefined } {
 	if (isWorkerFailure(outcome)) {
-		return { exitCode: outcome.exitCode ?? null, tokens: outcome.tokens };
+		return { exitCode: outcome.exitCode ?? null, tokens: outcome.tokens, usage: outcome.usage };
 	}
-	const raw = outcome.raw as { exitCode?: number | null; tokens?: number } | undefined;
+	const raw = outcome.raw as { exitCode?: number | null; tokens?: number; usage?: InvocationUsage } | undefined;
 	return {
 		exitCode: typeof raw?.exitCode === "number" ? raw.exitCode : 0,
 		tokens: typeof raw?.tokens === "number" ? raw.tokens : undefined,
+		usage: raw?.usage,
 	};
 }
 
@@ -333,10 +335,15 @@ export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorker
 						...(options.env ? { env: options.env } : {}),
 						...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
 					})
-				: await runNative(backend, attemptPacket, { cwd, ...(options.agentDir ? { agentDir: options.agentDir } : {}) });
+				: await runNative(backend, attemptPacket, {
+						cwd,
+						...(options.agentDir ? { agentDir: options.agentDir } : {}),
+						...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+					});
 		const facts = outcomeFacts(outcome);
 		registry.record({
 			backend: backend.name,
+			...(resolvedModel ? { model: resolvedModel } : {}),
 			billing: backend.billing,
 			...(backend.quotaClass ? { quotaClass: backend.quotaClass } : {}),
 			...(backend.catalogModelId ? { catalogModelId: backend.catalogModelId } : {}),
@@ -344,6 +351,7 @@ export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorker
 			wallMs: now() - started,
 			exitCode: facts.exitCode,
 			...(facts.tokens !== undefined ? { tokens: facts.tokens } : {}),
+			...(facts.usage ? { usage: facts.usage } : {}),
 		});
 
 		const verdict = classifyOutcome(outcome);

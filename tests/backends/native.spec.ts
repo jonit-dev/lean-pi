@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BackendRegistry, runNative, runWorkerTurn, type WorkerResult, type WorkerTaskPacket } from "../../src/backends/index.js";
+import { BackendRegistry, nativeStop, runNative, runWorkerTurn, type WorkerResult, type WorkerTaskPacket } from "../../src/backends/index.js";
 import { loadConfig } from "../../src/index.js";
 import { fixtureRepo, nativeBackend, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend, type StubStep } from "../helpers/stub-backend.js";
@@ -140,5 +140,44 @@ describe("PRD-008 Phase 2 — native model backend", () => {
 		expect(outcome.attempts[0]).toMatchObject({ backend: "local", failure: "blocked" });
 		expect(outcome.attempts[0]!.reason).toContain("budget of 2 turns");
 		expect(requests).toBeLessThan(4);
+	});
+
+	it("classifies a stopped loop by its own facts, not by the transcript", () => {
+		// The regression this pins: a provider error that arrives after the loop
+		// already wrote text and files must not read as a completion.
+		expect(nativeStop({ promptError: false, providerError: true, timedOut: false, exceeded: false })).toBe("provider_failure");
+		expect(nativeStop({ promptError: false, providerError: false, timedOut: true, exceeded: false })).toBe("deadline");
+		expect(nativeStop({ promptError: false, providerError: false, timedOut: false, exceeded: true })).toBe("budget");
+		expect(nativeStop({ promptError: true, providerError: true, timedOut: true, exceeded: true })).toBe("provider_failure");
+		// A stop we caused is reported as ours, even though an abort also leaves an
+		// error message behind.
+		expect(nativeStop({ promptError: false, providerError: true, timedOut: true, exceeded: true })).toBe("deadline");
+		expect(nativeStop({ promptError: false, providerError: false, timedOut: false, exceeded: false })).toBe("completed");
+	});
+
+	it("ends a stalled loop at the wall-clock ceiling and reports what it spent", async () => {
+		// Every request asks for another write, so only the ceiling stops it.
+		const stub: StubBackend = await startStubBackend([{ toolCalls: [{ name: "write", args: { path: "stall.txt", content: "x\n" } }] }]);
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(stub.baseUrl, { model: "local-code" }) },
+			models: { quick: { backend: "local", model: "local-code" } },
+		});
+		const registry = new BackendRegistry(loadConfig(cwd));
+		const backend = registry.selectBackend("quick")[0]!;
+
+		const outcome = await runNative(
+			backend,
+			{ objective: "never stop", role: "quick", files: ["stall.txt"], allowedTools: ["write"], budget: 1_000 },
+			{ cwd, timeoutMs: 400 },
+		);
+		await stub.close();
+
+		expect(outcome.status).toBe("blocked");
+		if (outcome.status !== "blocked") throw new Error("expected a blocked outcome");
+		expect(outcome.summary).toContain("wall-clock ceiling");
+		// A killed attempt has spent money, so it reports what the session counted.
+		const raw = outcome.raw;
+		expect(raw !== null && typeof raw === "object" && "tokens" in raw && typeof raw.tokens === "number").toBe(true);
 	});
 });

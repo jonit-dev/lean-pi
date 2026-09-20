@@ -12,7 +12,10 @@ export {
 export {
 	billedRefs,
 	billingOf,
+	callOfInvocation,
+	callsFromMessages,
 	createRunCollector,
+	feedInvocation,
 	projectJevDecision,
 	type BackendCall,
 	type CallUsage,

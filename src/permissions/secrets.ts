@@ -39,14 +39,26 @@ const ENV_ALLOWLIST: Record<string, true> = {
 	LOGNAME: true,
 };
 
-/** Env var name → value, for names that match the secret pattern or the policy's own list. */
-export function secretValues(env: NodeJS.ProcessEnv, policy: SecretsPolicy = BUILTIN_SECRETS_POLICY): Map<string, string> {
+/**
+ * Env var name → value, for names that match the secret pattern or the policy's
+ * own list. `resolved` carries credentials LeanPi resolved outside the process
+ * environment — the project `.env` source — which the redactor would otherwise
+ * not know; they are named explicitly, so only the length floor applies.
+ */
+export function secretValues(
+	env: NodeJS.ProcessEnv,
+	policy: SecretsPolicy = BUILTIN_SECRETS_POLICY,
+	resolved: Iterable<[string, string | null]> = [],
+): Map<string, string> {
 	const named = new Set(policy.secretNames);
 	const secrets = new Map<string, string>();
 	for (const [name, value] of Object.entries(env)) {
 		if (typeof value !== "string" || value.length < policy.minLength) continue;
 		if (!named.has(name) && !SECRET_NAME_PATTERN.test(name)) continue;
 		secrets.set(name, value);
+	}
+	for (const [name, value] of resolved) {
+		if (typeof value === "string" && value.length >= policy.minLength) secrets.set(name, value);
 	}
 	return secrets;
 }

@@ -1,0 +1,67 @@
+[
+  {
+    "label": "express, edits blocked (no permission profile) — retained, not cited",
+    "tasks": 1,
+    "arms": {
+      "A (ed05f8d)": [
+        "cost-a-base", "cost-d-dump",
+        "cost-e1-base", "cost-e2-base", "cost-e3-base", "cost-e4-base",
+        "cost-h1-base", "cost-h2-base", "cost-h3-base", "cost-h4-base"
+      ],
+      "B (skills fix + effort wiring)": [
+        "cost-f-noskills", "cost-f2-noskills", "cost-g1", "cost-g2",
+        "cost-e1-treat", "cost-e2-treat", "cost-e3-treat", "cost-e4-treat"
+      ],
+      "C (this tree, before the permission fix)": [
+        "cost-h0-treat", "cost-h1-treat", "cost-h2-treat", "cost-h3-treat", "cost-h4-treat"
+      ]
+    },
+    "pairs": [
+      ["cost-e1-base", "cost-e1-treat"], ["cost-e2-base", "cost-e2-treat"],
+      ["cost-e3-base", "cost-e3-treat"], ["cost-e4-base", "cost-e4-treat"],
+      ["cost-h1-base", "cost-h1-treat"], ["cost-h2-base", "cost-h2-treat"],
+      ["cost-h3-base", "cost-h3-treat"], ["cost-h4-base", "cost-h4-treat"]
+    ]
+  },
+  {
+    "label": "validated suite, edits blocked (no permission profile) — retained, not cited",
+    "tasks": 4,
+    "arms": {
+      "A (ed05f8d)": ["cost-i-base-full", "cost-k1-base"],
+      "B (skills fix + effort wiring)": ["cost-n1"],
+      "C (this tree, before the permission fix)": ["cost-k1-treat"]
+    },
+    "pairs": [["cost-k1-base", "cost-k1-treat"]]
+  },
+  {
+    "label": "express, with the benchmark's permission profile",
+    "tasks": 1,
+    "arms": {
+      "A (ed05f8d)": ["cost-r1-base", "cost-r2-base", "cost-r3-base"],
+      "C (this tree)": ["cost-r1-treat", "cost-r2-treat", "cost-r3-treat"]
+    },
+    "pairs": [
+      ["cost-r1-base", "cost-r1-treat"],
+      ["cost-r2-base", "cost-r2-treat"],
+      ["cost-r3-base", "cost-r3-treat"]
+    ]
+  },
+  {
+    "label": "validated suite, with the benchmark's permission profile",
+    "tasks": 4,
+    "arms": {
+      "A (ed05f8d)": ["cost-s1-base"],
+      "C (this tree)": ["cost-s1-treat"]
+    },
+    "pairs": [["cost-s1-base", "cost-s1-treat"]]
+  },
+  {
+    "label": "validated suite, catalog fix alone (thinking level untouched)",
+    "tasks": 4,
+    "arms": {
+      "A (ed05f8d)": ["cost-t1-base"],
+      "C (this tree, compat declared, level unset)": ["cost-t1-treat"]
+    },
+    "pairs": [["cost-t1-base", "cost-t1-treat"]]
+  }
+]

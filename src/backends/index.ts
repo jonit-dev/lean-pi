@@ -18,7 +18,7 @@ export {
 	type ParsedHarnessEnvelope,
 	type RunHarnessDeps,
 } from "./harness.js";
-export { DEFAULT_NATIVE_BUDGET, runNative, type RunNativeDeps } from "./native.js";
+export { DEFAULT_NATIVE_BUDGET, nativeStop, runNative, type NativeStop, type RunNativeDeps } from "./native.js";
 export {
 	BackendRegistry,
 	billingOf,

@@ -97,7 +97,7 @@ fail-before / pass-after on this machine:
 | Task | golden | fails at parent | passes at fix |
 | --- | --- | --- | --- |
 | `express-send-transfer-encoding-etag` | `npx mocha … test/res.send.js` | yes | yes |
-| `flask-ipv6-server-name-parsing` | `.venv/bin/python -m pytest tests/test_basic.py -q` | yes | yes |
+| `flask-ipv6-server-name-parsing` | `.venv/bin/python -m pytest tests/test_basic.py -q` | **unverified** | yes (runs) |
 | `preact-suspense-hook-state-loss` | `npx vitest run compat/test/browser/suspense.test.jsx` | yes | yes |
 | `slugify-counter-duplicate-slug` | `npx ava test.js` | yes | yes |
 
@@ -117,9 +117,12 @@ on this machine — they were captured commands, not measured passes
 Validation evidence: `docs/benchmarks/2026-09-19-golden-validation.json` — one
 row per seed task with the setup result and the before/after golden exit, from a
 pass that ran every task's clone, setup and golden twice (at the parent
-revision and at the fix commit). The four usable tasks now carry
-`validated_at: "2026-09-19"`; `flask`'s setup was repaired to build a venv (the
-system interpreter has no `pip`).
+revision and at the fix commit). `express`, `preact` and `slugify` carry
+`validated_at: "2026-09-19"` with measured fail-before/pass-after. **`flask`'s
+retained validation row has `setup_ok: false` (no before/after recorded), so its
+fail-before is not proven by that artifact**; the benchmark runs do show its
+golden passing after the fix (both arms `complete`). A future run should
+re-validate flask's setup or label it unverified.
 
 ## Correction applied mid-benchmark
 
@@ -224,3 +227,75 @@ node dist/bench/lane.js --suite bench/suites/validated --configs leanpi-flash --
 node dist/bench/lane.js --suite bench/suites/validated --configs omp        --run-id <id>-omp
 node dist/bench/lane.js --recompute bench/out/<id>-leanpi
 ```
+
+---
+
+## Addendum — independent audit, 2026-09-19 (`docs/audits/production-readiness-audit.md`)
+
+The published figures still recompute from their ledgers (`bench --recompute`)
+and are not retracted. An independent audit added the following, which a reader
+should weigh before quoting this table:
+
+- A fresh matched re-run of the `express` task (audit-prefixed dirs) did **not**
+  reproduce the LeanPi advantage: LeanPi was slower (`50.7 s` vs `39.2 s`), the
+  golden stayed **incomplete**, and its cost was higher even after the accounting
+  correction (`$0.0110` vs omp's `$0.0107`; a second LeanPi `express` attempt
+  cost `$0.0175`). `n=1`, so this is not a refutation, but the ratio is not
+  robust at the task level.
+- The omp arm re-ran fresh over all four tasks and came in **28.22% cheaper on
+  both bases** than published (`$0.0196` vs `$0.0274` per verified success;
+  `$0.0785` vs `$0.1094` total). Both arms had four verified successes, so the
+  two reductions must be identical. Consistent with a small sample where the
+  published `preact` attempt alone was 39% of the total.
+- The LeanPi arm's second attempt (`flask`) was **interrupted by the audit after
+  >11 minutes** with one open provider socket and no completed record; its usage
+  and cost are **unknown**. The cause is not proven from an open socket. The
+  benchmark's native path has no per-attempt deadline; separately, `runNative`
+  takes no `timeoutMs` (`src/backends/native.ts`, `src/backends/registry.ts:334-336`).
+- No fresh 4×2 comparison exists: LeanPi produced one recorded attempt, omp four.
+- Accounting correction: Pi's `Usage.output` already includes `Usage.reasoning`,
+  so the native adapter was double-charging reasoning for rows where
+  `reasoning_tokens > 0`. Published rows have `reasoning_tokens = 0` and are
+  unaffected; the two fresh LeanPi `express` rows are corrected in
+  `bench/out/audit-028-summary.json`. Fix + regression:
+  `src/bench/adapters.ts:115-125`, `tests/bench/adapters.spec.ts`.
+- Measurement caveats: omp wall time folds **completed attempts only**
+  (`src/bench/metrics.ts:183-190`), and every telemetry row carries `calls: []`,
+  so per-call cost is unauditable from the artifact. "Uncached input tokens" is
+  non-cached input (`input_tokens` excludes `cached_input_tokens`), not total input.
+
+Raw audit evidence: `bench/out/audit-028-preflight/`,
+`bench/out/audit-028-refresh/`, `bench/out/audit-028-recompute/`,
+`bench/out/audit-028-summary.json`.
+
+---
+
+## Addendum — reasoning cost, 2026-09-19 (`docs/reports/reasoning-cost-2026-09-19.md`)
+
+The figures above are not retracted — they recompute from their ledgers — but two
+statements about the measured configuration no longer hold, and the LeanPi arm's
+prompt was larger than this document accounts for:
+
+- **The published LeanPi arm carried this machine's whole skill catalog.** Pi's
+  resource loader built its own `<available_skills>` block into the system
+  prompt of every request, because skill disclosure never ran on a native
+  backend (`compileTask()` is the only caller of `selectSkills`). Measured on the
+  published revision's build line: 82,343 bytes, `<available_skills>` starting at
+  byte 5,589 of an 87,932-byte prompt — ~20.6k tokens per request, resent on every
+  provider call. The fix (below) takes the same prompt to 5,365 bytes with no
+  skills block, so the LeanPi column of the table above describes a superseded
+  build. It also means the "prompt-and-tool-surface" comparison was made with
+  LeanPi shipping a personal catalog omp does not have — an asymmetry in LeanPi's
+  favour on tokens that no longer exists.
+- **"skill disclosure never selects a skill" is superseded.** A native-backend
+  turn now runs the same selection the contract path runs, and discloses ≤3
+  pointers. On this machine that selection is the documented lexical fallback
+  (JEV resolves no credential here), which for the `express` task picked three
+  unrelated skills — the cost win is real, the *relevance* of the disclosure is
+  not established.
+- **Reasoning is the arm's dominant cost, and nothing controlled it.** 88% of the
+  output tokens in a measured full-suite attempt are reasoning, and output is 4×
+  input and 200× cached input on this rate card. The vendor honours DeepSeek's
+  `thinking` field, not OpenAI's `reasoning_effort`; the tree now declares that
+  dialect and spends no thinking on a turn that compiled no contract.
+

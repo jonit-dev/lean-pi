@@ -1,0 +1,15 @@
+{
+  "defaults": {
+    "edit": "allow",
+    "shell": "allow",
+    "network": "allow",
+    "package_install": "allow"
+  },
+  "rules": [],
+  "trust": {},
+  "secrets": {
+    "passthrough": [],
+    "secretNames": [],
+    "minLength": 8
+  }
+}

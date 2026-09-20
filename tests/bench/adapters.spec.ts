@@ -245,4 +245,100 @@ describe("PRD-021 LeanPi adapter", () => {
 		expect(record.result.success).toBe(false);
 		expect(record.result.proof_gate).toBe("not_run");
 	});
+
+	it("prices native usage without double-charging reasoning, which Pi already includes in output", async () => {
+		const root = tempDir();
+		const config = fixtureConfig(root);
+		const workspace = join(root, "workspace");
+		const storePath = join(root, "run", "telemetry.jsonl");
+		execFileSync("git", ["init", "-q", workspace], { stdio: "ignore" });
+		clearLanes();
+		// Pi's `Usage.output` includes `reasoning`; the synthesized call must bill
+		// output once. Fixture rates: input $1/Mtok, output $2/Mtok, cacheRead $0.1/Mtok.
+		const session = {
+			setModel: async () => undefined,
+			prompt: async () => undefined,
+			modelRuntime: { getModel: () => ({ id: "x" }) },
+			messages: [{ role: "assistant", usage: { input: 1000, cacheRead: 0, output: 100, reasoning: 40 }, content: [] }],
+		} as unknown as AgentSession;
+		await leanPiAttempt({ config, session: async () => ({ session }) })({
+			task: TASK,
+			config: {
+				id: "leanpi-jev",
+				label: "LeanPi + JEV",
+				adapter: "leanpi",
+				vendor: null,
+				jev: "enabled",
+				executor_model: "qwen3-coder-480b-a35b",
+				reviewer_model: null,
+				features: [],
+				owner_gated: false,
+				subscription: false,
+				budget_usd: 0,
+			},
+			workspace,
+			session_id: "session-3",
+			telemetry_task_id: "clone-me@leanpi-jev",
+			telemetry_path: storePath,
+		});
+		const record = JSON.parse(readFileSync(storePath, "utf8").trim()) as {
+			usage: { output_tokens: number; reasoning_tokens: number };
+			cost: { api_usd: number };
+		};
+		expect(record.usage).toMatchObject({ output_tokens: 100, reasoning_tokens: 40 });
+		// 1000 input + 100 output = $0.0012; the double-counted price would be $0.00128.
+		expect(record.cost.api_usd).toBe(0.0012);
+	});
+	it("does not start a request whose attempt ceiling expired during compilation", async () => {
+		// The ceiling is absolute, so a slow compile must not be able to hand the
+		// loop a request with no bound left: before this, the timer aborted a stream
+		// that had not started and the turn ran unbounded anyway.
+		const root = tempDir();
+		const config = fixtureConfig(root);
+		const workspace = join(root, "workspace");
+		execFileSync("git", ["init", "-q", workspace], { stdio: "ignore" });
+		const storePath = join(root, "run", "telemetry.jsonl");
+		clearLanes();
+		let prompts = 0;
+		const session = {
+			setModel: async () => undefined,
+			prompt: async () => {
+				prompts += 1;
+			},
+			agent: { abort: () => undefined },
+			modelRuntime: { getModel: () => ({ id: "x" }) },
+			messages: [],
+		} as unknown as AgentSession;
+		registerLane({
+			name: "slow-compile",
+			async run() {
+				await new Promise((resolve) => setTimeout(resolve, 60));
+			},
+		});
+		const result = await leanPiAttempt({ config, session: async () => ({ session }), timeoutMs: 5 })({
+			task: TASK,
+			config: {
+				id: "leanpi-jev",
+				label: "LeanPi + JEV",
+				adapter: "leanpi",
+				vendor: null,
+				jev: "enabled",
+				executor_model: "qwen3-coder-480b-a35b",
+				reviewer_model: null,
+				features: [],
+				owner_gated: false,
+				subscription: false,
+				budget_usd: 0,
+			},
+			workspace,
+			session_id: "session-slow",
+			telemetry_task_id: "clone-me@leanpi-jev",
+			telemetry_path: storePath,
+		});
+		clearLanes();
+		// No request started: the ceiling covers the compile, so the attempt ends
+		// with what the lanes spent and the note says why.
+		expect(prompts).toBe(0);
+		expect(result.note).toContain("attempt ceiling");
+	});
 });

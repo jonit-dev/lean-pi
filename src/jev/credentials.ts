@@ -8,9 +8,10 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { parseEnv } from "node:util";
 import type { LeanPiConfig } from "../core/types.js";
 
-export type CredentialSource = "config" | "credential store" | "env" | null;
+export type CredentialSource = "config" | "credential store" | "env" | "env file" | null;
 
 export interface ResolvedCredential {
 	key: string | null;
@@ -59,11 +60,36 @@ export function clearStoredKey(env: CredentialEnv = process.env): boolean {
 	return true;
 }
 
-export function resolveCredential(config: LeanPiConfig, env: CredentialEnv = process.env): ResolvedCredential {
+/**
+ * `JEV_API_KEY` from the project's `.env`, read as one more source — never loaded
+ * into `process.env`. FR-054 says no LeanPi credential crosses into a spawned
+ * vendor CLI, and every harness child inherits the process environment, so a key
+ * that only ever lives in this function's return value cannot leak there.
+ *
+ * `parseEnv` is the dotenv parser Node ships (Node >= 22.19): quotes, inline
+ * comments, CRLF, `export ` prefixes, and last-assignment-wins. It does not strip
+ * a leading BOM, which would rename the variable to `\uFEFFJEV_API_KEY` and lose
+ * the key silently, so that one is ours.
+ */
+export function readEnvFileKey(cwd: string, env: CredentialEnv = process.env): string | null {
+	let value: string;
+	try {
+		value = parseEnv(readFileSync(join(cwd, ".env"), "utf8").replace(/^\uFEFF/, "")).JEV_API_KEY ?? "";
+	} catch {
+		// An absent or unreadable `.env` is "no key here", not a failure: resolution
+		// falls through to the next source.
+		return null;
+	}
+	return value.length > 0 ? value : null;
+}
+
+export function resolveCredential(config: LeanPiConfig, env: CredentialEnv = process.env, cwd: string = process.cwd()): ResolvedCredential {
 	if (config.jev.apiKey) return { key: config.jev.apiKey, source: "config" };
 	const stored = readStoredKey(env);
 	if (stored) return { key: stored, source: "credential store" };
 	if (env.JEV_API_KEY) return { key: env.JEV_API_KEY, source: "env" };
+	const file = readEnvFileKey(cwd, env);
+	if (file) return { key: file, source: "env file" };
 	return { key: null, source: null };
 }
 

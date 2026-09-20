@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { aggregateTelemetry } from "../../src/telemetry/aggregate.js";
+import { billedRefs, createRunCollector, feedInvocation } from "../../src/telemetry/collect.js";
 import { emitRunTelemetry } from "../../src/telemetry/emit.js";
 import { resolveCostConfig } from "../../src/telemetry/pricing.js";
 import type { RunTelemetry } from "../../src/telemetry/record.js";
@@ -281,5 +282,30 @@ describe("run telemetry record (PRD-015)", () => {
 		appendRun(cwd, { task_id: "complete", session_id: "s", usage: {}, cost: { effective_cost: 0.5 } } as RunTelemetry);
 		expect(readRuns(cwd).map((run) => run.task_id)).toEqual(["complete"]);
 		expect(aggregateTelemetry(cwd)).toMatchObject({ runs: 1, effectiveCostUsd: 0.5 });
+	});
+
+	it("bills a backend invocation into the run's calls, usage and wall time", () => {
+		// The projection production runs depend on: a compiled run's executor calls
+		// PRD-008's sink and the record must carry them, or `/cost` reads zero.
+		const collector = createRunCollector({ taskId: "accounting", sessionId: "s-1" });
+		feedInvocation(collector, {
+			backend: "claude",
+			model: "claude-model",
+			billing: "subscription",
+			role: "balanced",
+			wallMs: 1_200,
+			exitCode: 0,
+			usage: { inputTokens: 100, cachedInputTokens: 900, outputTokens: 93, reasoningTokens: 40 },
+		});
+		feedInvocation(collector, { backend: "local", billing: "local", role: "balanced", wallMs: 300, exitCode: 0, tokens: 50 });
+
+		expect(collector.calls()).toHaveLength(2);
+		expect(collector.usage()).toMatchObject({ input_tokens: 150, cached_input_tokens: 900, output_tokens: 93, reasoning_tokens: 40 });
+		expect(collector.execution().wall_ms).toBe(1_500);
+		// The call's own identity decides the record's type and billing, not a restatement.
+		expect(collector.calls()[0]).toMatchObject({ type: "external_harness", billing: "subscription" });
+		expect(collector.calls()[1]).toMatchObject({ type: "native", billing: "local" });
+		// The billed executor is the last executor-role call, read off the calls.
+		expect(billedRefs(collector.calls()).executor?.model).toBe("local");
 	});
 });

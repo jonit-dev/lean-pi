@@ -165,7 +165,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 	// staying useless outside it.
 	const salt = options.salt ?? `${options.now?.().toISOString().slice(0, 10) ?? ""}:${cwd}`;
 	const now = options.now ?? (() => new Date());
-	const currentCredential = options.credential ?? (() => resolveCredential(config, env));
+	const currentCredential = options.credential ?? (() => resolveCredential(config, env, cwd));
 
 	let lastUsage: JevUsage = emptyUsage();
 	let mode: JevMode = config.jev.mode;

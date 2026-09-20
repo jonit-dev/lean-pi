@@ -55,6 +55,8 @@ export interface BenchRunOptions {
 	env?: NodeJS.ProcessEnv;
 	keepWorkspaces?: boolean;
 	now?: () => Date;
+	/** What an interrupt handler exits through; tests inject a recorder instead of killing the process. */
+	exit?: (code: number) => void;
 }
 
 export interface BenchRun {
@@ -144,9 +146,70 @@ export async function runBench(options: BenchRunOptions): Promise<BenchRun> {
 		throw new BenchError("the run has no executor: pass adapterDeps (bench/cli.ts does) or an explicit execute", "adapter");
 	}
 
-	for (const row of rows) {
-		let spent = 0;
-		let stopped = false;
+	/** Fold this run's report from its ledger and store, and write both artifacts. */
+	const writeReport = (): BenchReport => {
+		const telemetry: RunTelemetry[] = readRuns(dir, {}, { telemetry_path: storePath });
+		const report = foldReport({
+			run_id: runId,
+			generated_at: now().toISOString(),
+			suite_dir: suite.dir,
+			tasks: suite.tasks,
+			ledger,
+			telemetry,
+			configs: rows,
+			config,
+		});
+		appendFileSync(join(dir, "report.md"), renderReportMarkdown(report, ledger));
+		appendFileSync(join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+		return report;
+	};
+
+	// An attempt in flight when the operator interrupts the run has spent money and
+	// proven nothing. The adapter's flush writes its §52 record; the row below
+	// records it as an error, so the interrupted spend lands in the run's total
+	// instead of in nobody's. Every handler is removed on the normal path.
+	let inflight: { attempt: BenchAttempt; task: BenchTask; row: BenchConfigRow; startedAt: string; flush: (() => void) | null } | null = null;
+	const onSignal = (signal: NodeJS.Signals): void => {
+		inflight?.flush?.();
+		if (inflight) {
+			const { attempt, task, row, startedAt } = inflight;
+			const partial = readRuns(dir, { taskId: attempt.telemetry_task_id }, { telemetry_path: storePath }).at(-1);
+			const rowOut: BenchLedgerRow = {
+				run_id: runId,
+				task_id: task.id,
+				config_id: row.id,
+				telemetry_task_id: attempt.telemetry_task_id,
+				session_id: attempt.session_id,
+				source: task.source,
+				budget_usd: row.budget_usd,
+				reported_success: partial?.result.success ?? false,
+				adjudication: {
+					verdict: "error",
+					kind: "none",
+					adjudicator: "interrupted",
+					reason: `the run was interrupted by ${signal} while this attempt was in flight`,
+					rubric_model: null,
+					reviewer_model: partial?.reviewer_model ?? null,
+				},
+				adapter: { operator: row.adapter, extensions: [], note: `interrupted by ${signal}` },
+				note: `interrupted by ${signal}: the attempt's spend is recorded and its verdict is not`,
+				started_at: startedAt,
+				finished_at: now().toISOString(),
+			};
+			ledger.push(rowOut);
+			appendFileSync(ledgerPath, `${JSON.stringify(rowOut)}\n`);
+		}
+		writeReport();
+		(options.exit ?? ((code: number) => process.exit(code)))(130);
+	};
+	process.on("SIGINT", onSignal);
+	process.on("SIGTERM", onSignal);
+
+	/** The rows' attempts, in order. Extracted so the signal handlers have one exit path. */
+	const runRows = async (): Promise<void> => {
+		for (const row of rows) {
+			let spent = 0;
+			let stopped = false;
 		for (const [taskIndex, task] of suite.tasks.entries()) {
 			if (stopped) break;
 			const workspace = await (options.prepare ?? ((candidate, runDirectory) => cloneWorkspace(candidate, runDirectory, { keep: options.keepWorkspaces, env })))(task, dir);
@@ -161,6 +224,7 @@ export async function runBench(options: BenchRunOptions): Promise<BenchRun> {
 			const startedAt = now().toISOString();
 			let note: string | null = null;
 			let adapter: BenchLedgerRow["adapter"] = { operator: row.adapter, extensions: [], note: null };
+			inflight = { attempt, task, row, startedAt, flush: null };
 			try {
 				for (const command of task.setup) {
 					// The task's own preparation (dependency install, generated sources):
@@ -172,9 +236,10 @@ export async function runBench(options: BenchRunOptions): Promise<BenchRun> {
 					}
 				}
 				const executor = options.execute ?? attemptExecutorFor(row, { ...(options.adapterDeps as Omit<AdapterDeps, "config">), config });
-				const result = await executor(attempt);
+				const result = await executor(attempt, { onInterrupt: (flush) => { if (inflight) inflight.flush = flush; } });
 				adapter = { operator: result.operator, extensions: result.extensions, note: result.note };
 			} catch (error) {
+				inflight = null;
 				workspace.cleanup();
 				throw error;
 			}
@@ -215,26 +280,26 @@ export async function runBench(options: BenchRunOptions): Promise<BenchRun> {
 			};
 			ledger.push(ledgerRow);
 			appendFileSync(ledgerPath, `${JSON.stringify(ledgerRow)}\n`);
+			// The attempt stays "in flight" until its row is committed: an interrupt
+			// during adjudication would otherwise leave paid telemetry that no ledger
+			// row joins, and the fold totals only joined attempts.
+			inflight = null;
 			workspace.cleanup();
 		}
+		}
+	};
+
+	try {
+		await runRows();
+	} finally {
+		// A failed run must not leave its handlers behind: a later interrupt would
+		// invoke an abandoned run's writer.
+		process.off("SIGINT", onSignal);
+		process.off("SIGTERM", onSignal);
 	}
 
-	const telemetry: RunTelemetry[] = readRuns(dir, {}, { telemetry_path: storePath });
-	const report = foldReport({
-		run_id: runId,
-		generated_at: now().toISOString(),
-		suite_dir: suite.dir,
-		tasks: suite.tasks,
-		ledger,
-		telemetry,
-		configs: rows,
-		config,
-	});
-	const reportPath = join(dir, "report.md");
-	const reportJsonPath = join(dir, "report.json");
-	appendFileSync(reportPath, renderReportMarkdown(report, ledger));
-	appendFileSync(reportJsonPath, `${JSON.stringify(report, null, 2)}\n`);
-	return { run_id: runId, dir, ledger_path: ledgerPath, telemetry_path: storePath, report_path: reportPath, report_json_path: reportJsonPath, ledger, report };
+	const report = writeReport();
+	return { run_id: runId, dir, ledger_path: ledgerPath, telemetry_path: storePath, report_path: join(dir, "report.md"), report_json_path: join(dir, "report.json"), ledger, report };
 }
 
 /** Read a finished run's ledger back. Used by the reports and by the recompute negative control. */

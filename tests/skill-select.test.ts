@@ -169,8 +169,14 @@ describe("PRD-005 Phase 2 — skill disclosure", () => {
 			},
 		});
 		await session.runTurn("selecting the torpedo sometimes crashes the aircraft game");
+		// A native turn's request carries the compiler's disclosure, which on this
+		// path is the pointer — name, description, where to read it — because Pi
+		// re-sends this block on every provider call. The body form is what the
+		// one-shot compiled prompt gets, asserted above through `assemble` directly.
 		const sent = JSON.stringify(backend.requests[0]!.body);
-		expect(sent).toContain("BODY_OF_debugging");
+		expect(sent).toContain("debugging");
+		expect(sent).toContain("Full skill:");
+		expect(sent).not.toContain("BODY_OF_debugging");
 		expect(sent).not.toContain("BODY_OF_unrelated-skill");
 		session.session.dispose();
 	});

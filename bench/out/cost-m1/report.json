@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "run_id": "cost-m1",
+  "generated_at": "2026-09-20T00:40:08.274Z",
+  "suite_dir": "/home/joao/projects/lean-pi/.worktrees/production-readiness-audit/bench/suites/validated",
+  "tasks": 4,
+  "telemetry_rows": 4,
+  "configs": [
+    {
+      "config_id": "leanpi-flash",
+      "label": "LeanPi on the same model as the omp baseline",
+      "adapter": "leanpi",
+      "operator": "leanpi",
+      "executor_model": "deepseek-v4.1-flash",
+      "loaded_extensions": [
+        "leanpi"
+      ],
+      "features": [
+        "jev",
+        "context-engine",
+        "skill-selection",
+        "mcp-disclosure",
+        "lsp",
+        "verification"
+      ],
+      "capability": {
+        "model_id": "deepseek-v4.1-flash",
+        "index": null,
+        "price_blended_per_mtok": null,
+        "speed_tier": null,
+        "source": null,
+        "unavailable_reason": "model \"deepseek-v4.1-flash\" is not listed in /home/joao/projects/lean-pi/.worktrees/production-readiness-audit/src/capability/models.json"
+      },
+      "attempts": 4,
+      "adjudicated_complete": 0,
+      "adjudicated_incomplete": 4,
+      "adjudication_errors": 0,
+      "reported_successes": 0,
+      "verified_solve_rate": 0,
+      "effective_cost_total": 0.19839600000000002,
+      "cost_per_verified_success": null,
+      "generator_tokens_total": 12028929,
+      "generator_tokens_per_verified_success": null,
+      "time_to_verified_success_ms": {
+        "median": null,
+        "p95": null,
+        "n": 0
+      },
+      "false_completion_rate": null,
+      "false_completion_tasks": [],
+      "subscription_usage": 0,
+      "adjudicators": [
+        "npx mocha --require test/support/env --check-leaks test/res.send.js",
+        ".venv/bin/python -m pytest tests/test_basic.py -q",
+        "npx vitest run compat/test/browser/suspense.test.jsx",
+        "npx ava test.js"
+      ],
+      "budget_usd": 6,
+      "note": null
+    }
+  ],
+  "pairing": [
+    {
+      "task_id": "express-send-transfer-encoding-etag",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "incomplete",
+          "reported_success": false,
+          "effective_cost": 0.007019,
+          "wall_ms": 30083
+        }
+      ]
+    },
+    {
+      "task_id": "flask-ipv6-server-name-parsing",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "incomplete",
+          "reported_success": false,
+          "effective_cost": 0.058227,
+          "wall_ms": 372811
+        }
+      ]
+    },
+    {
+      "task_id": "preact-suspense-hook-state-loss",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "incomplete",
+          "reported_success": false,
+          "effective_cost": 0.089563,
+          "wall_ms": 513372
+        }
+      ]
+    },
+    {
+      "task_id": "slugify-counter-duplicate-slug",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "incomplete",
+          "reported_success": false,
+          "effective_cost": 0.043587,
+          "wall_ms": 306995
+        }
+      ]
+    }
+  ],
+  "section4": {
+    "relative_solve_rate": "90–95% or more of a contemporary Claude Code / Codex baseline",
+    "cost_ratio_of_baseline": 0.25,
+    "stretch_cost_ratio_of_baseline": 0.1,
+    "note": "ROADMAP §4 — product targets, not claims about current performance"
+  },
+  "section4_measured": [
+    {
+      "config_id": "leanpi-flash",
+      "cost_per_verified_success": null,
+      "verified_solve_rate": 0,
+      "relative_to_baseline": null
+    }
+  ],
+  "baseline_config_id": null,
+  "notes": [
+    "no baseline row ran in this invocation: the §4 comparison needs one of claude-code, codex or stock-pi"
+  ]
+}

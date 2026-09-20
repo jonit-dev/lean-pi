@@ -28,11 +28,37 @@ export type BaselineToolName = keyof typeof BASELINE_TOOL_MAP;
 
 export const BASELINE_TOOL_NAMES = Object.keys(BASELINE_TOOL_MAP) as BaselineToolName[];
 
+/**
+ * The ceiling on one shell command, in seconds.
+ *
+ * Pi's schema makes `timeout` optional with **no default**, so a command that
+ * waits — a test runner blocked on a lock, a package manager waiting on the
+ * network — waits forever and takes the turn with it. Measured on the bench
+ * path: one agent-issued `npx eslint … && npm test` sat for 14 minutes with zero
+ * CPU time and voided a whole suite run, because nothing bounded it. A
+ * model-supplied timeout still wins; this is only the ceiling when the model
+ * names none.
+ */
+export const COMMAND_TIMEOUT_SECONDS_DEFAULT = 900;
+
+/** The same definition with a timeout the model did not supply. */
+export function boundedCommand(definition: ToolDefinition, seconds: number = COMMAND_TIMEOUT_SECONDS_DEFAULT): ToolDefinition {
+	const execute = definition.execute.bind(definition);
+	return {
+		...definition,
+		execute: (toolCallId, params, signal, onUpdate, ctx) => {
+			const named = (params as { timeout?: number } | undefined)?.timeout;
+			return execute(toolCallId, { ...(params as object), timeout: named ?? seconds } as never, signal, onUpdate, ctx);
+		},
+	};
+}
+
 export function baselineToolDefinitions(cwd: string): ToolDefinition[] {
 	const definitions: ToolDefinition[] = [];
 	for (const name of BASELINE_TOOL_NAMES) {
-		const definition = BASELINE_TOOL_MAP[name](cwd) as unknown as ToolDefinition;
-		definitions.push(definition.name === name ? definition : { ...definition, name, label: name });
+		const raw = BASELINE_TOOL_MAP[name](cwd) as unknown as ToolDefinition;
+		const definition = raw.name === name ? raw : { ...raw, name, label: name };
+		definitions.push(name === "execute" ? boundedCommand(definition) : definition);
 	}
 	return definitions;
 }

@@ -1,0 +1,198 @@
+{
+  "schema": 1,
+  "audit_prd": "PRD-028",
+  "generated_at": "2026-09-19T21:15:47Z",
+  "source_revision": "0205b149dd8909cf5b0be37b0a8b839586409d3c",
+  "runtime": {
+    "node": "v22.22.0",
+    "omp": "18.2.2",
+    "pi": "0.85.1"
+  },
+  "pricing": {
+    "model": "opencode-go/deepseek-v4.1-flash",
+    "basis": "list/usage-accounting rates, off-peak 2026-09-19 (Saturday); subscription/quota product, NOT a cash invoice",
+    "usd_per_mtok": {
+      "uncached_input": 0.15,
+      "cached_input": 0.003,
+      "output": 0.6
+    },
+    "peak_usd_per_mtok": {
+      "uncached_input": 0.3,
+      "cached_input": 0.006,
+      "output": 1.2
+    },
+    "sources": [
+      "https://opencode.ai/docs/go/",
+      "https://api-docs.deepseek.com/quick_start/pricing/"
+    ],
+    "reasoning_semantics": "Pi Usage.output already includes Usage.reasoning (subset); output is priced once. Published rows have reasoning_tokens=0."
+  },
+  "formula": {
+    "api_usd": "(uncached_input*0.15 + cached_input*0.003 + output*0.60) / 1e6, output inclusive of reasoning"
+  },
+  "published": {
+    "leanpi": {
+      "verified_solve": "4/4",
+      "total_cost_usd": 0.051599,
+      "cost_per_verified_success_usd": 0.0129
+    },
+    "omp": {
+      "verified_solve": "4/4",
+      "total_cost_usd": 0.109425,
+      "cost_per_verified_success_usd": 0.027356
+    }
+  },
+  "fresh": {
+    "no_complete_4x2": true,
+    "recorded_attempts": [
+      {
+        "run_id": "audit-028-preflight-leanpi",
+        "config_id": "leanpi-flash",
+        "task_id": "express-send-transfer-encoding-etag",
+        "verdict": "incomplete",
+        "reported_success": false,
+        "recorded_cost_usd": 0.014671,
+        "corrected_cost_usd": 0.011039,
+        "usage": {
+          "input_tokens": 32250,
+          "cached_input_tokens": 432128,
+          "output_tokens": 8175,
+          "reasoning_tokens": 6053
+        },
+        "wall_ms": 50658,
+        "tool_calls": 18,
+        "calls_rows": 0
+      },
+      {
+        "run_id": "audit-028-refresh-leanpi",
+        "config_id": "leanpi-flash",
+        "task_id": "express-send-transfer-encoding-etag",
+        "verdict": "incomplete",
+        "reported_success": false,
+        "recorded_cost_usd": 0.023792,
+        "corrected_cost_usd": 0.017549,
+        "usage": {
+          "input_tokens": 47042,
+          "cached_input_tokens": 786432,
+          "output_tokens": 13556,
+          "reasoning_tokens": 10404
+        },
+        "wall_ms": 78234,
+        "tool_calls": 26,
+        "calls_rows": 0
+      },
+      {
+        "run_id": "audit-028-preflight-omp",
+        "config_id": "omp",
+        "task_id": "express-send-transfer-encoding-etag",
+        "verdict": "complete",
+        "reported_success": true,
+        "recorded_cost_usd": 0.010671,
+        "corrected_cost_usd": 0.010671,
+        "usage": {
+          "input_tokens": 40198,
+          "cached_input_tokens": 463616,
+          "output_tokens": 5417,
+          "reasoning_tokens": 0
+        },
+        "wall_ms": 39239,
+        "tool_calls": 14,
+        "calls_rows": 0
+      },
+      {
+        "run_id": "audit-028-preflight-omp",
+        "config_id": "omp",
+        "task_id": "flask-ipv6-server-name-parsing",
+        "verdict": "complete",
+        "reported_success": true,
+        "recorded_cost_usd": 0.021677,
+        "corrected_cost_usd": 0.021677,
+        "usage": {
+          "input_tokens": 53778,
+          "cached_input_tokens": 1559424,
+          "output_tokens": 14886,
+          "reasoning_tokens": 0
+        },
+        "wall_ms": 108232,
+        "tool_calls": 43,
+        "calls_rows": 0
+      },
+      {
+        "run_id": "audit-028-preflight-omp",
+        "config_id": "omp",
+        "task_id": "preact-suspense-hook-state-loss",
+        "verdict": "complete",
+        "reported_success": false,
+        "recorded_cost_usd": 0.03041,
+        "corrected_cost_usd": 0.03041,
+        "usage": {
+          "input_tokens": 122653,
+          "cached_input_tokens": 1659008,
+          "output_tokens": 11725,
+          "reasoning_tokens": 0
+        },
+        "wall_ms": 383288,
+        "tool_calls": 44,
+        "calls_rows": 0
+      },
+      {
+        "run_id": "audit-028-preflight-omp",
+        "config_id": "omp",
+        "task_id": "slugify-counter-duplicate-slug",
+        "verdict": "complete",
+        "reported_success": true,
+        "recorded_cost_usd": 0.015782,
+        "corrected_cost_usd": 0.015782,
+        "usage": {
+          "input_tokens": 42927,
+          "cached_input_tokens": 930560,
+          "output_tokens": 10919,
+          "reasoning_tokens": 0
+        },
+        "wall_ms": 106825,
+        "tool_calls": 29,
+        "calls_rows": 0
+      }
+    ],
+    "known_recorded_spend_usd": 0.117003,
+    "known_recorded_spend_corrected_usd": 0.107128,
+    "interrupted_attempts": [
+      {
+        "run_id": "audit-028-refresh-leanpi",
+        "task_id": "flask-ipv6-server-name-parsing",
+        "status": "interrupted",
+        "reason": "manually stopped after >11 min: one open provider socket, no child process, no completed ledger/telemetry row",
+        "usage": "unknown",
+        "spend_usd": "unknown",
+        "counted_in_totals": false
+      }
+    ],
+    "omp_suite_fresh": {
+      "attempts": 4,
+      "verified_complete": 4,
+      "reported_successes": 3,
+      "total_cost_usd": 0.07854,
+      "cost_per_verified_success_usd": 0.019635,
+      "median_complete_wall_ms": 107528.5
+    }
+  },
+  "reductions_vs_published_omp": {
+    "cost_per_verified_success_pct": 28.224,
+    "total_cost_pct": 28.225,
+    "note": "identical because both arms have four verified successes"
+  },
+  "qualification": {
+    "audit": "complete",
+    "fresh_4x2": "blocked / not demonstrated",
+    "note": "audit completion is not production qualification"
+  },
+  "corrections": [
+    {
+      "id": "reasoning-double-count",
+      "file": "src/bench/adapters.ts",
+      "status": "fixed",
+      "test": "tests/bench/adapters.spec.ts",
+      "applies_to": "rows with reasoning_tokens>0; published rows unaffected"
+    }
+  ]
+}

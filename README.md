@@ -23,8 +23,10 @@ the PRD index with per-PRD status is [`docs/PRDs/v1/INDEX.md`](docs/PRDs/v1/INDE
 
 Measured 2026-09-19 against **omp** (oh-my-pi), same model
 (`opencode-go/deepseek-v4.1-flash`), same endpoint, both priced from one rate
-card. Four upstream bug-fix tasks whose goldens were verified fail-before /
-pass-after on the machine that ran them; **both arms 4/4**.
+card. Four upstream bug-fix tasks; **both arms 4/4** under the held-out golden.
+Three of the four goldens were verified fail-before / pass-after and retained
+(`express`, `preact`, `slugify`); `flask`'s fix-side golden passes but its
+fail-before is unverified in the retained artifact.
 
 | metric (4 tasks) | LeanPi | omp | ratio |
 | --- | --- | --- | --- |
@@ -34,6 +36,15 @@ pass-after on the machine that ran them; **both arms 4/4**.
 | uncached input tokens | 94,862 | 310,003 | 0.31 |
 | output tokens | 41,805 | 66,968 | 0.62 |
 | tool calls | 119 | 169 | 0.70 |
+
+> **Independent audit, 2026-09-19 — read before quoting.** The published table is
+> retained and recomputes, but a fresh repeat did **not** reproduce the LeanPi
+> advantage: on the one task both arms re-ran, LeanPi was slower, failed the
+> held-out golden, and cost more even after a benchmark cost-accounting
+> correction, and its next attempt was interrupted with unknown spend. No fresh
+> 4×2 comparison exists, so the ratio is not yet robust. Details:
+> [`docs/benchmarks/2026-09-19-leanpi-vs-omp.md`](docs/benchmarks/2026-09-19-leanpi-vs-omp.md#addendum--independent-audit-2026-09-19-docsauditsproduction-readiness-auditmd)
+> and [`docs/audits/production-readiness-audit.md`](docs/audits/production-readiness-audit.md).
 
 Solve rate is decided by a held-out adjudicator: after the attempt is sealed, the
 upstream fix commit's test files are checked out and the project's own test
@@ -56,7 +67,9 @@ plus the ledgers under `bench/out/`.
 
 ## Run it
 
-Requires `git`; developed, tested and measured on Node 20.
+Requires `git`; developed and tested on Node 22 (`engines.node >=22.19.0`). The
+published 2026-09-19 benchmark used Node 20; the 2026-09-19 audit smoke-tested the
+documented path on Node 22.
 
 ```sh
 npm install

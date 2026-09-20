@@ -19,6 +19,29 @@ export const DEFAULT_NATIVE_BUDGET = 8;
 export interface RunNativeDeps {
 	cwd: string;
 	agentDir?: string;
+	/** Wall-clock ceiling for the whole loop; absent means no ceiling. */
+	timeoutMs?: number;
+}
+
+/** Why a native loop stopped. The order of the checks is the priority order. */
+export type NativeStop = "provider_failure" | "deadline" | "budget" | "completed";
+
+/**
+ * How a stopped loop is classified.
+ *
+ * A provider error is a failure *even when the loop already emitted text and
+ * changed files*: a partial turn is not a completed attempt, and treating it as
+ * one is how a silent failure becomes a claimed success. That is why the
+ * transcript plays no part in this decision. A stop we caused ourselves — the
+ * wall-clock ceiling, the turn budget — is reported as such, because those
+ * aborts surface as an error message too and "the provider failed" would send
+ * the registry off to another backend for no reason.
+ */
+export function nativeStop(facts: { promptError: boolean; providerError: boolean; timedOut: boolean; exceeded: boolean }): NativeStop {
+	if (facts.promptError) return "provider_failure";
+	if (facts.timedOut) return "deadline";
+	if (facts.exceeded) return "budget";
+	return facts.providerError ? "provider_failure" : "completed";
 }
 
 interface TranscriptEntry {
@@ -124,6 +147,7 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 
 	let turns = 0;
 	let exceeded = false;
+	let timedOut = false;
 	const unsubscribe = session.subscribe((event) => {
 		if (event.type !== "turn_end") return;
 		turns += 1;
@@ -132,6 +156,12 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 			session.agent.abort();
 		}
 	});
+	// The wall-clock ceiling (PRD-008): the budget bounds the loop's turns, a
+	// provider or loop that stalls bounds nothing, so a caller that declares a
+	// deadline gets the same abort the budget uses. The attempt's usage is still
+	// read and reported below — a killed attempt has spent money.
+	const deadlineMs = deps.timeoutMs;
+	const timer = deadlineMs ? setTimeout(() => { timedOut = true; session.agent.abort(); }, deadlineMs) : undefined;
 
 	let promptError: Error | null = null;
 	try {
@@ -140,6 +170,7 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 		promptError = error as Error;
 	} finally {
 		unsubscribe();
+		clearTimeout(timer);
 	}
 
 	const stats = session.getSessionStats();
@@ -152,35 +183,46 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 		model: modelId,
 		turns,
 		tokens: stats.tokens.total,
+		// The breakdown Pi already counted, so the run's record prices input,
+		// cache reads and output at their own rates instead of folding all of it
+		// into one uncached bucket (PRD-015).
+		usage: {
+			inputTokens: stats.tokens.input,
+			cachedInputTokens: stats.tokens.cacheRead,
+			outputTokens: stats.tokens.output,
+			reasoningTokens: 0,
+		},
 		exitCode: 0,
 	};
 	session.dispose();
 
-	if (promptError) {
+	const stop = nativeStop({ promptError: promptError !== null, providerError: Boolean(providerError), timedOut, exceeded });
+	if (stop === "provider_failure") {
 		return {
 			status: "failed",
 			failure: "provider",
-			reason: promptError.message,
+			reason: promptError?.message ?? providerError ?? "the provider failed",
 			sessionId: stats.sessionId,
 			tokens: stats.tokens.total,
+			usage: raw.usage,
 		};
 	}
-	if (exceeded) {
+	if (stop === "deadline") {
+		return {
+			status: "blocked",
+			summary: `wall-clock ceiling of ${Math.round((deadlineMs ?? 0) / 1000)} s reached before the task completed`,
+			changedFiles: changedFilesSince(before, deps.cwd, files),
+			sessionId: stats.sessionId,
+			raw,
+		};
+	}
+	if (stop === "budget") {
 		return {
 			status: "blocked",
 			summary: `budget of ${budget} turns exhausted before the task completed`,
 			changedFiles: changedFilesSince(before, deps.cwd, files),
 			sessionId: stats.sessionId,
 			raw,
-		};
-	}
-	if (providerError && summary.length === 0) {
-		return {
-			status: "failed",
-			failure: "provider",
-			reason: providerError,
-			sessionId: stats.sessionId,
-			tokens: stats.tokens.total,
 		};
 	}
 	return {

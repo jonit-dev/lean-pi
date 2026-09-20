@@ -17,7 +17,7 @@ import {
 } from "../src/index.js";
 import { bootSession, fixtureRepo, nativeBackend, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend } from "./helpers/stub-backend.js";
-import { startStubJev, type StubJev } from "./helpers/stub-jev.js";
+import { requestsForQuestion, startStubJev, type StubJev } from "./helpers/stub-jev.js";
 
 const QUESTIONS: JevQuestion[] = [
 	{ id: "route", kind: "Choice", text: "Which route?", options: { quick: "cheap", strong: "expensive" } },
@@ -115,10 +115,12 @@ describe("PRD-002 Phase 1 — typed batched client", () => {
 		expect(offered).toEqual(expect.arrayContaining(["edit", "execute", "read", "search", "write"]));
 		expect(offered.some((name) => name.startsWith("jev"))).toBe(false);
 
-		// The fabricated call is rejected as an unknown tool, and JEV saw nothing.
+		// The fabricated call is rejected as an unknown tool. The compiler asks the
+		// gate site itself on every native turn, so the count is one *more* thing the
+		// executor did not cause: exactly one gate ask for the turn, none from the tool.
 		const secondRequest = JSON.stringify(agentBackend.requests[1]!.body);
 		expect(secondRequest).toMatch(/unknown tool|not found|Unknown tool/i);
-		expect(stub.requests).toHaveLength(0);
+		expect(requestsForQuestion(stub.requests, "architecture")).toHaveLength(1);
 		expect(session.jev.fallbackCount()).toBe(0);
 
 		session.session.dispose();

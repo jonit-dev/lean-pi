@@ -93,6 +93,7 @@ export interface ExecutionContract {
 		acceptance_criteria: AcceptanceCriterion[];
 	};
 	routing: RoutingBlock;
+	/** The turn's reasoning budget as §14's matrix decides it (PRD-004). */
 	reasoning: { effort: "low" | "medium" | "high" };
 	capabilities: CapabilitySlots;
 	context: { strategy: "targeted" | "broad"; budget_tokens: number };

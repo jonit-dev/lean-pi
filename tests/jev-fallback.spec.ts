@@ -16,7 +16,7 @@ import {
 } from "../src/index.js";
 import { bootSession, fixtureRepo, nativeBackend, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "./helpers/stub-backend.js";
-import { startStubJev, type StubJev } from "./helpers/stub-jev.js";
+import { requestsForQuestion, startStubJev, type StubJev } from "./helpers/stub-jev.js";
 
 const QUESTION: JevQuestion[] = [{ id: "route", kind: "Choice", text: "Which route?", options: { quick: "cheap", strong: "expensive" } }];
 
@@ -87,8 +87,10 @@ describe("PRD-002 Phase 5 — fallback and confidence asymmetry", () => {
 		branchLane(runA.session, "fixture.route", join(runA.cwd, "branch.txt"));
 		await runA.session.runTurn("pick a route");
 		expect(readFileSync(join(runA.cwd, "branch.txt"), "utf8")).toBe("strong");
-		expect(answering.requests).toHaveLength(1);
-		expect(readDecisions(runA.cwd)[0]!.fallbackUsed).toBe(false);
+		// The compiler asks its own sites on every native turn; the fixture's ask is
+		// the one carrying the fixture's question id.
+		expect(requestsForQuestion(answering.requests, "route")).toHaveLength(1);
+		expect(readDecisions(runA.cwd).find((row) => row.siteId === "fixture.route")!.fallbackUsed).toBe(false);
 		runA.session.session.dispose();
 
 		// (b) The service fails: the fallback branch runs and the task still completes.

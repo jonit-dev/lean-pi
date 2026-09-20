@@ -16,7 +16,7 @@ import {
 } from "../src/index.js";
 import { bootSession, fixtureRepo, nativeBackend, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend } from "./helpers/stub-backend.js";
-import { startStubJev, typedAnswers, type StubJev } from "./helpers/stub-jev.js";
+import { requestsForQuestion, startStubJev, typedAnswers, type StubJev } from "./helpers/stub-jev.js";
 
 const QUESTIONS: JevQuestion[] = [
 	{ id: "gate", kind: "Choice", text: "Needs a PRD?", options: { yes: "structured", no: "direct" } },
@@ -132,7 +132,9 @@ describe("PRD-002 Phase 2 — registry and decision log", () => {
 		});
 		await session.runTurn("resolve two sites");
 
-		const rows = readDecisions(cwd);
+		// PRD-005's disclosure logs its own row on every turn; this AC counts the
+		// fixture's two sites.
+		const rows = readDecisions(cwd).filter((row) => siteIds.includes(row.siteId));
 		expect(rows).toHaveLength(2);
 		for (const [index, row] of rows.entries()) {
 			expect(row.siteId).toBe(siteIds[index]);
@@ -147,9 +149,11 @@ describe("PRD-002 Phase 2 — registry and decision log", () => {
 			expect(row.answers[0]).toEqual({ questionId: "gate", kind: "Choice", value: "yes", confidence: 0.9 });
 			expect(typeof row.timestamp).toBe("string");
 		}
-		// The stub answered real typed questions, so the fixture is not vacuous.
-		expect(stub.requests).toHaveLength(2);
-		expect(typedAnswers(stub.requests[0]!.body).gate).toBeDefined();
+		// The stub answered real typed questions, so the fixture is not vacuous. The
+		// compiler asks its own sites on every native turn, so the count is scoped to
+		// the fixture's question id.
+		expect(requestsForQuestion(stub.requests, "gate")).toHaveLength(2);
+		expect(typedAnswers(requestsForQuestion(stub.requests, "gate")[0]!.body).gate).toBeDefined();
 
 		session.session.dispose();
 	});

@@ -16,6 +16,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ARTIFACT_TOOL_NAME, LEANPI_VERSION, LSP_TOOL_NAMES, PACKAGE_ROOT, clearLanes, listLanes, registerLane, writeUserDefault } from "../src/index.js";
+import { boundedCommand, COMMAND_TIMEOUT_SECONDS_DEFAULT } from "../src/core/tools.js";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubBackend, type StubStep } from "./helpers/stub-backend.js";
 
@@ -106,6 +108,52 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 			delete process.env.LEANPI_CWD;
 		}
 		await stub.close();
+	});
+
+	it("AC-1: a second boot of one configuration supersedes the first boot's lanes", async () => {
+		// The bench boots a fresh session per task in one process. Appended rather
+		// than replaced, the second boot's turn would run two compiler lanes and the
+		// first boot's lane would compile against the first task's workspace.
+		stub = await startStubBackend([{ text: "hello" }]);
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(stub.baseUrl) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+		});
+
+		const first = await bootSession({ cwd, agentDir });
+		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler"]);
+		// A lane the caller registered by hand is not LeanPi's to replace.
+		registerLane({ name: "probe", run: () => {} });
+		const second = await bootSession({ cwd, agentDir });
+		expect(listLanes().map((lane) => lane.name)).toEqual(["probe", "compiler"]);
+
+		first.session.dispose();
+		second.session.dispose();
+		await stub.close();
+	});
+
+	it("bounds a shell command the model did not bound (PRD-001 §44)", async () => {
+		// Pi's `execute` schema makes `timeout` optional with no default, so an
+		// unbounded command can hang the turn: measured, one `npx eslint … && npm
+		// test` sat 14 minutes with zero CPU and voided a bench run.
+		const seen: Array<Record<string, unknown>> = [];
+		const inner = {
+			name: "execute",
+			label: "execute",
+			description: "",
+			parameters: {},
+			execute: async (_id: string, params: Record<string, unknown>) => {
+				seen.push(params);
+				return { content: [] };
+			},
+		} as unknown as ToolDefinition;
+		await boundedCommand(inner).execute("call-1", { command: "npx eslint ." } as never, undefined, undefined, {} as never);
+		await boundedCommand(inner).execute("call-2", { command: "sleep 1", timeout: 30 } as never, undefined, undefined, {} as never);
+
+		expect(seen[0]).toMatchObject({ command: "npx eslint .", timeout: COMMAND_TIMEOUT_SECONDS_DEFAULT });
+		// A model that named a bound keeps it.
+		expect(seen[1]).toMatchObject({ timeout: 30 });
 	});
 
 	it("AC-2: an executor turn driven through runTurn() uses all five baseline tools", async () => {

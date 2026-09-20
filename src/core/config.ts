@@ -11,7 +11,9 @@ import { assertTrusted, isProjectLocal, mergePermissions, readUserState, type Pe
 import {
 	BACKEND_TYPES,
 	isModelRole,
+	isThinkingLevel,
 	MODEL_ROLES,
+	THINKING_LEVELS,
 	type BackendConfig,
 	type BackendType,
 	type CapabilityRoleSetting,
@@ -63,6 +65,11 @@ function parseBackends(raw: unknown): Record<string, BackendConfig> {
 		}
 		if (!(BACKEND_TYPES as readonly unknown[]).includes(type)) {
 			throw new ConfigError(`type must be one of ${BACKEND_TYPES.join(" | ")}, got ${JSON.stringify(type)}`, `${path}.type`);
+		}
+		// A level Pi does not know is clamped to something else rather than
+		// rejected, so a typo here would quietly change what a turn spends.
+		if (entry.thinkingLevel !== undefined && !isThinkingLevel(entry.thinkingLevel)) {
+			throw new ConfigError(`thinkingLevel must be one of ${THINKING_LEVELS.join(" | ")}, got ${JSON.stringify(entry.thinkingLevel)}`, `${path}.thinkingLevel`);
 		}
 		backends[name] = { ...(entry as BackendConfig), type: type as BackendType };
 	}

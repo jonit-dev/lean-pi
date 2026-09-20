@@ -7,7 +7,20 @@
  * bounded job delegated to another harness, owned by PRD-008).
  */
 import type { Api } from "@earendil-works/pi-ai";
+// The session's own level vocabulary, which includes `off`: pi-ai's
+// `ThinkingLevel` is the subset a request can ask for.
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ResolvedPermissions } from "../permissions/trust.js";
+
+/**
+ * Pi's session thinking levels, in ascending effort. A config value outside this
+ * list is a named error rather than a level Pi would silently clamp.
+ */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export function isThinkingLevel(value: unknown): value is ThinkingLevel {
+	return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
+}
 
 /** Logical executor/reviewer classes (FR-041–FR-043). Routing never names a vendor. */
 export const MODEL_ROLES = ["quick", "balanced", "strong", "specialist", "review_quick", "review_strong"] as const;
@@ -62,6 +75,23 @@ export interface BackendConfig {
 	name?: string;
 	/** Executable for `external_harness` backends (PRD-008). */
 	command?: string;
+	/**
+	 * Pi's model compatibility overrides. Pi detects an endpoint's dialect from
+	 * the provider id and base URL, and a native backend carries the operator's
+	 * own name for it, so a vendor that does not speak OpenAI's
+	 * `reasoning_effort` (e.g. one served with DeepSeek's `thinking` field) has
+	 * to declare it here or Pi sends no thinking control at all.
+	 */
+	compat?: Record<string, unknown>;
+	/**
+	 * The thinking level this backend's turns run at when the compiler decided
+	 * none — a native backend compiles no contract, so without it such a turn
+	 * runs at whatever level the session carries. `off` is a real value: it is
+	 * the only one most vendors read as "do not think". Mirrors Pi's session
+	 * levels, and is validated against them at parse time so a typo cannot
+	 * silently become a different spend.
+	 */
+	thinkingLevel?: ThinkingLevel;
 	enabled?: boolean;
 	[key: string]: unknown;
 }

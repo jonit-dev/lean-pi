@@ -11,7 +11,7 @@
  * Usage accumulates across *every* attempt of a run, so retry cost is already
  * inside `api_usd`; `retries` only records how many there were.
  */
-import type { Billing } from "../backends/worker.js";
+import type { BackendInvocation, Billing } from "../backends/worker.js";
 import type { DecisionRow } from "../jev/log.js";
 import type { SiteTelemetryRow } from "../compiler/contract.js";
 import type { BackendType, ModelRole } from "../core/types.js";
@@ -81,6 +81,70 @@ export interface RunCollector {
 
 const EXECUTOR_ROLES: Record<string, true> = { quick: true, balanced: true, strong: true, specialist: true };
 const REVIEWER_ROLES: Record<string, true> = { review_quick: true, review_strong: true };
+
+/**
+ * PRD-008's invocation record as PRD-015's call row. The registry reports what
+ * the run actually spent — one record per attempt, success or failure — and this
+ * is the only place that projection lives, so a caller cannot restate it.
+ */
+export function callOfInvocation(record: BackendInvocation): BackendCall {
+	return {
+		backend: record.backend,
+		model: record.model ?? record.catalogModelId ?? record.backend,
+		// `billingOf` derives the billing class from the backend's own type, so the
+		// reverse is exact: a subscription call is an external harness, everything
+		// else runs in LeanPi's own loop.
+		type: record.billing === "subscription" ? "external_harness" : "native",
+		role: record.role,
+		billing: record.billing,
+		...(record.quotaClass ? { quotaClass: record.quotaClass } : {}),
+		usage: record.usage ?? (record.tokens === undefined ? {} : { tokens: record.tokens }),
+	};
+}
+
+/** Feet one invocation into the run's accumulator: the call, and its wall time. */
+export function feedInvocation(collector: RunCollector, record: BackendInvocation): void {
+	collector.add(callOfInvocation(record));
+	collector.addWallMs(record.wallMs);
+}
+
+/**
+ * Pi's own loop as PRD-015 calls: one call per message that carried usage, plus
+ * the tool calls those messages asked for.
+ *
+ * When Pi owns the loop nothing feeds the run's collector while the turn runs —
+ * the extension sees the loop's messages, not the provider's responses — so this
+ * projection is how that path's spend (and its tool count) reaches the record.
+ */
+export function callsFromMessages(
+	messages: readonly unknown[],
+	ref: { backend: string; model: string },
+): { calls: BackendCall[]; toolCalls: number } {
+	const calls: BackendCall[] = [];
+	let toolCalls = 0;
+	for (const message of messages) {
+		const usage = (message as { usage?: { input?: number; cacheRead?: number; output?: number; reasoning?: number } }).usage;
+		if (usage) {
+			calls.push({
+				backend: ref.backend,
+				model: ref.model,
+				type: "native",
+				role: "balanced",
+				usage: {
+					inputTokens: usage.input ?? 0,
+					cachedInputTokens: usage.cacheRead ?? 0,
+					outputTokens: usage.output ?? 0,
+					reasoningTokens: usage.reasoning ?? 0,
+				},
+			});
+		}
+		const content = (message as { content?: unknown }).content;
+		if (Array.isArray(content)) {
+			for (const part of content) if ((part as { type?: string }).type === "toolCall") toolCalls += 1;
+		}
+	}
+	return { calls, toolCalls };
+}
 
 /** The executor/reviewer a run actually billed, read off its calls rather than restated. */
 export function billedRefs(

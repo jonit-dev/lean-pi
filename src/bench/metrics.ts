@@ -194,12 +194,17 @@ function configMetricsOf(
 		}
 	}
 	const timing = medianAndP95(wall);
+	// What actually ran, not what the row declared. The compiled class decides the
+	// model on the native path, so a row can dispatch a different model than its
+	// `executor_model` says — and a report that printed only the declared one would
+	// hide exactly that.
+	const ran = [...new Set(attempts.map((attempt) => records.get(attempt.telemetry_task_id)?.executor_model).filter((model): model is string => typeof model === "string" && model.length > 0))];
 	return {
 		config_id: row.id,
 		label: row.label,
 		adapter: row.adapter,
 		operator: attempts[0]?.adapter.operator ?? row.adapter,
-		executor_model: row.executor_model,
+		executor_model: ran.length === 0 ? row.executor_model : ran.join(", "),
 		loaded_extensions: attempts[0]?.adapter.extensions ?? [],
 		features: row.features,
 		capability: capabilityOf(config, row.executor_model),

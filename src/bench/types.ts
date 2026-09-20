@@ -142,7 +142,18 @@ export interface BenchAttempt {
 	telemetry_path: string;
 }
 
-export type BenchAttemptExecutor = (attempt: BenchAttempt) => Promise<BenchAttemptResult>;
+export type BenchAttemptExecutor = (attempt: BenchAttempt, hooks?: AttemptHooks) => Promise<BenchAttemptResult>;
+
+/**
+ * What an executor needs from the run beyond its attempt. A turn still in flight
+ * when the operator interrupts the run has spent money and proved nothing, so
+ * the adapter registers a way to write that attempt's partial record and the
+ * runner calls it before the process dies.
+ */
+export interface AttemptHooks {
+	/** Register the in-flight attempt's partial-record writer; `null` once it is done. */
+	onInterrupt(flush: (() => void) | null): void;
+}
 
 /** A prepared workspace and its cleanup. */
 export interface BenchWorkspace {
