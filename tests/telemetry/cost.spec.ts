@@ -9,10 +9,13 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { commandRegistry } from "../../src/commands/registry.js";
+import type { LeanPiConfig } from "../../src/core/types.js";
 import { readDecisions } from "../../src/jev/log.js";
 import { aggregateTelemetry } from "../../src/telemetry/aggregate.js";
+import { callsFromMessages } from "../../src/telemetry/collect.js";
 import { registerCostCommand } from "../../src/telemetry/cost.js";
-import { telemetryPath } from "../../src/telemetry/store.js";
+import { priceCall, resolveCostConfig } from "../../src/telemetry/pricing.js";
+import { appendRun, readRuns, telemetryPath } from "../../src/telemetry/store.js";
 import { startStubJev, typedAnswers, type StubJev, type StubJevResponder } from "../helpers/stub-jev.js";
 import { fixtureConfig, fixtureCwd, registerFixtureSites, runFixtureTask } from "./fixture.js";
 
@@ -121,5 +124,68 @@ describe("/cost (PRD-015)", () => {
 		expect(aggregate.jev.sites["fixture.review_risk"]).toEqual({ decisions: 1, fallbacks: 1, tokens: 0 });
 		expect(aggregate.jev.sites["fixture.planning"]).toEqual({ decisions: 1, fallbacks: 0, tokens: 400 });
 		expect(aggregate.jev.tokenShare).toBeCloseTo(1_000 / 13_000, 10);
+	});
+
+	it("bills each assistant message's own model, not the model bound at turn start (F3)", () => {
+		// One backend priced, one registered with no `cost:` block at all.
+		const cost = resolveCostConfig({
+			backends: { api: { cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } }, spare: {} },
+		} as unknown as LeanPiConfig);
+		const { calls } = callsFromMessages(
+			[
+				{ role: "assistant", provider: "api", model: "claude-sonnet-4", usage: { input: 1_000, cacheRead: 0, cacheWrite: 400, output: 100, reasoning: 40 }, content: [] },
+				{ role: "assistant", provider: "spare", model: "gpt-5-unlisted", usage: { input: 500, cacheRead: 0, cacheWrite: 0, output: 20 }, content: [] },
+				{ role: "assistant", usage: { input: 10, cacheRead: 0, cacheWrite: 0, output: 1 }, content: [] },
+			],
+			{ backend: "api", model: "claude-sonnet-4" },
+		);
+
+		// Three rows under three identities, not three copies of the turn-start ref:
+		// the message's own, then the model it switched to, then the ref as fallback.
+		expect(calls.map((call) => `${call.backend}/${call.model}`)).toEqual([
+			"api/claude-sonnet-4",
+			"spare/gpt-5-unlisted",
+			"api/claude-sonnet-4",
+		]);
+
+		// 1000 input + 400 cache writes + 100 output = $0.006. Dropping the cache
+		// writes would price it $0.0045, and billing Pi's `output` whole on top of
+		// its `reasoning` subset would price it $0.0066.
+		expect(priceCall(calls[0]!, cost)).toBe(0.006);
+		// No rate card for the model it switched to, and none is invented.
+		expect(priceCall(calls[1]!, cost)).toBe(0);
+	});
+
+	it("names the unpriced calls and the population it totalled (F3)", async () => {
+		const cwd = fixtureCwd();
+		registerFixtureSites();
+		const config = fixtureConfig(cwd, { jevUrl: stub.url });
+		await runFixtureTask({ cwd, taskId: "scoped-1", sessionId: "session-a", success: true, config });
+		// A second run whose executor ran on a model the rate card does not list:
+		// same emitted shape, one call left at $0 with its tokens intact.
+		const base = readRuns(cwd, { sessionId: "session-a" })[0]!;
+		const priced = base.calls.find((call) => call.billing === "metered")!;
+		appendRun(cwd, { ...base, task_id: "scoped-2", session_id: "session-b", calls: [{ ...priced, model: "gpt-5-unlisted", costUsd: 0 }] });
+
+		// Registered without a session id: the report covers both sessions and says so.
+		registerCostCommand(commandRegistry, { cwd });
+		const report = await commandRegistry.dispatch("/cost", { cwd });
+		expect(report.ok).toBe(true);
+		expect(report.text).toContain("runs: 2");
+		expect(report.text).not.toContain("session total:");
+		expect(report.text).toContain("all sessions total:");
+		expect(report.text).toContain("unpriced: 1 metered call(s) with no configured rate (api/gpt-5-unlisted)");
+
+		// The single-record view discloses it too; the priced run says nothing.
+		const unpriced = await commandRegistry.dispatch("/cost scoped-2", { cwd });
+		expect(unpriced.text).toContain("unpriced: 1 metered call(s) with no configured rate (api/gpt-5-unlisted)");
+		const detail = await commandRegistry.dispatch("/cost scoped-1", { cwd });
+		expect(detail.text).not.toContain("unpriced:");
+
+		// Filtered to one session, the label is the session's again.
+		registerCostCommand(commandRegistry, { cwd, sessionId: "session-a" });
+		const scoped = await commandRegistry.dispatch("/cost", { cwd });
+		expect(scoped.text).toContain("runs: 1");
+		expect(scoped.text).toContain("session total:");
 	});
 });

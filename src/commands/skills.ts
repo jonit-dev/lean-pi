@@ -1,6 +1,10 @@
 /**
- * `/skills` — the installed library, and manual enable/disable/pin control
- * (PRD-005 Phase 1, FR-145).
+ * `/skills` — the pinned set, the installed library on request, and manual
+ * enable/disable/pin control (PRD-005 Phase 1, FR-145).
+ *
+ * The bare command lists the pinned skills only. A machine with the plugin
+ * caches populated has hundreds installed, and dumping all of them buries the
+ * handful the user actually chose; `/skills all` is there for the inventory.
  */
 import type { SkillControl, SkillRecord } from "../capabilities/skills.js";
 import type { CommandRegistry, CommandResult } from "./registry.js";
@@ -12,14 +16,14 @@ export interface SkillsCommandDeps {
 	reload?: () => SkillRecord[];
 }
 
-function render(records: SkillRecord[], control: SkillControl): string {
+function render(header: string, records: SkillRecord[], control: SkillControl): string {
 	const lines = records.map((record) => {
 		const flags = [control.isEnabled(record.name) ? null : "disabled", control.isPinned(record.name) ? "pinned" : null].filter(Boolean);
 		const version = record.version ?? "null";
 		const status = record.status === "invalid" ? ` [invalid: ${record.error}]` : "";
 		return `${record.name} — ${record.description || "(no description)"} [${record.source.class}, ${version}]${flags.length > 0 ? ` {${flags.join(", ")}}` : ""}${status}`;
 	});
-	return [`${records.length} skills`, ...lines].join("\n");
+	return [header, ...lines].join("\n");
 }
 
 export function registerSkillsCommands(registry: CommandRegistry, deps: SkillsCommandDeps): void {
@@ -30,7 +34,15 @@ export function registerSkillsCommands(registry: CommandRegistry, deps: SkillsCo
 		const name = rest.join(" ").trim();
 		const records = view();
 
-		if (subcommand === undefined) return { ok: true, text: render(records, deps.control) };
+		if (subcommand === undefined) {
+			const pinned = records.filter((record) => deps.control.isPinned(record.name));
+			if (pinned.length === 0) {
+				return { ok: true, text: `no skills pinned — ${records.length} installed, \`/skills all\` lists them` };
+			}
+			return { ok: true, text: render(`${pinned.length} pinned of ${records.length} installed`, pinned, deps.control) };
+		}
+
+		if (subcommand === "all") return { ok: true, text: render(`${records.length} installed`, records, deps.control) };
 
 		if (subcommand === "enable" || subcommand === "disable" || subcommand === "pin" || subcommand === "unpin") {
 			if (!name) return { ok: false, text: `usage: /skills ${subcommand} <name>` };
@@ -51,10 +63,15 @@ export function registerSkillsCommands(registry: CommandRegistry, deps: SkillsCo
 			return { ok: pinned.ok, text: pinned.message };
 		}
 
-		return { ok: false, text: `unknown /skills subcommand: ${subcommand}` };
+		return { ok: false, text: `unknown /skills subcommand: ${subcommand} (expected all, enable, disable, pin or unpin)` };
 	};
 
 	// A later session supersedes the earlier handler, exactly like `/jev`.
 	if (registry.has("skills")) registry.unregister("skills");
-	registry.register("skills", handler);
+	registry.register({
+		name: "skills",
+		summary: "list the pinned skills; `all` for the whole installed library",
+		usage: "/skills [all|enable <name>|disable <name>|pin <name>|unpin <name>]",
+		run: handler,
+	});
 }

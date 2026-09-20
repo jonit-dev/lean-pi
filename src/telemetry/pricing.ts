@@ -7,7 +7,11 @@
  * (`cost.quota_shadow_usd[quota_class]`), and the run-level GPU, latency and JEV
  * rates. A rate that is absent is 0, never an error: cost telemetry must not be
  * able to fail a run, and a pure-local session must record a truthful
- * `effective_cost` of 0 rather than a guess.
+ * `effective_cost` of 0 rather than a guess. A rate that is absent for a model
+ * that *did* spend metered tokens is a different thing — that 0 is missing
+ * accounting, not free work — so no rate is ever invented and `unpricedCalls`
+ * names those rows, which is what lets a report say "known spend plus N
+ * unpriced calls" instead of presenting a short total as the whole bill.
  *
  * `api_usd` is metered spend only. A subscription call draws from a pool and a
  * local call burns compute, so both price at 0 here — the subscription/local
@@ -16,12 +20,14 @@
  */
 import type { LeanPiConfig } from "../core/types.js";
 import { billingOf, type BackendCall } from "./collect.js";
-import type { RunCost, RunUsage } from "./record.js";
+import type { CallRow, RunCost, RunUsage } from "./record.js";
 
 /** USD per million tokens. */
 export interface ModelRate {
 	input: number;
 	cachedInput: number;
+	/** Writing the cache is billed above the input rate on every vendor's card. */
+	cacheWrite: number;
 	output: number;
 }
 
@@ -29,7 +35,10 @@ export interface ModelRate {
 export interface CostConfig {
 	/** Per-model override, keyed by model id. */
 	models?: Record<string, Partial<ModelRate>>;
-	/** Per-backend rates, keyed by backend name (also read from `backends.<name>.cost`). */
+	/**
+	 * Per-backend rates, keyed by backend name (also read from `backends.<name>.cost`,
+	 * where Pi's own `ModelCostRates` names the two cache rates `cacheRead`/`cacheWrite`).
+	 */
 	backends?: Record<string, Partial<ModelRate> & { cacheRead?: number }>;
 	/** The single scarcity setting: USD charged per call of a quota class. PRD-020 reads this same key. */
 	quota_shadow_usd?: Record<string, number>;
@@ -72,6 +81,7 @@ export function ratesFor(cost: CostConfig, backend: string, model: string): Mode
 	return {
 		input: numberOf(override?.input ?? declared?.input),
 		cachedInput: numberOf(override?.cachedInput ?? declared?.cacheRead),
+		cacheWrite: numberOf(override?.cacheWrite ?? declared?.cacheWrite),
 		output: numberOf(override?.output ?? declared?.output),
 	};
 }
@@ -90,6 +100,7 @@ export function priceCall(call: BackendCall, cost: CostConfig): number {
 	return round6(
 		(input * rates.input +
 			(usage.cachedInputTokens ?? 0) * rates.cachedInput +
+			(usage.cacheWriteTokens ?? 0) * rates.cacheWrite +
 			(usage.outputTokens ?? 0) * rates.output +
 			(usage.reasoningTokens ?? 0) * rates.output) /
 			1_000_000,
@@ -100,6 +111,19 @@ export function priceCall(call: BackendCall, cost: CostConfig): number {
 export function priceQuota(call: BackendCall, cost: CostConfig): number {
 	if (!call.quotaClass) return 0;
 	return numberOf(cost.quota_shadow_usd?.[call.quotaClass]);
+}
+
+/**
+ * The metered calls this store cannot value: they carry tokens and were recorded
+ * at $0 because nothing on the rate card matched their model. Read off the
+ * stored rows rather than re-priced — the row is what the total was computed
+ * from, and a reader holding a record has no access to the config that priced
+ * it. A subscription or local call is legitimately $0 and is not in here.
+ */
+export function unpricedCalls(calls: readonly CallRow[]): CallRow[] {
+	return calls.filter(
+		(call) => (call.billing ?? "metered") === "metered" && call.inputTokens + call.outputTokens > 0 && call.costUsd === 0,
+	);
 }
 
 /**

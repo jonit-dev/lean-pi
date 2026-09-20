@@ -22,6 +22,12 @@ export interface CallUsage {
 	/** Non-cached input tokens. */
 	inputTokens?: number;
 	cachedInputTokens?: number;
+	/**
+	 * Input tokens written into the provider's prompt cache. A separate rate on
+	 * every vendor's card (Anthropic reports it as its own `cacheWrite` field),
+	 * so it cannot be folded into `cachedInputTokens` without mispricing it.
+	 */
+	cacheWriteTokens?: number;
 	outputTokens?: number;
 	reasoningTokens?: number;
 	/** Coarse total when no breakdown exists (PRD-008's `BackendInvocation.tokens`). */
@@ -109,6 +115,18 @@ export function feedInvocation(collector: RunCollector, record: BackendInvocatio
 }
 
 /**
+ * The `AssistantMessage` fields this projection reads (`@earendil-works/pi-ai`).
+ * `provider`/`model` stay `unknown`: a restored session line is JSON, so the
+ * identity is checked before it becomes a rate-card key.
+ */
+interface UsageMessage {
+	provider?: unknown;
+	model?: unknown;
+	usage?: { input?: number; cacheRead?: number; cacheWrite?: number; output?: number; reasoning?: number };
+	content?: unknown;
+}
+
+/**
  * Pi's own loop as PRD-015 calls: one call per message that carried usage, plus
  * the tool calls those messages asked for.
  *
@@ -123,24 +141,41 @@ export function callsFromMessages(
 	const calls: BackendCall[] = [];
 	let toolCalls = 0;
 	for (const message of messages) {
-		const usage = (message as { usage?: { input?: number; cacheRead?: number; output?: number; reasoning?: number } }).usage;
+		// Pi's own `AgentMessage`, which this signature took as `unknown[]` before
+		// there was a Pi type to import; the field reads below check what they use.
+		const assistant = message as UsageMessage;
+		const usage = assistant.usage;
 		if (usage) {
 			calls.push({
-				backend: ref.backend,
-				model: ref.model,
+				// Pi stamps every assistant message with the provider and model that
+				// served it, and `registerProvider(name, …)` registers each backend
+				// under its own name, so a message's `provider` *is* the backend name
+				// and `model` is the key the rate card is written against. `ref` is
+				// captured once at turn start: reading it for every message bills a
+				// turn that switched models entirely to whatever was bound first, so
+				// the message's own identity wins and `ref` is only the fallback for a
+				// message that carries none.
+				backend: typeof assistant.provider === "string" && assistant.provider.length > 0 ? assistant.provider : ref.backend,
+				model: typeof assistant.model === "string" && assistant.model.length > 0 ? assistant.model : ref.model,
 				type: "native",
 				role: "balanced",
 				usage: {
 					inputTokens: usage.input ?? 0,
 					cachedInputTokens: usage.cacheRead ?? 0,
-					outputTokens: usage.output ?? 0,
+					cacheWriteTokens: usage.cacheWrite ?? 0,
+					// pi-ai documents `Usage.reasoning` as a subset of `Usage.output`
+					// while `priceCall` bills `reasoningTokens` on top of `outputTokens`,
+					// so this row carries the non-reasoning remainder — the same split
+					// `bench/adapters.ts` makes for its synthetic call. Passing Pi's
+					// `output` whole charged every reasoning token twice.
+					outputTokens: Math.max(0, (usage.output ?? 0) - (usage.reasoning ?? 0)),
 					reasoningTokens: usage.reasoning ?? 0,
 				},
 			});
 		}
-		const content = (message as { content?: unknown }).content;
+		const content = assistant.content;
 		if (Array.isArray(content)) {
-			for (const part of content) if ((part as { type?: string }).type === "toolCall") toolCalls += 1;
+			for (const part of content) if (part !== null && typeof part === "object" && "type" in part && part.type === "toolCall") toolCalls += 1;
 		}
 	}
 	return { calls, toolCalls };

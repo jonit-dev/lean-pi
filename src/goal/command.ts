@@ -3,9 +3,10 @@
  *
  * Registered through PRD-016's command registry; the handler owns no grammar
  * beyond the two flags and no state beyond `state.ts`. `/goal <text>` sets an
- * explicit goal and `/goal` with an active PRD derives one from PRD-012's
- * remaining criteria — a session with neither gets usage rather than an inert
- * goal, because a goal that can never be evaluated is worse than no goal.
+ * explicit goal, bare `/goal` shows the running one, and bare `/goal` with no
+ * goal but an active PRD derives one from PRD-012's remaining criteria — a
+ * session with neither gets usage rather than an inert goal, because a goal
+ * that can never be evaluated is worse than no goal.
  */
 import type { CommandContext, CommandHandler, CommandRegistry, CommandResult } from "../commands/registry.js";
 import type { LeanPiConfig } from "../core/types.js";
@@ -63,6 +64,12 @@ export function createGoalHandler(deps: GoalCommandDeps): CommandHandler {
 			store.save(goal);
 			return { ok: true, text: `goal set: ${formatGoal(goal, costSoFar())}` };
 		}
+
+		// Inspection must not write. A bare `/goal` while a goal is running echoes
+		// it, so the limits and `turns_used` it is judged against survive the look;
+		// deriving from the PRD is the empty-state path only.
+		const running = store.load();
+		if (running?.active) return { ok: true, text: formatGoal(running, costSoFar()) };
 
 		const prd = deps.prd?.() ?? null;
 		if (!prd) {

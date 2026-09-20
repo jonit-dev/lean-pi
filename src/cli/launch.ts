@@ -13,6 +13,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SAFETY_LEVELS, isSafetyLevel, type SafetyLevel } from "../permissions/rules.js";
 
 export interface LaunchPlan {
 	/** Pi's own CLI entry point, resolved out of this package's dependency. */
@@ -53,19 +54,33 @@ export interface LeanPiFlags {
 	allowMissingJev: boolean;
 	/** `--jev-key <key>`: store the key for this machine, then start. */
 	jevKey?: string;
+	/** `--safety <low|medium|high>`: one named permission policy for this session. */
+	safety?: SafetyLevel;
 	/** Everything else, in order, for Pi. */
 	rest: string[];
 }
 
+export class UnknownSafetyLevelError extends Error {
+	constructor(value: string) {
+		super(`leanpi: --safety expects one of ${SAFETY_LEVELS.join(" | ")}, got "${value}"`);
+		this.name = "UnknownSafetyLevelError";
+	}
+}
+
 /**
- * LeanPi's own flags, taken out of the argv Pi receives. They are the two
- * questions the launcher answers before a session exists — where the control
- * plane's key is, and whether to start without one — so Pi never sees them.
+ * LeanPi's own flags, taken out of the argv Pi receives. They are the questions
+ * the launcher answers before a session exists — where the control plane's key
+ * is, whether to start without one, and which permission policy this session
+ * runs under — so Pi never sees them.
+ *
+ * `--safety` is absent by default and nothing reads it then: the stored user
+ * scope and the project's config decide, exactly as before the flag existed.
  */
 export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
 	const rest: string[] = [];
 	let allowMissingJev = false;
 	let jevKey: string | undefined;
+	let safety: SafetyLevel | undefined;
 	for (let index = 0; index < argv.length; index += 1) {
 		const argument = argv[index] as string;
 		if (argument === "--no-jev") {
@@ -73,7 +88,12 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
 			continue;
 		}
 		if (argument === "--jev-key") {
-			jevKey = argv[index + 1];
+			const next = argv[index + 1];
+			// `leanpi --jev-key --no-jev` used to store the literal string
+			// "--no-jev" as the key and then refuse every request with a 401 the
+			// user had no way to attribute. A flag is never a key.
+			if (next === undefined || next.startsWith("-")) continue;
+			jevKey = next;
 			index += 1;
 			continue;
 		}
@@ -82,9 +102,16 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
 			jevKey = inline;
 			continue;
 		}
+		if (argument === "--safety" || argument.startsWith("--safety=")) {
+			const value = argument.startsWith("--safety=") ? argument.slice("--safety=".length) : argv[index + 1];
+			if (value === undefined || !isSafetyLevel(value)) throw new UnknownSafetyLevelError(value ?? "");
+			safety = value;
+			if (!argument.startsWith("--safety=")) index += 1;
+			continue;
+		}
 		rest.push(argument);
 	}
-	return { allowMissingJev, ...(jevKey === undefined ? {} : { jevKey }), rest };
+	return { allowMissingJev, ...(jevKey === undefined ? {} : { jevKey }), ...(safety === undefined ? {} : { safety }), rest };
 }
 
 /**
@@ -120,5 +147,11 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// the vendor's own switch for exactly that, so the library path's
 	// `skillsOverride` and this entry now suppress the same thing the same way.
 	const skills = argv.some((argument) => argument === "--skill" || argument === "--no-skills" || argument === "-ns") ? [] : ["--no-skills"];
-	return { cli: resolvePiCli(root), extension, args: ["--extension", extension, ...skills, ...model, ...argv] };
+	// LeanPi's own palette, loaded as an ordinary Pi theme file and selected for
+	// this run only (`--use-theme` writes no settings). Anyone who named a theme,
+	// or switched discovery off, keeps their choice.
+	const theme = argv.some((argument) => argument === "--theme" || argument === "--use-theme" || argument === "--no-themes")
+		? []
+		: ["--theme", join(root, "themes", "leanpi.json"), "--use-theme", "leanpi"];
+	return { cli: resolvePiCli(root), extension, args: ["--extension", extension, ...skills, ...theme, ...model, ...argv] };
 }

@@ -341,8 +341,11 @@ export async function evaluateProofGate(
 		workspaceHash: hash,
 		...(store ? { store } : {}),
 		...(deps.cwd ? { cwd: deps.cwd } : {}),
-		...(deps.commands ? { commands: deps.commands } : {}),
-		...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
+		// The host project's `verify:` block, same as PRD-009's own runner reads:
+		// without it a recovery round ignores the configured command and shells out
+		// to the built-in default (`npx vitest run`) in someone else's repository.
+		...(deps.commands ?? deps.config?.verify?.commands ? { commands: deps.commands ?? deps.config?.verify?.commands } : {}),
+		...((deps.timeoutMs ?? deps.config?.verify?.timeoutMs) !== undefined ? { timeoutMs: deps.timeoutMs ?? deps.config?.verify?.timeoutMs } : {}),
 		...(deps.exec ? { exec: deps.exec } : {}),
 		...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 		...(deps.review ? { review: deps.review } : {}),

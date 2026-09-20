@@ -99,8 +99,18 @@ interface WireAnswer {
 
 class JevResponseError extends Error {}
 
+/**
+ * The control plane is on the critical path of every turn — the compiler asks
+ * before any model runs — and `fetch` has no timeout of its own: an endpoint
+ * that accepts the connection and never answers held the whole session with
+ * nothing on screen and no way out. The bound is the site's, not the network's:
+ * a site that takes this long has already cost more than the decision is worth,
+ * and every site has a deterministic fallback to take instead.
+ */
+export const JEV_REQUEST_TIMEOUT_MS = 20_000;
+
 function defaultTransport({ url, headers, body }: JevTransportRequest): Promise<JevTransportResponse> {
-	return fetch(url, { method: "POST", headers, body }).then(async (response) => ({
+	return fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(JEV_REQUEST_TIMEOUT_MS) }).then(async (response) => ({
 		status: response.status,
 		text: await response.text(),
 	}));

@@ -171,11 +171,11 @@ describe("PRD-026 Phase 3 — fresh profile, precedence and disable", () => {
 		expect(resumed.isEnabled("ponytail-audit")).toBe(true);
 	});
 
-	it("AC-1: `/skills` renders bundled rows with the source class and the locked pin", async () => {
+	it("AC-1: `/skills all` renders bundled rows with the source class and the locked pin", async () => {
 		const records = scanSkills(tempDir("leanpi-cmd-"), { roots: [{ path: bundledRoot(), class: "bundled" }] });
 		const registry = createCommandRegistry();
 		registerSkillsCommands(registry, { records, control: createSkillControl({}, () => {}) });
-		const listing = await registry.dispatch("/skills");
+		const listing = await registry.dispatch("/skills all");
 
 		expect(listing.ok).toBe(true);
 		expect(listing.text).toContain(`i-have-adhd — `);
@@ -186,8 +186,26 @@ describe("PRD-026 Phase 3 — fresh profile, precedence and disable", () => {
 		const registry2 = createCommandRegistry();
 		registerSkillsCommands(registry2, { records, control });
 		await registry2.dispatch("/skills disable ponytail-audit");
-		const after = await registry2.dispatch("/skills");
+		const after = await registry2.dispatch("/skills all");
 		expect(after.text).toMatch(/ponytail-audit[^\n]*\{disabled\}/);
+	});
+
+	it("AC-1: the bare `/skills` lists the pinned set, not the whole install", async () => {
+		const records = scanSkills(tempDir("leanpi-cmd-"), { roots: [{ path: bundledRoot(), class: "bundled" }] });
+		const control = createSkillControl({}, () => {});
+		const registry = createCommandRegistry();
+		registerSkillsCommands(registry, { records, control });
+
+		// Nothing pinned: the inventory is named but not dumped.
+		const empty = await registry.dispatch("/skills");
+		expect(empty.ok).toBe(true);
+		expect(empty.text).toContain(`${records.length} installed`);
+		expect(empty.text).not.toContain("i-have-adhd — ");
+
+		await registry.dispatch("/skills pin ponytail-audit");
+		const pinned = await registry.dispatch("/skills");
+		expect(pinned.text).toMatch(/ponytail-audit[^\n]*\{pinned\}/);
+		expect(pinned.text).not.toContain("i-have-adhd — ");
 	});
 
 	it("AC-1: the default root list puts the pack last, after project, user and plugin roots", () => {

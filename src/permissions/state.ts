@@ -9,7 +9,26 @@
  */
 import { loadConfig } from "../core/config.js";
 import type { LeanPiConfig } from "../core/types.js";
+import { SAFETY_PROFILES, SCOPES, isSafetyLevel, type DecisionSource, type Scope } from "./rules.js";
 import type { PermissionEnv, ProjectTrustStatus, ResolvedPermissions, TrustedProjectSubset } from "./trust.js";
+
+/**
+ * `LEANPI_SAFETY`, set by the launcher's `--safety <level>`.
+ *
+ * Unset — the default — changes nothing: the resolved configuration decides, as
+ * it always did. Set, it replaces the whole resolved policy, rules included, so
+ * the level is what the guard enforces and what `/permissions` reports.
+ */
+function applySafetyLevel(permissions: ResolvedPermissions, env: PermissionEnv): ResolvedPermissions {
+	const level = env.LEANPI_SAFETY;
+	if (level === undefined || !isSafetyLevel(level)) return permissions;
+	return {
+		...permissions,
+		defaults: { ...SAFETY_PROFILES[level] },
+		defaultSources: Object.fromEntries(SCOPES.map((scope) => [scope, "safety" as DecisionSource])) as Record<Scope, DecisionSource>,
+		rules: [],
+	};
+}
 
 export interface PermissionState {
 	cwd: string;
@@ -28,9 +47,10 @@ export function loadPermissionState(cwd: string, env: PermissionEnv = process.en
 	const refresh = (): PermissionState => {
 		const config = loadConfig(cwd, overrides, env);
 		const trust = config.permissions.trust;
+		const permissions = applySafetyLevel(config.permissions, env);
 		if (state) {
 			state.config = config;
-			state.permissions = config.permissions;
+			state.permissions = permissions;
 			state.trust = trust;
 			state.project = trust.subset;
 			return state;
@@ -39,7 +59,7 @@ export function loadPermissionState(cwd: string, env: PermissionEnv = process.en
 			cwd,
 			env,
 			config,
-			permissions: config.permissions,
+			permissions,
 			trust,
 			project: trust.subset,
 			refresh,

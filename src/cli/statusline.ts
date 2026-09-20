@@ -10,13 +10,23 @@
  * strong one on a risky change.
  */
 import type { ExecutionContract } from "../compiler/contract.js";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { LeanPiConfig, ModelRole } from "../core/types.js";
 import { resolveRole } from "../core/roles.js";
 
 /** The footer slot LeanPi owns; one key, replaced each turn. */
 export const LEANPI_STATUS_KEY = "leanpi";
 
-const EFFORT_LABEL = { low: "Low", medium: "Medium", high: "High" } as const;
+/** Every level Pi can be set to: the compiler decides three, an operator's ceiling can name any. */
+const EFFORT_LABEL: Record<ThinkingLevel, string> = {
+	off: "Off",
+	minimal: "Minimal",
+	low: "Low",
+	medium: "Medium",
+	high: "High",
+	xhigh: "X-High",
+	max: "Max",
+};
 
 /** Model ids are vendor strings; this is the name a human recognises. */
 export function prettyModel(backend: string, model: string): string {
@@ -37,6 +47,12 @@ export interface StatusInput {
 	role?: ModelRole;
 	/** The model actually running, when it is not the one the role resolves to. */
 	model?: string;
+	/**
+	 * The level the session was actually set to, when it is not the compiled
+	 * effort — an operator's `thinkingLevel` ceiling is applied before the turn
+	 * runs, and the footer named the pre-ceiling number.
+	 */
+	effort?: ThinkingLevel;
 	/** The compiler wants a PRD and none is open; the user opens one. */
 	prdWanted?: boolean;
 }
@@ -51,7 +67,7 @@ const LANE_LABEL: Record<Lane, string> = {
 };
 
 /** `Auto: claude opus (1m) (Medium) — MEDIUM complexity — Executor lane` */
-export function statusLine({ config, contract, lane, role, model: running, prdWanted }: StatusInput): string {
+export function statusLine({ config, contract, lane, role, model: running, effort: applied, prdWanted }: StatusInput): string {
 	const resolvedRole = role ?? contract.routing.executor_class;
 	let model: string;
 	if (running !== undefined) {
@@ -68,8 +84,15 @@ export function statusLine({ config, contract, lane, role, model: running, prdWa
 			model = resolvedRole;
 		}
 	}
-	const effort = EFFORT_LABEL[contract.reasoning.effort];
-	const line = `Auto: ${model} (${effort}) — ${contract.task.execution_complexity} complexity — ${LANE_LABEL[lane]}`;
+	const effort = EFFORT_LABEL[applied ?? contract.reasoning.effort];
+	const parts = [`Auto: ${model} (${effort}) — ${contract.task.execution_complexity} complexity — ${LANE_LABEL[lane]}`];
+	// The turn the user is about to get is unverified, and saying so is the
+	// difference between "evidence-driven completion" and a slogan: on the Pi
+	// loop LeanPi's executor lane never runs, so PRD-009's verification and
+	// PRD-010's gate never run either. `/verify` is where the user can ask for
+	// them against the workspace the turn leaves behind.
+	if (lane === "pi_loop" && contract.verification.required.length > 0) parts.push("unverified — /verify");
 	// The one decision LeanPi cannot make for the user: the PRD document itself.
-	return prdWanted === true ? `${line} — /prd create to open the PRD lane` : line;
+	if (prdWanted === true) parts.push("/prd create to open the PRD lane");
+	return parts.join(" — ");
 }

@@ -264,6 +264,31 @@ describe("PRD-017 Phase 2 — loadConfig applies the gate", () => {
 	});
 });
 
+describe("--safety <level>", () => {
+	it("is off by default, and when set it replaces user scope and every rule", () => {
+		const cwd = tempDir("leanpi-perm-safety-");
+		const env = { XDG_CONFIG_HOME: tempDir("leanpi-perm-xdg-") };
+		writeConfig(cwd, { backends: { stub: nativeBackend("http://127.0.0.1:1/v1") }, models: { balanced: { backend: "stub", model: STUB_MODEL } } });
+		// The no-prompt machine this flag has to be able to override.
+		writeUserDefault("shell", "allow", env);
+		writeUserRule("network:*", "allow", env);
+
+		expect(loadPermissionState(cwd, env).permissions.defaults.shell).toBe("allow");
+
+		const high = loadPermissionState(cwd, { ...env, LEANPI_SAFETY: "high" });
+		expect(high.permissions.defaults).toMatchObject({ read: "allow", edit: "ask", shell: "deny", network: "deny" });
+		// A stored rule that outlived the flag would be a hole in the level.
+		expect(high.permissions.rules).toEqual([]);
+		expect(renderPermissions(high)).toContain("safety: high (--safety)");
+
+		expect(loadPermissionState(cwd, { ...env, LEANPI_SAFETY: "low" }).permissions.defaults.git_destructive).toBe("allow");
+		expect(loadPermissionState(cwd, { ...env, LEANPI_SAFETY: "medium" }).permissions.defaults.shell).toBe("ask");
+		// An unusable value is not a silent third policy: the launcher rejects it,
+		// and the variable is ignored here rather than locking the session down.
+		expect(loadPermissionState(cwd, { ...env, LEANPI_SAFETY: "paranoid" }).permissions.defaults.shell).toBe("allow");
+	});
+});
+
 describe("BUG_REVIEW S1 — an unresolvable leaf under an out-of-root link is still external_dir", () => {
 	it("classifies a not-yet-created leaf through the link as an out-of-root write", () => {
 		const cwd = tempDir("leanpi-perm-s1-");

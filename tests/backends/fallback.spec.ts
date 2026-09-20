@@ -191,25 +191,29 @@ describe("PRD-008 Phase 4 — vendor limits, fallback and the cost hook", () => 
 		expect(records.map((record) => record.backend)).toEqual(["codex", "opencode"]);
 	});
 
-	it("AC-8: a vendor envelope that claims success without a workspace change is a failure", async () => {
+	it("F11: a vendor that answers without touching a file succeeds, and its answer survives", async () => {
 		const cli = installStubCli();
 		const { cwd } = fixtureRepo();
 		writeConfig(cwd, chainConfig(cli));
-		const registry = new BackendRegistry(loadConfig(cwd));
+		const records: BackendInvocation[] = [];
+		const registry = new BackendRegistry(loadConfig(cwd), { onInvocation: (record) => records.push(record) });
 
 		const restore = setStubScript(cli.recordPath, {
-			modes: { codex: "error" },
+			modes: {},
 			files: {},
-			summary: "opencode claims success",
+			summary: "the function memoizes its argument",
 		});
-		const outcome = await runWorkerTurn({ objective: "create task.txt", role: "strong", files: ["task.txt"] }, { registry, cwd });
+		// A question, not a patch: nothing in the workspace should move, and the
+		// answer is the whole deliverable.
+		const outcome = await runWorkerTurn({ objective: "explain task.txt", role: "strong", files: ["task.txt"] }, { registry, cwd });
 		restore();
 
-		expect(outcome.status).toBe("blocked");
-		expect(outcome.attempts.map((attempt) => [attempt.backend, attempt.failure])).toEqual([
-			["codex", "exit"],
-			["opencode", "no_change"],
-		]);
+		expect(outcome.status).toBe("completed");
+		expect(outcome.attempts).toEqual([]);
+		expect(outcome.result?.changedFiles).toEqual([]);
+		expect(outcome.result?.summary).toContain("the function memoizes its argument");
+		// One provider answered it; the chain never paid a second one.
+		expect(records).toHaveLength(1);
 	});
 });
 

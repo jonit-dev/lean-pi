@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
-import { isInformational, launchPlan, packageRoot, resolvePiCli } from "../../src/cli/launch.js";
+import { isInformational, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli } from "../../src/cli/launch.js";
 import { tempDir } from "../helpers/fixtures.js";
 
 describe("the leanpi launcher", () => {
@@ -21,7 +21,8 @@ describe("the leanpi launcher", () => {
 		// `--no-skills` rides along: LeanPi does its own disclosure (PRD-005), and
 		// Pi's discovery loads every installed skill — 190 on the machine this was
 		// written on, and 82,343 bytes of the system prompt of every request.
-		expect(plan.args).toEqual(["--extension", plan.extension, "--no-skills", "--print", "do the thing"]);
+		const theme = ["--theme", join(PACKAGE_ROOT, "themes", "leanpi.json"), "--use-theme", "leanpi"];
+		expect(plan.args).toEqual(["--extension", plan.extension, "--no-skills", ...theme, "--print", "do the thing"]);
 		// Pi's CLI comes from the dependency, not from PATH: the version LeanPi is
 		// built against is the one it should run under.
 		expect(plan.cli).toBe(join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"));
@@ -32,7 +33,13 @@ describe("the leanpi launcher", () => {
 		const plan = launchPlan(["--extension", "/tmp/mine.js"], PACKAGE_ROOT);
 		// Pi takes the flag more than once; dropping the caller's would be the
 		// launcher deciding something it was not asked to decide.
-		expect(plan.args).toEqual(["--extension", plan.extension, "--no-skills", "--extension", "/tmp/mine.js"]);
+		expect(plan.args.slice(0, 3)).toEqual(["--extension", plan.extension, "--no-skills"]);
+		expect(plan.args.slice(-2)).toEqual(["--extension", "/tmp/mine.js"]);
+	});
+
+	it("leaves the palette alone when the caller named a theme", () => {
+		expect(launchPlan(["--use-theme", "dark"], PACKAGE_ROOT).args).not.toContain("--theme");
+		expect(launchPlan(["--no-themes"], PACKAGE_ROOT).args).not.toContain("--use-theme");
 	});
 
 	it("says what to do when the package is not built", () => {
@@ -74,5 +81,15 @@ describe("the leanpi launcher", () => {
 
 	it("resolves its own package root from the built module", () => {
 		expect(packageRoot(new URL("file://" + join(PACKAGE_ROOT, "dist", "cli", "launch.js")).href)).toBe(PACKAGE_ROOT);
+	});
+
+	it("takes --safety out of Pi's argv, and refuses a level that is not one of the three", () => {
+		expect(parseLeanPiFlags(["--safety", "high", "--print", "go"])).toEqual({ allowMissingJev: false, safety: "high", rest: ["--print", "go"] });
+		expect(parseLeanPiFlags(["--safety=low"]).safety).toBe("low");
+		// Absent is the default, and absent must stay absent: the permission state
+		// only overrides itself when the variable the launcher forwards is set.
+		expect(parseLeanPiFlags(["--print", "go"]).safety).toBeUndefined();
+		expect(() => parseLeanPiFlags(["--safety", "paranoid"])).toThrow(/low \| medium \| high/);
+		expect(() => parseLeanPiFlags(["--safety"])).toThrow(/low \| medium \| high/);
 	});
 });

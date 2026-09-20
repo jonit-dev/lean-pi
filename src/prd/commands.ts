@@ -16,7 +16,7 @@ import type { CommandHandler, CommandRegistry, CommandResult } from "../commands
 import type { LeanPiConfig } from "../core/types.js";
 import type { JevClient } from "../jev/client.js";
 import { authorPrd, resolveSkillScript, writePrdFile, type AuthoringModel } from "./creator.js";
-import { noteLaneModuleLoad } from "./dispatch.js";
+import { noteLaneModuleLoad, PRD_COMMAND_HELP } from "./dispatch.js";
 import { createPrdState, readPrdState, writePrdState, type PrdState } from "./state.js";
 
 noteLaneModuleLoad("commands");
@@ -27,6 +27,13 @@ export interface PrdCommandDeps {
 	artifactStore: ArtifactStore;
 	/** The authoring model pass; without it `/prd create` reports the missing dependency. */
 	author?: AuthoringModel;
+	/**
+	 * The request the user already typed, for `/prd create` with no argument.
+	 * The status line invites the user into the PRD lane *because of* a turn that
+	 * was just classified `PRD_REQUIRED`; making them retype that turn's text as
+	 * a quoted argument was asking for something the session already had.
+	 */
+	defaultObjective?: () => string | undefined;
 	/** The PRD-level routing annotation; the compiler's classification when one exists. */
 	requiredCapability?: RequiredCapability;
 	jev?: JevClient;
@@ -55,7 +62,8 @@ function moveToDone(cwd: string, prdPath: string): string {
 export function createPrdHandler(deps: PrdCommandDeps): CommandHandler {
 	const now = deps.now ?? (() => new Date());
 
-	async function create(objective: string): Promise<CommandResult> {
+	async function create(argument: string): Promise<CommandResult> {
+		const objective = argument.length > 0 ? argument : (deps.defaultObjective?.() ?? "");
 		if (objective.length === 0) return { ok: false, text: 'usage: /prd create "<objective>"' };
 		if (!deps.author) return { ok: false, text: "/prd create needs an authoring model; none is wired in this session" };
 
@@ -171,7 +179,7 @@ export function createPrdHandler(deps: PrdCommandDeps): CommandHandler {
 export function registerPrdCommands(registry: CommandRegistry, deps: PrdCommandDeps): void {
 	// A later session supersedes the earlier handler, exactly like `/skills`.
 	if (registry.has("prd")) registry.unregister("prd");
-	registry.register("prd", createPrdHandler(deps));
+	registry.register("prd", createPrdHandler(deps), PRD_COMMAND_HELP);
 }
 
 /** The active PRD, for callers that need the state without a manager. */

@@ -22,6 +22,7 @@ import { evaluateProofGate } from "../proof/gate.js";
 import { criteriaOf } from "../proof/packet.js";
 import { scoutTask } from "../scout/index.js";
 import { itemsOf, remainingWork, type TodoCarrier } from "../todo/index.js";
+import { EvidenceStore } from "../verify/evidence.js";
 import { workspaceHash } from "../verify/hash.js";
 import { registerOwnedLanes, type Lane, type TurnContext } from "./session.js";
 import { feedInvocation, type RunCollector } from "../telemetry/index.js";
@@ -159,10 +160,17 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 						hashWorkspace: () => workspaceHash(deps.cwd),
 					})) ?? undefined;
 			}
+			// One store per turn, shared by the executor's verification and the gate
+			// below: PRD-009's records are what a recovery round writes into, and
+			// without a store `recover()` had nowhere to put a result — every gap it
+			// could actually have closed came back "blocked".
+			const store = new EvidenceStore();
+			context.onProgress?.(`running ${contract.routing.executor_class} on ${registry.selectBackend(contract.routing.executor_class)[0]?.name ?? "no available backend"}`);
 			context.executor = await runExecutor(contract, {
 				registry,
 				cwd: deps.cwd,
 				config: deps.config,
+				store,
 				...(deps.jev ? { jev: deps.jev } : {}),
 				...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 				...(context.exploration ? { selection: { excerpts: excerptsOf(context.exploration) } } : {}),
@@ -171,6 +179,7 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 				...(deps.verifyCommands ? { verifyCommands: deps.verifyCommands } : {}),
 				...(deps.reviewRunner ? { reviewRunner: deps.reviewRunner } : {}),
 			});
+			context.onProgress?.("gating the evidence");
 			// PRD-010's gate: the contract's criteria against the evidence this turn
 			// actually produced. The decision is what "done" means from here on; a turn
 			// whose executor was blocked is gated like any other, because the gate's
@@ -193,10 +202,23 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 				workspaceHash: context.executor.workspaceHash ?? workspaceHash(deps.cwd, context.executor.changedFiles),
 				evidence: context.executor.evidence,
 				changedFiles: context.executor.changedFiles,
-				summary: context.executor.blockedReason ?? null,
+				// A completed turn that answered instead of editing has its answer
+				// here; a blocked one has its reason. Both are the summary the gate
+				// reads, and the answer used to be dropped on the floor.
+				summary: context.executor.blockedReason ?? context.executor.summary ?? null,
 			}, {
 				contract,
 				config: deps.config,
+				// What `recover()` needs to be able to run anything at all: the store
+				// its record lands in, the directory a verifier command runs in, the
+				// command overrides for this turn and the artifact store a gathered
+				// result is captured into. Without them the gate could name a gap and
+				// never close one, which is the state every blocked proof was in.
+				store,
+				cwd: deps.cwd,
+				...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
+				...(deps.verifyCommands ? { commands: deps.verifyCommands } : {}),
+				...(deps.exec ? { exec: deps.exec } : {}),
 				...(deps.jev ? { jev: deps.jev } : {}),
 				// PRD-011's verdict for this turn is the review the gate asks for;
 				// without it a reviewer that already passed still reads as

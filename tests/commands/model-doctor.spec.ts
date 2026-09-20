@@ -9,6 +9,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createJevClient, type LeanPiConfig } from "../../src/index.js";
+import { installStubCli } from "../backends/helpers.js";
 import { nativeBackend, tempDir } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
 import { startStubJev, type StubJev } from "../helpers/stub-jev.js";
@@ -58,7 +59,7 @@ function modelDoctorFixture(): SurfaceFixture {
 	});
 }
 
-describe("/models, /model and /doctor (PRD-016 Phase 2)", () => {
+describe("/models and /doctor (PRD-016 Phase 2)", () => {
 	it("lists configured models by role with the ranking's score, price, role-fill, revision and staleness (AC-4)", async () => {
 		const fixture = modelDoctorFixture();
 
@@ -83,28 +84,21 @@ describe("/models, /model and /doctor (PRD-016 Phase 2)", () => {
 		expect(refresh.text).toContain("unknown flag");
 	});
 
-	it("switches the session's executor binding, observable in /status and /route (AC-4)", async () => {
+	it("pins the executor lane through /route, observable in the next /route (AC-4)", async () => {
 		const fixture = modelDoctorFixture();
 
 		const before = await fixture.dispatch("/route");
 		expect(before.text).toContain("route: no contract compiled yet");
 		expect(before.text).not.toContain("gpt-5");
 
-		const switched = await fixture.dispatch("/model strong");
+		// `/model <role>` is gone: Pi owns `/model`, and the role switch was always
+		// this pin. The binding still resolves through the ranking (PRD-024).
+		const switched = await fixture.dispatch("/route executor strong");
 		expect(switched.ok).toBe(true);
-		// The role resolves through the ranking (PRD-024), which is the platform's pick, not this PRD's.
-		expect(switched.text).toContain("strong → stub/gpt-5");
-
-		const status = await fixture.dispatch("/status");
-		expect(status.text).toMatch(/strong=stub\/gpt-5 \(session\)/);
 
 		const route = await fixture.dispatch("/route");
 		expect(route.text).toContain("executor: strong stub/gpt-5 (forced)");
 		expect(route.text).toContain("review: ");
-
-		const bindings = await fixture.dispatch("/model");
-		expect(bindings.text).toMatch(/quick: stub\/claude-haiku-4-5 \(config\)/);
-		expect(bindings.text).toMatch(/reasoning: \w+/);
 	});
 
 	it("reports one row per backend, the missing command, the registries' counts and roots, and no secret (AC-5)", async () => {
@@ -125,5 +119,36 @@ describe("/models, /model and /doctor (PRD-016 Phase 2)", () => {
 		expect(doctor.text).toContain("ok");
 		expect(doctor.text).not.toContain(STUB_SECRET);
 		expect(doctor.text).not.toContain("sk-harness-secret");
+	});
+
+	it("separates installed from signed in, reports a refused JEV probe, and does not degrade over absent MCP config (F7)", async () => {
+		const cli = installStubCli();
+		// A JEV endpoint that rejects the credential: the old row read this as
+		// "answered in 3ms" and dropped the 401 entirely.
+		const refusing = await startStubJev([() => ({ status: 401 })]);
+		const cwd = tempDir("leanpi-doctor-auth-");
+		const fixture = surfaceFixture({
+			cwd,
+			config: {
+				// On PATH, but the fixture's `$HOME` holds no credential and the stub
+				// answers `codex login status` with something that is not a login.
+				backends: { harness: { type: "external_harness", vendor: "codex", command: cli.bin.codex } },
+				models: { quick: { backend: "harness", model: "default" } },
+				capabilities: { skillRoots: [skillFixture(tempDir("leanpi-skillroot-"))] },
+				jev: { endpoint: refusing.url, apiKey: "test-key", model: "jev-latest", mode: "enabled" },
+			},
+			name: "doctor-auth",
+			jev: (config) => createJevClient({ config, cwd }),
+		});
+
+		const doctor = await fixture.dispatch("/doctor");
+		await refusing.close();
+
+		expect(doctor.text).toMatch(/backend harness \(external_harness\)\s+degraded/);
+		expect(doctor.text).toContain(`run \`${cli.bin.codex} login\``);
+		expect(doctor.text).toMatch(/jev\s+degraded\s+.*but the probe failed: JEV responded 401/);
+		// No MCP config in the fixture: optional and absent is not a fault.
+		expect(doctor.text).toMatch(/mcp\s+ok\s+0 servers/);
+		expect(doctor.text).toContain("summary: degraded");
 	});
 });

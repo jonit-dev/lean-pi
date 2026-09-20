@@ -78,5 +78,8 @@ export function createTodoHandler(deps: TodoCommandDeps): CommandHandler {
 /** Registers `/todo`; a later session supersedes the earlier handler, exactly like `/skills`. */
 export function registerTodoCommands(registry: CommandRegistry, deps: TodoCommandDeps): void {
 	if (registry.has("todo")) registry.unregister("todo");
-	registry.register("todo", createTodoHandler(deps));
+	registry.register("todo", createTodoHandler(deps), {
+		summary: "show the task list; add, start, complete, block or drop an item",
+		usage: "/todo [add <text> | start <id> | done <id> | block <id> [reason] | unblock <id> | drop <id> | clear | sync]",
+	});
 }

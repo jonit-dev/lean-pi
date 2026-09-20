@@ -24,6 +24,104 @@ the PRD index with per-PRD status is [`docs/PRDs/v1/INDEX.md`](docs/PRDs/v1/INDE
 
 ---
 
+## Run it
+
+Requires `git`; developed and tested on Node 22 (`engines.node >=22.19.0`). The
+published 2026-09-19 benchmark used Node 20; the 2026-09-19 audit smoke-tested the
+documented path on Node 22.
+
+```sh
+npm install
+npm run build
+npm link          # puts `leanpi` on PATH
+leanpi            # run it anywhere
+```
+
+**First run configures itself.** With no `leanpi.config.yaml` anywhere above the
+working directory, `leanpi` asks the machine what it has — which vendor CLIs are
+installed *and* signed in (`claude auth status`, `codex login status`,
+`opencode auth list`), which models those CLIs report, and whether Pi already
+holds a provider credential — then writes
+`~/.config/leanpi/leanpi.config.yaml` with JEV allocating the six roles over
+those models from published capability and price data. It is an ordinary file:
+edit it, or delete it to have it written again. No credential is ever written
+into it.
+
+```
+leanpi — tell me your goal, I figure out the rest.
+  models   quick opencode-go deepseek-v4.1-flash  ·  balanced codex gpt-6-astra  ·  strong claude opus[1m]
+  review   opencode-go deepseek-v4.1-flash → claude opus[1m]
+  control  JEV configured (source: env file)
+```
+
+While a turn runs, the footer carries the decision it made:
+`Auto: opus (1m) (Medium) — MEDIUM complexity — Executor lane`. On a native
+backend Pi's own loop is the executor, so LeanPi's verification and proof gate
+do not run on that turn and the footer says so — `… — Pi loop — unverified —
+/verify` — and `/verify` runs the contract's verifiers and the gate against the
+workspace whenever you want the evidence.
+
+LeanPi's commands are ordinary Pi slash commands: `/help` lists them, and
+`/status`, `/route`, `/models`, `/context`, `/doctor`, `/config`, `/cost`,
+`/skills`, `/mcp`, `/permissions`, `/jev`, `/todo`, `/goal`, `/review`,
+`/verify` and `/prd` are all typed into the same prompt as a task.
+
+**The JEV key is required.** The task compiler, the skill disclosure and the
+proof gate are JEV decisions; without a key every one of them falls back to a
+heuristic, which is a different harness than the measured one, so `leanpi`
+refuses to start and says how to configure it:
+
+```sh
+leanpi --jev-key <key>          # stored at ~/.config/leanpi/credentials.json (0600)
+export JEV_API_KEY=<key>        # or this shell
+echo 'JEV_API_KEY=<key>' >> .env  # or this project — read, never exported
+leanpi --no-jev                 # or run the degraded harness deliberately
+```
+
+Tool authorization is per scope (`read`, `edit`, `shell`, `network`, `mcp`,
+`external_dir`, `subagent`, `git_destructive`, `package_install`), resolved from
+the built-in defaults, your `~/.config/leanpi/permissions.json` and the
+project's `permissions:` block, which may only tighten. `/permissions` shows
+each scope's decision and where it came from; `/permissions set <scope>
+<allow|ask|deny>` changes it for good.
+
+`--safety` overrides all of that for one session, and is off unless passed:
+
+```sh
+leanpi --safety low      # every scope allow: nothing prompts, nothing refuses
+leanpi --safety medium   # the built-in column: read allow, most ask, destructive deny
+leanpi --safety high     # read allow, edit ask, everything else deny
+```
+
+A level is the whole policy — your stored scopes and every capability rule are
+ignored while it is in force, since a level a forgotten `/permissions set` could
+undercut would not be a level.
+
+Two other entry points, one code path:
+
+```sh
+# As a Pi extension by hand (what `leanpi` does for you)
+npx pi --extension ./dist/leanpi.js --no-skills
+
+# As a library (the same activate() path the tests exercise)
+node -e "import('./dist/index.js').then(async (m) => {
+  const session = await m.createLeanPiSession();
+  await session.runTurn('summarize this repository');
+  console.log(session.session.messages.at(-1).content);
+})"
+```
+
+Configuration lives in `leanpi.config.yaml` beside the working directory (or in
+`$XDG_CONFIG_HOME/leanpi/`): `backends` (native OpenAI-compatible endpoints and
+`external_harness` CLIs), `models` (the six roles `quick`/`balanced`/`strong`/
+`specialist`/`review_quick`/`review_strong`), `jev`, `capabilities`,
+`permissions`, `limits`. Credentials are resolved from the environment by name —
+no key is ever written into the repo.
+
+Annotated example: [`leanpi.config.yaml`](leanpi.config.yaml).
+
+---
+
 ## Benchmark TL;DR
 
 Measured 2026-09-19 against **omp** (oh-my-pi), same model
@@ -94,74 +192,6 @@ Raw evidence: [`docs/benchmarks/2026-09-19-golden-validation.json`](docs/benchma
 plus the ledgers under `bench/out/`.
 
 ---
-
-## Run it
-
-Requires `git`; developed and tested on Node 22 (`engines.node >=22.19.0`). The
-published 2026-09-19 benchmark used Node 20; the 2026-09-19 audit smoke-tested the
-documented path on Node 22.
-
-```sh
-npm install
-npm run build
-npm link          # puts `leanpi` on PATH
-leanpi            # run it anywhere
-```
-
-**First run configures itself.** With no `leanpi.config.yaml` anywhere above the
-working directory, `leanpi` asks the machine what it has — which vendor CLIs are
-installed *and* signed in (`claude auth status`, `codex login status`,
-`opencode auth list`), which models those CLIs report, and whether Pi already
-holds a provider credential — then writes
-`~/.config/leanpi/leanpi.config.yaml` with JEV allocating the six roles over
-those models from published capability and price data. It is an ordinary file:
-edit it, or delete it to have it written again. No credential is ever written
-into it.
-
-```
-leanpi — tell me your goal, I figure out the rest.
-  models   quick opencode-go deepseek-v4.1-flash  ·  balanced codex gpt-6-astra  ·  strong claude opus[1m]
-  review   opencode-go deepseek-v4.1-flash → claude opus[1m]
-  control  JEV configured (source: env file)
-```
-
-While a turn runs, the footer carries the decision it made:
-`Auto: opus (1m) (Medium) — MEDIUM complexity — Executor lane`.
-
-**The JEV key is required.** The task compiler, the skill disclosure and the
-proof gate are JEV decisions; without a key every one of them falls back to a
-heuristic, which is a different harness than the measured one, so `leanpi`
-refuses to start and says how to configure it:
-
-```sh
-leanpi --jev-key <key>          # stored at ~/.config/leanpi/credentials.json (0600)
-export JEV_API_KEY=<key>        # or this shell
-echo 'JEV_API_KEY=<key>' >> .env  # or this project — read, never exported
-leanpi --no-jev                 # or run the degraded harness deliberately
-```
-
-Two other entry points, one code path:
-
-```sh
-# As a Pi extension by hand (what `leanpi` does for you)
-npx pi --extension ./dist/leanpi.js --no-skills
-
-# As a library (the same activate() path the tests exercise)
-node -e "import('./dist/index.js').then(async (m) => {
-  const session = await m.createLeanPiSession();
-  await session.runTurn('summarize this repository');
-  console.log(session.session.messages.at(-1).content);
-})"
-```
-
-Configuration lives in `leanpi.config.yaml` beside the working directory (or in
-`$XDG_CONFIG_HOME/leanpi/`): `backends` (native OpenAI-compatible endpoints and
-`external_harness` CLIs), `models` (the six roles `quick`/`balanced`/`strong`/
-`specialist`/`review_quick`/`review_strong`), `jev`, `capabilities`,
-`permissions`, `limits`. Credentials are resolved from the environment by name —
-no key is ever written into the repo.
-
-Annotated example: [`leanpi.config.yaml`](leanpi.config.yaml).
 
 ## Benchmarks
 

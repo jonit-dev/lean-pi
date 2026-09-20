@@ -30,7 +30,7 @@ export const PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type PermissionDecision = (typeof PERMISSION_DECISIONS)[number];
 
 /** Where a decision came from; `/permissions` renders this verbatim. */
-export type DecisionSource = "user" | "project" | "builtin";
+export type DecisionSource = "user" | "project" | "builtin" | "safety";
 
 export const DECISION_RANK: Record<PermissionDecision, number> = { allow: 0, ask: 1, deny: 2 };
 
@@ -45,6 +45,41 @@ export const BUILTIN_DEFAULTS: Record<Scope, PermissionDecision> = {
 	subagent: "ask",
 	git_destructive: "deny",
 	package_install: "ask",
+};
+
+export const SAFETY_LEVELS = ["low", "medium", "high"] as const;
+
+export type SafetyLevel = (typeof SAFETY_LEVELS)[number];
+
+export function isSafetyLevel(value: string): value is SafetyLevel {
+	return (SAFETY_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * `--safety <level>`: one named policy that replaces every other source.
+ *
+ * Off unless the flag is passed, and when it is passed it is the whole answer —
+ * the stored user scope, the project block and every capability rule are
+ * ignored, because a level that a forgotten `/permissions set` could undercut
+ * would not be a level at all.
+ *
+ * `low` is the no-prompt profile; `medium` is the conservative column above;
+ * `high` reads and asks before an edit, and nothing else runs.
+ */
+export const SAFETY_PROFILES: Record<SafetyLevel, Record<Scope, PermissionDecision>> = {
+	low: Object.fromEntries(SCOPES.map((scope) => [scope, "allow"])) as Record<Scope, PermissionDecision>,
+	medium: BUILTIN_DEFAULTS,
+	high: {
+		read: "allow",
+		edit: "ask",
+		shell: "deny",
+		network: "deny",
+		mcp: "deny",
+		external_dir: "deny",
+		subagent: "deny",
+		git_destructive: "deny",
+		package_install: "deny",
+	},
 };
 
 export interface PermissionRule {

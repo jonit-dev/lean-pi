@@ -12,7 +12,8 @@
 import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { GuardQuestion } from "../../src/permissions/index.js";
+import { createCommandRegistry } from "../../src/commands/registry.js";
+import { registerPermissionsCommand, type GuardQuestion } from "../../src/permissions/index.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { gitInit, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
@@ -373,6 +374,38 @@ describe("PRD-017 — the ask path itself", () => {
 		expect([...questions[0]!.scopes].sort()).toEqual(["network", "shell"]);
 		expect(trace.commands).toEqual([`curl ${server.url}`]);
 		expect(server.requests).toEqual(["GET /"]);
+		booted.dispose();
+	});
+});
+
+describe("PRD-017 — a decline lasts the session, and the documented recovery ends it", () => {
+	it("re-prompts after /permissions set <capability> ask, and the refusal says how long the answer holds", async () => {
+		const script = [...drive([call("execute", { command: "echo twice" })]), ...drive([call("execute", { command: "echo twice" })])];
+		const stub = await withStub(await startStubBackend(script));
+		const { cwd, env } = project();
+		const trace = { commands: [] as string[], paths: [] as string[] };
+		const answers = [false, true];
+		const ui = {
+			prompts: [] as Array<{ title: string; message: string }>,
+			confirm: () => answers[ui.prompts.length - 1] ?? false,
+		};
+		const booted = await bootGuardedSession({ cwd, baseUrl: stub.baseUrl, env, trace, ui });
+
+		await booted.session.prompt("run it");
+		expect(trace.commands).toEqual([]);
+		// A refusal that hides the answer's lifetime sends the user looking for a
+		// policy bug that does not exist.
+		expect(toolMessages(stub)).toContain("remembered for the rest of this session");
+
+		// The recovery the refusal itself recommends, over the guard's own state.
+		const registry = createCommandRegistry();
+		registerPermissionsCommand(registry, { cwd, env, state: booted.state });
+		expect((await registry.dispatch("/permissions set shell:echo twice ask", { cwd })).ok).toBe(true);
+
+		await booted.session.prompt("run it again");
+
+		expect(ui.prompts).toHaveLength(2);
+		expect(trace.commands).toEqual(["echo twice"]);
 		booted.dispose();
 	});
 });

@@ -21,7 +21,14 @@ import { autoConfigure, jevClientFor, missingBackendKeys, MissingJevKeyError, re
 import { loadConfig } from "../dist/core/config.js";
 import { isInformational, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 
-const flags = parseLeanPiFlags(process.argv.slice(2));
+let flags;
+try {
+	flags = parseLeanPiFlags(process.argv.slice(2));
+} catch (error) {
+	// A mistyped level is a usage error, not a crash: the message names the three.
+	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+	process.exit(1);
+}
 
 let plan;
 try {
@@ -67,7 +74,18 @@ try {
 	process.exit(1);
 }
 
-const child = spawn(process.execPath, [plan.cli, ...plan.args], { stdio: "inherit" });
+// Both flags are decisions about the session, not just about startup, and the
+// extension runs in this child: `--no-jev` used to only tolerate a missing key,
+// so a machine that *had* one ran every JEV site anyway, and `--safety` has no
+// other way to reach the permission state the guard resolves against.
+const child = spawn(process.execPath, [plan.cli, ...plan.args], {
+	stdio: "inherit",
+	env: {
+		...process.env,
+		...(flags.allowMissingJev ? { LEANPI_NO_JEV: "1" } : {}),
+		...(flags.safety === undefined ? {} : { LEANPI_SAFETY: flags.safety }),
+	},
+});
 child.on("error", (error) => {
 	process.stderr.write(`leanpi could not start Pi (${plan.cli}): ${error.message}\n`);
 	process.exit(1);

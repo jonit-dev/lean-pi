@@ -60,7 +60,6 @@ export type WorkerFailureKind =
 	| "provider"
 	| "model"
 	| "timeout"
-	| "no_change"
 	| "blocked";
 
 /** A typed worker failure — never a throw that unwinds the turn. */

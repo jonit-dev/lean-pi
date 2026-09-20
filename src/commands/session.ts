@@ -59,6 +59,13 @@ export interface TurnContext {
 	workingStateSources?: WorkingStateSources;
 	/** STATIC prefix plus the SEMI-STABLE block for this turn. */
 	prefix: string;
+	/**
+	 * Where a lane says what it is doing, for callers that have somewhere to put
+	 * it. A vendor turn is tens of seconds long and, until this existed, the
+	 * whole of it was a blank screen: the executor lane installed its status
+	 * line only after the work it describes had finished.
+	 */
+	onProgress?: (phase: string) => void;
 }
 
 export interface Lane {
@@ -158,6 +165,18 @@ function cappedThinkingLevel(effort: ThinkingLevel | undefined, declared: Thinki
 function declaredThinkingLevel(config: LeanPiConfig, backend: string): ThinkingLevel | undefined {
 	const declared = config.backends[backend]?.thinkingLevel;
 	return typeof declared === "string" ? declared : undefined;
+}
+
+/**
+ * The level a turn may run at on `backend`: the compiled effort under the
+ * operator's ceiling. Exported because the interactive path (`activate()`'s
+ * `before_agent_start`) sets the session's level itself and was passing the
+ * compiled effort straight through — so `backends.<name>.thinkingLevel: off`,
+ * the one spending switch an operator has, held on the programmatic path and
+ * was ignored on the path every interactive user takes.
+ */
+export function thinkingLevelFor(config: LeanPiConfig, backend: string, effort: ThinkingLevel | undefined): ThinkingLevel | undefined {
+	return cappedThinkingLevel(effort, declaredThinkingLevel(config, backend));
 }
 
 /** The prefix `activate()`'s request handler applies to the request in flight. */

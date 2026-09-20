@@ -12,7 +12,7 @@
  */
 import { resolve as resolvePath } from "node:path";
 import type { CommandHandler, CommandRegistry, CommandResult } from "../commands/registry.js";
-import { SCOPES, isPermissionDecision, isScope, parseCapability, type DecisionSource } from "./rules.js";
+import { SCOPES, isPermissionDecision, isSafetyLevel, isScope, parseCapability, type DecisionSource } from "./rules.js";
 import { loadPermissionState, type PermissionState } from "./state.js";
 import { grantTrust, writeUserDefault, writeUserRule, type PermissionEnv } from "./trust.js";
 
@@ -20,6 +20,7 @@ const SOURCE_LABEL: Record<DecisionSource, string> = {
 	builtin: "builtin default",
 	user: "user scope",
 	project: "project scope",
+	safety: "--safety",
 };
 
 export interface PermissionsCommandDeps {
@@ -38,6 +39,11 @@ export function renderPermissions(state: PermissionState): string {
 	lines.push(`LeanPi permissions — project ${trust.root}: ${trust.status} (${trust.reason})`);
 	if (trust.changedFile) lines.push(`changed file: ${trust.changedFile}`);
 	lines.push(`config: ${state.config.configPath ?? "(built-in defaults, no leanpi.config.yaml)"}`);
+	// The level replaced every other source, so the view has to say which one, or
+	// the reader is left to explain nine `--safety` rows from a config that says
+	// something else.
+	const level = state.env.LEANPI_SAFETY;
+	if (level !== undefined && isSafetyLevel(level)) lines.push(`safety: ${level} (--safety) — user and project permissions are ignored this session`);
 	for (const scope of SCOPES) {
 		const decision = state.permissions.defaults[scope];
 		const source = SOURCE_LABEL[state.permissions.defaultSources[scope]];
@@ -59,15 +65,20 @@ export function renderPermissions(state: PermissionState): string {
 function setDecision(state: PermissionState, capability: string, decision: string): CommandResult {
 	if (!isPermissionDecision(decision)) return { ok: false, text: `usage: /permissions set <capability> <allow|ask|deny>` };
 	const env = state.env;
+	// A level in force outranks the file this writes, so the write still happens
+	// — it is user scope, for every session without the flag — and the answer
+	// says it changes nothing here rather than implying the guard just moved.
+	const level = env.LEANPI_SAFETY;
+	const inert = level !== undefined && isSafetyLevel(level) ? ` — inert while \`--safety ${level}\` is active; applies to sessions started without the flag` : "";
 	if (isScope(capability)) {
 		writeUserDefault(capability, decision, env);
-		return { ok: true, text: `${capability}: ${decision} (user scope default)` };
+		return { ok: true, text: `${capability}: ${decision} (user scope default)${inert}` };
 	}
 	if (!parseCapability(capability)) {
 		return { ok: false, text: `unknown scope "${capability}" — expected a scope name or "<scope>:<target>"` };
 	}
 	writeUserRule(capability, decision, env);
-	return { ok: true, text: `${capability}: ${decision} (user scope rule)` };
+	return { ok: true, text: `${capability}: ${decision} (user scope rule)${inert}` };
 }
 
 export function registerPermissionsCommand(registry: CommandRegistry, deps: PermissionsCommandDeps): void {

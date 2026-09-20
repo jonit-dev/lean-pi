@@ -21,7 +21,7 @@ import { activate, clearLanes } from "../src/index.js";
 import { loadConfig } from "../src/core/config.js";
 
 /** A machine with the vendor CLIs installed and logged in. */
-function machine(options: { vendors: readonly string[] }): { cwd: string; home: string; env: NodeJS.ProcessEnv } {
+function machine(options: { vendors: readonly string[]; signedIn?: boolean }): { cwd: string; home: string; env: NodeJS.ProcessEnv } {
 	const root = mkdtempSync(join(tmpdir(), "leanpi-bootstrap-"));
 	const home = join(root, "home");
 	const bin = join(root, "bin");
@@ -33,14 +33,18 @@ function machine(options: { vendors: readonly string[] }): { cwd: string; home: 
 		opencode: join(home, ".local", "share", "opencode", "auth.json"),
 	};
 	// The stub answers its own status command the way the real CLI does, because
-	// that is what detection now asks.
-	const status: Record<string, string> = {
-		claude: '{"loggedIn": true}',
-		codex: "Logged in using ChatGPT",
-		// `opencode auth list` for the status probe, `opencode models` for the
-		// candidate list: the stub answers both the way the real CLI does.
-		opencode: '{"loggedIn": true}\n1 credentials\nopencode-go/deepseek-v4.1-flash',
-	};
+	// that is what detection now asks. `signedIn: false` is the other real state:
+	// installed, with a credential file, and the CLI itself saying no.
+	const signedIn = options.signedIn ?? true;
+	const status: Record<string, string> = signedIn
+		? {
+				claude: '{"loggedIn": true}',
+				codex: "Logged in using ChatGPT",
+				// `opencode auth list` for the status probe, `opencode models` for the
+				// candidate list: the stub answers both the way the real CLI does.
+				opencode: '{"loggedIn": true}\n1 credentials\nopencode-go/deepseek-v4.1-flash',
+			}
+		: { claude: '{"loggedIn": false}', codex: "Not logged in", opencode: "0 credentials" };
 	for (const vendor of options.vendors) {
 		writeFileSync(join(bin, vendor), `#!/bin/sh\necho '${status[vendor] as string}'\n`, { mode: 0o755 });
 		const credential = credentials[vendor] as string;
@@ -120,14 +124,27 @@ describe("first run", () => {
 		expect(readFileSync(existing, "utf8")).toContain("mine");
 	});
 
-	it("says what to do when nothing is signed in, instead of writing a config that cannot run", async () => {
+	it("names every candidate and the command that would fix it, instead of one verdict", async () => {
 		const { cwd, home, env } = machine({ vendors: [] });
 
 		const result = await autoConfigure({ cwd, home, env });
 
 		expect(result.created).toBe(false);
-		expect(result.summary).toContain("no vendor CLI");
-		expect(result.summary).toMatch(/claude, codex, opencode/);
+		// One row per thing that could have run the turn: three vendors and Pi
+		// itself. The old summary collapsed all four into "no vendor CLI on this
+		// machine is both installed and signed in", which is the same sentence
+		// for an empty machine and for one with Claude installed and signed out.
+		for (const vendor of ["claude", "codex", "opencode"]) expect(result.summary).toContain(`${vendor}: not installed`);
+		expect(result.summary).toContain("pi auth login");
+	});
+
+	it("tells a signed-out vendor apart from a missing one, and names its login command", async () => {
+		const { cwd, home, env } = machine({ vendors: ["claude"], signedIn: false });
+
+		const result = await autoConfigure({ cwd, home, env });
+
+		expect(result.summary).toContain("claude: installed but signed out — run `claude /login`");
+		expect(result.summary).toContain("codex: not installed");
 	});
 });
 
@@ -380,6 +397,7 @@ describe("the status line", () => {
 			task: { execution_complexity: "MEDIUM" },
 			routing: { executor_class: "strong" },
 			reasoning: { effort: "medium" },
+			verification: { required: ["test"] },
 		} as never;
 
 		const line = statusLine({ config, contract, lane: "executor" });
@@ -390,7 +408,7 @@ describe("the status line", () => {
 
 	it("names the role when the config has no model for it, instead of throwing mid-turn", () => {
 		const config = { backends: {}, models: {} } as never;
-		const contract = { task: { execution_complexity: "LOW" }, routing: { executor_class: "quick" }, reasoning: { effort: "low" } } as never;
+		const contract = { task: { execution_complexity: "LOW" }, routing: { executor_class: "quick" }, reasoning: { effort: "low" }, verification: { required: [] } } as never;
 
 		expect(statusLine({ config, contract, lane: "pi_loop" })).toContain("quick");
 	});
@@ -515,6 +533,7 @@ describe("a PRD the user has not written yet", () => {
 				task: { execution_complexity: "HIGH", planning_decision: "PRD_REQUIRED" },
 				routing: { executor_class: "strong" },
 				reasoning: { effort: "high" },
+				verification: { required: [] },
 			} as never,
 			lane: "pi_loop",
 			prdWanted: true,
@@ -554,6 +573,7 @@ describe("the status line reaches the footer", () => {
 		const pi = {
 			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, handler),
 			registerTool: () => {},
+			registerCommand: () => {},
 			registerProvider: () => {},
 			setModel: async () => {},
 			setThinkingLevel: () => {},
@@ -612,6 +632,7 @@ describe("a credential the config names and the shell does not have", () => {
 		const pi = {
 			on: () => {},
 			registerTool: () => {},
+			registerCommand: () => {},
 			registerProvider: (_name: string, provider: Record<string, unknown>) => registered.push(provider),
 			setModel: async () => {},
 			setThinkingLevel: () => {},

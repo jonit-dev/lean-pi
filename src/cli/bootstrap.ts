@@ -17,7 +17,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
@@ -171,6 +171,47 @@ function renderConfig(
 	return lines.join("\n");
 }
 
+/** The vendor's own login command, for a readiness row that can be acted on. */
+const LOGIN_COMMAND: Record<string, string> = { claude: "claude /login", codex: "codex login", opencode: "opencode auth login" };
+
+/**
+ * Providers Pi itself holds a credential for, read from its own auth store.
+ *
+ * A machine with no vendor CLI can still be perfectly able to run LeanPi: Pi's
+ * loop is the executor on a native backend, and `pi auth login` is how that
+ * credential gets there. Reporting "nothing on this machine can run a turn"
+ * without mentioning it was the cold start telling a configured user they had
+ * configured nothing.
+ */
+function piAuthenticatedProviders(home: string): string[] {
+	const path = join(home, ".pi", "agent", "auth.json");
+	if (!existsSync(path)) return [];
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+		return typeof parsed === "object" && parsed !== null ? Object.keys(parsed as Record<string, unknown>) : [];
+	} catch {
+		// An unreadable auth store is Pi's business to report, not a reason to
+		// hide the rest of the readiness block.
+		return [];
+	}
+}
+
+/** One line per thing that could have run this turn, and the command that would fix it. */
+function readinessRows(detected: readonly SubscriptionState[], options: { env: NodeJS.ProcessEnv; home: string }): string[] {
+	const rows = detected.map((state) => {
+		if (!state.onPath) return `${state.vendor}: not installed (${state.evidence})`;
+		if (!state.signedIn) return `${state.vendor}: installed but signed out — run \`${LOGIN_COMMAND[state.vendor] ?? `${state.command} login`}\``;
+		return `${state.vendor}: ready`;
+	});
+	const providers = piAuthenticatedProviders(options.home);
+	rows.push(
+		providers.length > 0
+			? `pi: authenticated for ${providers.join(", ")} — add a \`native\` backend for one of them to ${userConfigPath({ ...options.env, HOME: options.home }) ?? CONFIG_FILENAME} and LeanPi will run on it`
+			: "pi: no provider credential of its own — `pi auth login` gives the loop a model without any vendor CLI",
+	);
+	return rows;
+}
+
 /**
  * Write a config from the machine's own subscriptions when there is none to
  * find. Never overwrites: a config that exists — project or user — is the
@@ -191,17 +232,20 @@ export async function autoConfigure(
 	// `verify: true`: a first run may spend a second asking three CLIs whether
 	// they are actually logged in, rather than writing a config against a vendor
 	// that only *looks* signed in from its credential file.
-	const usable = detectVendors({ env, home, verify: true }).filter((state) => state.onPath && state.signedIn);
+	const detected = detectVendors({ env, home, verify: true });
+	const usable = detected.filter((state) => state.onPath && state.signedIn);
 	if (usable.length === 0) {
 		return {
 			path,
 			created: false,
 			outcome: "no-subscription",
 			usable,
-			summary: [
-				`no ${CONFIG_FILENAME} found, and no vendor CLI on this machine is both installed and signed in.`,
-				`Write ${userConfigPath({ ...env, HOME: home }) ?? join(cwd, CONFIG_FILENAME)} with a backend and a model role, or log into one of: claude, codex, opencode.`,
-			].join(" "),
+			// One readiness block, not one verdict. The old line said "no vendor
+			// CLI is both installed and signed in" and threw the probe results
+			// away, so a user with Claude installed and signed out was told the
+			// same thing as a user with nothing installed — and neither was told
+			// which command fixes it.
+			summary: [`no ${CONFIG_FILENAME} found, and nothing on this machine can run a turn yet:`, ...readinessRows(detected, { env, home })].join("\n  "),
 		};
 	}
 	// The models come from the vendors, not from a table in this repository: a
@@ -269,7 +313,13 @@ export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boo
 	// `jev.apiKey` in config, the credential store, `$JEV_API_KEY`, the project's
 	// `.env` — the same order the client resolves, so the check cannot disagree
 	// with the session it is about to start.
-	const credential = resolveCredential(bootstrapConfig({ cwd, env, home }), { ...env, HOME: home }, cwd);
+	const config = bootstrapConfig({ cwd, env, home });
+	// An operator who wrote `jev.mode: disabled` has already answered this
+	// question: every site resolves by fallback, so a key would be read and never
+	// used. Demanding one was a refusal to start over a credential the configured
+	// session would ignore.
+	if (config.jev.mode === "disabled") return { source: "disabled (jev.mode)" };
+	const credential = resolveCredential(config, { ...env, HOME: home }, cwd);
 	if (credential.key !== null) return { source: describeCredential(credential) };
 	if (options.allowMissing === true) return { source: "not configured (--no-jev)" };
 	throw new MissingJevKeyError(

@@ -85,6 +85,13 @@ export interface ExecutorOutcome {
 	retryHistory: RetryRecord[];
 	invocations: ExecutorInvocation[];
 	review: ExecutorReviewOutcome;
+	/**
+	 * What the backend answered, when it answered rather than edited. A task that
+	 * needed no patch — "explain this function" — used to be classified as a
+	 * failed invocation and its text thrown away; now the transport reports the
+	 * success and this is the only place the answer survives to a caller.
+	 */
+	summary?: string;
 	blockedReason?: string;
 	escalations: EscalationCategory[];
 	/** One row per decision-site call this turn (FR-020, §56). */
@@ -403,6 +410,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 						retryHistory,
 						invocations,
 						review: reviewOutcome,
+						...(outcome.result.summary ? { summary: outcome.result.summary } : {}),
 						escalations,
 						sites,
 						...(assumption ? { assumption } : {}),

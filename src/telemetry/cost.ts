@@ -9,7 +9,7 @@
  */
 import type { CommandContext, CommandRegistry, CommandResult } from "../commands/registry.js";
 import { aggregateRuns, type TelemetryAggregate } from "./aggregate.js";
-import type { CostConfig } from "./pricing.js";
+import { unpricedCalls, type CostConfig } from "./pricing.js";
 import type { RunTelemetry } from "./record.js";
 import { readRuns, telemetryPath } from "./store.js";
 
@@ -35,8 +35,26 @@ export function renderEffectiveCostPerSuccess(aggregate: TelemetryAggregate): st
 	return aggregate.costPerVerifiedSuccess === null ? "n/a" : money(aggregate.costPerVerifiedSuccess);
 }
 
-/** The session report: one row per task, then the objective. */
-export function renderCostReport(runs: readonly RunTelemetry[], aggregate: TelemetryAggregate): string {
+/**
+ * The spend no rate card priced, printed beside a total instead of folded into
+ * it. These calls burned metered tokens and recorded $0, so a report that only
+ * sums `costUsd` is short by an unknown amount; naming the models is also the
+ * fix — they are the `cost.models` keys the operator has to declare.
+ */
+function renderUnpriced(runs: readonly RunTelemetry[]): string[] {
+	const rows = runs.flatMap((run) => unpricedCalls(run.calls ?? []));
+	if (rows.length === 0) return [];
+	const models = [...new Set(rows.map((row) => `${row.backend}/${row.model}`))];
+	return [`unpriced: ${rows.length} metered call(s) with no configured rate (${models.join(", ")})`];
+}
+
+/**
+ * The report: one row per task, then the objective. `scope` is what the totals
+ * were actually read over — the handler only filters by session when it was
+ * registered with one, and a figure that says "session" over every session in
+ * the store is a wrong answer to the question §3 asks.
+ */
+export function renderCostReport(runs: readonly RunTelemetry[], aggregate: TelemetryAggregate, scope: "session" | "all sessions"): string {
 	const rows = [
 		["task_id", "route", "executor", "success", "effective_cost"],
 		...runs.map((run) => [
@@ -51,7 +69,8 @@ export function renderCostReport(runs: readonly RunTelemetry[], aggregate: Telem
 		table(rows),
 		"",
 		`runs: ${aggregate.runs}`,
-		`session total: ${money(aggregate.effectiveCostUsd)}`,
+		`${scope} total: ${money(aggregate.effectiveCostUsd)}`,
+		...renderUnpriced(runs),
 		`verified successes: ${aggregate.verifiedSuccesses}`,
 		`effective cost per verified success: ${renderEffectiveCostPerSuccess(aggregate)}`,
 	].join("\n");
@@ -73,6 +92,7 @@ export function renderRun(record: RunTelemetry): string {
 		`result: verification=${record.result.verification} proof_gate=${record.result.proof_gate} reviewer=${record.result.reviewer} success=${record.result.success}`,
 		`capabilities: skills disclosed=[${record.capabilities.skills_disclosed.join(", ")}] used=[${record.capabilities.skills_used.join(", ")}] mcps disclosed=[${record.capabilities.mcps_disclosed.join(", ")}] used=[${record.capabilities.mcps_used.join(", ")}]`,
 		`calls: ${(record.calls ?? []).map((call) => `${call.backend_type}/${call.backend}/${call.model} (${call.role}, in=${call.inputTokens}, out=${call.outputTokens}, ${money(call.costUsd)})`).join("; ") || "none"}`,
+		...renderUnpriced([record]),
 		`jev_decisions: ${(record.jev_decisions ?? []).map((row) => `${row.site_id} answer=${JSON.stringify(row.answer)} confidence=${row.confidence ?? "n/a"} fallback=${row.fallback_used} tokens=${row.tokens}`).join("; ") || "none"}`,
 	].join("\n");
 }
@@ -81,6 +101,9 @@ export function registerCostCommand(registry: CommandRegistry, deps: CostCommand
 	const handler = (args: string, context: CommandContext): CommandResult => {
 		const cwd = context.cwd || deps.cwd;
 		const path = telemetryPath(cwd, deps.cost);
+		// Registered without a session id, `/cost` totals every run in the store;
+		// the label has to say which population the number came from.
+		const scope = deps.sessionId === undefined ? "all sessions" : "session";
 		const runs = readRuns(cwd, deps.sessionId === undefined ? {} : { sessionId: deps.sessionId }, deps.cost);
 		const taskId = args.trim();
 		if (taskId.length > 0) {
@@ -89,7 +112,7 @@ export function registerCostCommand(registry: CommandRegistry, deps: CostCommand
 			return { ok: true, text: renderRun(record) };
 		}
 		if (runs.length === 0) return { ok: true, text: `no telemetry recorded yet in ${path}` };
-		return { ok: true, text: renderCostReport(runs, aggregateRuns(runs)) };
+		return { ok: true, text: renderCostReport(runs, aggregateRuns(runs), scope) };
 	};
 	if (registry.has("cost")) registry.unregister("cost");
 	registry.register("cost", handler);

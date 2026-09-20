@@ -20,6 +20,8 @@ import { delimiter, join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { BackendRegistry, type RegisteredBackend } from "../backends/index.js";
+import { probeVendor } from "../backends/subscriptions.js";
+import type { HarnessVendor } from "../backends/harness.js";
 import { resolveRole } from "../core/roles.js";
 import type { BackendRef, LeanPiConfig, ModelRole } from "../core/types.js";
 import type { ExecutionContract } from "../compiler/contract.js";
@@ -181,22 +183,40 @@ function connectProbe(host: string, port: number, timeoutMs: number): Promise<Pr
 }
 
 /**
+ * What a signed-out vendor tells the user to run. `claude` takes a slash
+ * command as its prompt argument; the other two have a plain subcommand.
+ */
+const LOGIN_ARGS: Record<HarnessVendor, string> = {
+	claude: "/login",
+	codex: "login",
+	opencode: "auth login",
+};
+
+/**
  * One backend, one verdict and a one-line reason. A missing executable is
  * `unavailable`; a reachable endpoint is `ok`; anything in between is
  * `degraded`. No probe mutates state, installs anything, or prints a credential.
  */
 export async function probeBackend(
 	backend: RegisteredBackend,
-	options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; cooling?: string | null } = {},
+	options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; cooling?: string | null; verify?: boolean } = {},
 ): Promise<ProbeResult> {
 	if (!backend.enabled) return { status: "unavailable", reason: "disabled in config" };
 	if (options.cooling) return { status: "degraded", reason: `cooling down: ${options.cooling}` };
 
 	if (backend.type === "external_harness") {
 		const found = whichCommand(backend.command, options.env);
-		return found
-			? { status: "ok", reason: `command found at ${found}; authentication not probed` }
-			: { status: "unavailable", reason: `command "${backend.command}" is not on PATH` };
+		if (!found) return { status: "unavailable", reason: `command "${backend.command}" is not on PATH` };
+		if (!options.verify || !backend.vendor) return { status: "ok", reason: `command found at ${found}; authentication not probed` };
+		// Installed is not usable: a vendor whose login expired answers every
+		// invocation with "Not logged in", and reporting that as `ok` sends the
+		// turn at a backend that cannot run it. The vendor's own status command
+		// costs no tokens, so the diagnostic asks instead of assuming. It spawns,
+		// which is why only `/doctor` opts in.
+		const state = probeVendor(backend.vendor, { command: backend.command, ...(options.env ? { env: options.env } : {}), verify: true });
+		return state.signedIn
+			? { status: "ok", reason: `command found at ${found}; ${state.evidence}` }
+			: { status: "degraded", reason: `${state.evidence} — run \`${backend.command} ${LOGIN_ARGS[backend.vendor]}\`` };
 	}
 
 	const endpoint = parseEndpoint(backend.baseUrl);
@@ -205,12 +225,13 @@ export async function probeBackend(
 }
 
 /** Probe every backend concurrently: a dead harness must not hang the command. */
-export async function probeBackends(surface: CommandSurface): Promise<Map<string, ProbeResult>> {
+export async function probeBackends(surface: CommandSurface, options: { verify?: boolean } = {}): Promise<Map<string, ProbeResult>> {
 	await Promise.all(
 		surface.backends.backends.map(async (backend) => {
 			const result = await probeBackend(backend, {
 				env: surface.env,
 				cooling: surface.backends.cooldownOf(backend.name)?.reason ?? null,
+				...(options.verify ? { verify: true } : {}),
 			});
 			surface.probes.set(backend.name, result);
 		}),

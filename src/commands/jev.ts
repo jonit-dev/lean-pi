@@ -91,6 +91,15 @@ export function registerJevCommands(registry: CommandRegistry, deps: JevCommandD
 				}
 				if (action === "clear") {
 					const removed = clearStoredKey(deps.env);
+					// The credential store is one of four sources. Announcing the
+					// deterministic fallback after clearing it was wrong whenever
+					// `$JEV_API_KEY`, the project's `.env` or `jev.apiKey` still held
+					// one: the session carries on with the control plane live, and the
+					// user has been told the opposite.
+					const source = client.credentialSource();
+					if (source !== null && source !== "credential store") {
+						return { ok: true, text: `${removed ? "JEV key cleared" : "no stored JEV key"} — JEV is still configured from ${source}.` };
+					}
 					return { ok: true, text: removed ? "JEV key cleared. LeanPi continues on deterministic fallback." : "no stored JEV key" };
 				}
 				return { ok: false, text: "usage: /jev key set <key> | /jev key clear" };

@@ -30,7 +30,9 @@ export function skillRootsOf(surface: CommandSurface): SkillRoot[] {
 }
 
 export async function doctorRows(surface: CommandSurface): Promise<DoctorRow[]> {
-	const probes = await probeBackends(surface);
+	// `/doctor` is the one caller that pays for an authentication probe: a row
+	// saying "installed" about a signed-out vendor is the failure this command exists to catch.
+	const probes = await probeBackends(surface, { verify: true });
 	const rows: DoctorRow[] = surface.backends.backends.map((backend) => {
 		const probe = probes.get(backend.name) ?? { status: "unavailable" as const, reason: "not probed" };
 		return { name: `backend ${backend.name} (${backend.type})`, status: probe.status, reason: probe.reason };
@@ -52,7 +54,9 @@ export async function doctorRows(surface: CommandSurface): Promise<DoctorRow[]> 
 				rows.push({
 					name: "jev",
 					status: probe.ok ? "ok" : "degraded",
-					reason: `configured (source: ${status.source}, mode: ${status.mode}) answered in ${probe.latencyMs}ms (model: ${probe.modelVersion})`,
+					reason: probe.ok
+						? `configured (source: ${status.source}, mode: ${status.mode}) answered in ${probe.latencyMs}ms (model: ${probe.modelVersion})`
+						: `configured (source: ${status.source}, mode: ${status.mode}) but the probe failed: ${probe.error ?? "no reason reported"}`,
 				});
 			} catch (error) {
 				rows.push({
@@ -77,10 +81,18 @@ export async function doctorRows(surface: CommandSurface): Promise<DoctorRow[]> 
 	const home = surface.env.HOME ?? homedir();
 	const catalog = buildCatalog({ cwd: surface.cwd, config: surface.config, home });
 	const paths = resolveConfigPaths(surface.cwd, surface.config, home);
+	// A server the pool could not reach, or that wants authorization, is a real
+	// fault. Having configured none is not one: MCP is optional, and a summary
+	// that reads `degraded` on every stock installation teaches the reader to
+	// ignore it.
+	const broken = catalog.servers.filter((server) => server.health === "error" || server.health === "auth_required");
 	rows.push({
 		name: "mcp",
-		status: catalog.servers.length > 0 ? "ok" : "degraded",
-		reason: `${catalog.servers.length} servers, ${catalog.tools.length} tools indexed from ${[...paths.user, ...paths.project].join(", ") || "no config paths"}`,
+		status: broken.length > 0 ? "degraded" : "ok",
+		reason:
+			broken.length > 0
+				? `${broken.length} of ${catalog.servers.length} servers unhealthy: ${broken.map((server) => `${server.name} (${server.health})`).join(", ")}`
+				: `${catalog.servers.length} servers, ${catalog.tools.length} tools indexed from ${[...paths.user, ...paths.project].join(", ") || "no config paths"}`,
 	});
 
 	return rows;

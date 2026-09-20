@@ -5,7 +5,7 @@
  * session that silently resets a budget, or a flagless goal that runs unbounded
  * on one axis because a limit was left null.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/commands/registry.js";
 import { createGoalStore, goalStatePath, registerGoalCommands } from "../../src/goal/index.js";
@@ -77,6 +77,23 @@ describe("PRD-013 Phase 1 — the persisted goal record", () => {
 		expect(bad.ok).toBe(false);
 		expect(bad.text).toContain("--max-turns must be a positive number");
 		expect(createGoalStore(cwd).load()).toBeNull();
+	});
+
+	it("AC-1: bare /goal with a goal running shows it and writes nothing", async () => {
+		const cwd = fixtureCwd();
+		const registry = createCommandRegistry();
+		registerGoalCommands(registry, { cwd, config: goalConfig(cwd), prd: () => null, costSoFar: () => 0 });
+
+		await registry.dispatch("/goal ship the parser fix --max-turns 5", { cwd });
+		const before = readFileSync(goalStatePath(cwd), "utf8");
+
+		const shown = await registry.dispatch("/goal", { cwd });
+		expect(shown.ok).toBe(true);
+		expect(shown.text).toContain("ship the parser fix");
+		expect(shown.text).toContain("turns 0/5");
+		// Inspecting a goal must not restart it: a re-derived record would reset
+		// `started_at`, `turns_used` and the bounds the user chose.
+		expect(readFileSync(goalStatePath(cwd), "utf8")).toBe(before);
 	});
 
 	it("AC-1: /goal stop deactivates the record and refuses when nothing is running", async () => {

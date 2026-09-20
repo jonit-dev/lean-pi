@@ -8,16 +8,19 @@
  */
 import type { Command, CommandRegistry, CommandResult } from "./registry.js";
 
-/** One line for each shared-surface command whose PRD registered no metadata. */
+/**
+ * One line for each shared-surface command whose registrar attached no
+ * metadata. PRD numbers stay out: `/help` is read by the user, not by the
+ * maintainer holding the roadmap.
+ */
 const BUILTIN_SUMMARIES: Record<string, string> = {
-	goal: "show the active goal and its acceptance criteria (PRD-013)",
-	review: "run the reviewer lane over the current diff (PRD-011)",
-	prd: "author, inspect and close the active PRD (PRD-012)",
-	skills: "list, enable, disable or pin skills (PRD-005)",
-	mcp: "list, enable, disable or refresh MCP servers (PRD-006)",
-	permissions: "show or change the permission state (PRD-017)",
-	jev: "JEV status, setup, key management and privacy mode (PRD-002)",
-	cost: "session cost, per task and per verified success (PRD-015)",
+	goal: "show the active goal and its acceptance criteria",
+	review: "run the reviewer lane over the current diff",
+	prd: "author, inspect and close the active PRD",
+	mcp: "list, enable, disable or refresh MCP servers",
+	permissions: "show or change the permission state",
+	jev: "JEV status, setup, key management and privacy mode",
+	cost: "session cost, per task and per verified success",
 };
 
 export function renderHelp(registry: CommandRegistry): string {

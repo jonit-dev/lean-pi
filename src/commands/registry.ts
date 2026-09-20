@@ -18,6 +18,20 @@ export interface CommandContext {
 	/** Interactive prompt; absent in non-interactive modes. */
 	prompt?: (message: string) => Promise<string | undefined>;
 	notify?: (message: string) => void;
+	/**
+	 * Pi's live session facts, present only when the command came from Pi's TUI.
+	 * LeanPi's own `SessionManager` is not the one Pi writes turns to, so a
+	 * command that wants a *measured* session number must read it from here and
+	 * say so when it is absent rather than deriving a plausible one.
+	 */
+	session?: {
+		id: string;
+		/** Pi's own context usage for the active model; null when Pi does not know yet. */
+		contextTokens: number | null;
+		contextWindow: number;
+		model?: string;
+		thinkingLevel?: string;
+	};
 }
 
 export interface CommandResult {

@@ -35,6 +35,8 @@ import { BUILTIN_SECRETS_POLICY, type SecretsPolicy } from "./secrets.js";
 export interface PermissionEnv {
 	XDG_CONFIG_HOME?: string;
 	HOME?: string;
+	/** `--safety <level>`, forwarded by the launcher; unset means "no level". */
+	LEANPI_SAFETY?: string;
 }
 
 /** User-scope state file, outside the repository, next to the credential store. */

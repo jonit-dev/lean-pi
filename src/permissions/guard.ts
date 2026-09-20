@@ -114,12 +114,24 @@ export function installPermissionGuard(pi: ExtensionAPI, deps: GuardDeps): Permi
 		const credential = deps.credential?.();
 		return credential ? [[credential.name, credential.value]] : [];
 	};
-	/** Answers are cached per exact capability id, for this session only. */
+	/**
+	 * Answers are cached per exact capability id, for this session only, and the
+	 * cache lives only as long as the policy it was answered under: every
+	 * `/permissions set` calls `state.refresh()`, which installs a fresh
+	 * `ResolvedPermissions`. Without that key, a declined capability stays
+	 * declined for the whole session and the `/permissions set <capability> ask`
+	 * the refusal recommends would change nothing.
+	 */
 	const approvals = new Map<string, boolean>();
+	let answeredUnder: PermissionState["permissions"] | null = null;
 	const audit: PermissionAuditRow[] = [];
 
 	const decide = async (event: { toolName: string; input: Record<string, unknown> }, ctx: ExtensionContext): Promise<{ block: true; reason: string } | undefined> => {
 		const state = current();
+		if (answeredUnder !== state.permissions) {
+			approvals.clear();
+			answeredUnder = state.permissions;
+		}
 		const evaluation = evaluateCall({ toolName: event.toolName, input: event.input }, state);
 		const record = (decision: PermissionDecision, reason: string): void => {
 			audit.push({
@@ -159,7 +171,7 @@ export function installPermissionGuard(pi: ExtensionAPI, deps: GuardDeps): Permi
 		const refused = evaluation.capabilities.filter((capability) => approvals.get(capability) === false);
 		if (refused.length === 0) return undefined;
 
-		const reason = `LeanPi refused this call: scope "${scopeNameOf(refused[0]!)}", capability "${refused[0]}" (the user declined the confirmation prompt; the call did not run).`;
+		const reason = `LeanPi refused this call: scope "${scopeNameOf(refused[0]!)}", capability "${refused[0]}" (the user declined the confirmation prompt; the call did not run). The answer is remembered for the rest of this session; "/permissions set ${refused[0]} ask" clears it and asks again.`;
 		record("deny", reason);
 		return { block: true, reason };
 	};

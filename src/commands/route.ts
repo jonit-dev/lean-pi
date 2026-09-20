@@ -102,7 +102,7 @@ export function renderRoute(surface: CommandSurface): string {
 export function registerRouteCommand(registry: CommandRegistry, surface: CommandSurface): void {
 	registry.register({
 		name: "route",
-		summary: "show the §45 routing lines and the JEV sites; pin executor, reviewer or PRD",
+		summary: "show the routing decision and the JEV sites; pin the executor lane, the reviewer lane or the PRD requirement",
 		usage: "/route [executor <class>|reviewer <class>|prd force|prd skip|reset]",
 		run: (args): CommandResult => {
 			const [subcommand, value] = args.split(/\s+/).filter(Boolean);

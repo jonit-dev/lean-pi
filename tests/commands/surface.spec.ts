@@ -36,7 +36,7 @@ describe("/help, /status and /config (PRD-016 Phase 1)", () => {
 
 		const help = await fixture.dispatch("/help");
 		expect(help.ok).toBe(true);
-		for (const name of ["help", "status", "model", "models", "route", "context", "compact", "tree", "config", "doctor", "new", "resume"]) {
+		for (const name of ["help", "status", "models", "route", "context", "compact-refs", "config", "doctor"]) {
 			expect(help.text).toContain(`/${name}`);
 		}
 		// A command this PRD does not own, registered by another PRD's module.
@@ -66,7 +66,7 @@ describe("/help, /status and /config (PRD-016 Phase 1)", () => {
 			});
 			const session = await bootSession({ cwd, commands: createCommandRegistry() });
 			try {
-				// The twelve this PRD owns, registered through its single registration point.
+				// The ones this PRD owns, registered through its single registration point.
 				registerCommandSurface(session.commands, {
 					cwd,
 					config: session.activation.config,
@@ -79,14 +79,16 @@ describe("/help, /status and /config (PRD-016 Phase 1)", () => {
 
 				const help = await session.commands.dispatch("/help", { cwd });
 				expect(help.ok).toBe(true);
-				for (const name of ["help", "status", "model", "models", "route", "context", "compact", "tree", "config", "doctor", "new", "resume"]) {
+				for (const name of ["help", "status", "models", "route", "context", "compact-refs", "config", "doctor"]) {
 					expect(help.text).toContain(`/${name}`);
 				}
 				// The commands other PRDs registered into the same map, with their own summaries.
 				for (const name of ["goal", "review", "prd", "todo", "skills", "mcp", "permissions", "jev", "cost"]) {
 					expect(help.text).toContain(`/${name}`);
 				}
-				expect(help.text).toContain("(PRD-015)");
+				expect(help.text).toContain("session cost, per task and per verified success");
+				// `/help` is read by the user: no roadmap markers in any row.
+				expect(help.text).not.toMatch(/PRD-\d|§\d/);
 
 				const status = await session.commands.dispatch("/status", { cwd });
 				expect(status.ok).toBe(true);

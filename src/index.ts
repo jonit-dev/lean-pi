@@ -11,6 +11,7 @@
 import type { AgentSession, ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	getActivePrefix,
 	isTurnInFlight,
@@ -18,6 +19,7 @@ import {
 	runLanes,
 	runTurn,
 	setActivePrefix,
+	thinkingLevelFor,
 	type Lane,
 	type TurnContext,
 	type TurnInput,
@@ -28,6 +30,7 @@ import { ConfigError, loadConfig, toPiConfigValue, writeSkillsState } from "./co
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
+import { clearRoutePins } from "./compiler/pins.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
 import { registerMcpCommand, registerMcpDisclosure } from "./mcp/index.js";
@@ -52,7 +55,7 @@ import { createGoalStore, goalTextSource, registerGoalCommands } from "./goal/in
 import { registerReviewCommand, type ReviewCommandDeps } from "./review/index.js";
 import { createLspProvider } from "./lsp/index.js";
 import { LSP_TOOL_NAMES, registerLspTools } from "./lsp/tools.js";
-import { registerPrdCommandsLazily } from "./prd/dispatch.js";
+import { createPrdAuthor, registerPrdCommandsLazily } from "./prd/dispatch.js";
 import { readPrdState } from "./prd/state.js";
 import { aggregate } from "./verify/aggregate.js";
 import type { EvidenceRecord } from "./verify/evidence.js";
@@ -62,9 +65,10 @@ import { defaultSkillRoots, scanSkills, createSkillControl, withoutSkillCatalog,
 import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
+import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
-import { sessionModelFor } from "./cli/bootstrap.js";
+import { renderTurnOutcome } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
@@ -314,6 +318,48 @@ function installArtifactTool(pi: ExtensionAPI, artifacts: ArtifactStore): void {
 	});
 }
 
+/**
+ * Put LeanPi's registry on the user's `/` key.
+ *
+ * One Pi command per registered LeanPi command, dispatched through the same
+ * registry `/help` renders, so there is still exactly one dispatcher and no
+ * second copy of any handler.
+ *
+ * Pi resolves extension commands *before* its own (`agent-session.prompt`), so
+ * a bridged name Pi also ships would silently replace Pi's. No registered name
+ * collides: LeanPi's deterministic reduction is `/compact-refs`, not
+ * `/compact`.
+ *
+ * The live session facts travel on `CommandContext.session` rather than through
+ * the surface's session host: Pi hands extensions a *read-only* manager per
+ * invocation, while the host holds LeanPi's own manager, and a command that
+ * reported the latter's empty history as the session's was the source of
+ * `/context`'s invented totals.
+ */
+function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string): void {
+	for (const command of commands.entries()) {
+		pi.registerCommand(command.name, {
+			description: command.summary.length > 0 ? command.summary : command.usage,
+			handler: async (args, ctx) => {
+				const usage = ctx.getContextUsage();
+				const result = await commands.dispatch(`${command.name} ${args}`, {
+					cwd,
+					...(ctx.hasUI ? { prompt: (message: string) => ctx.ui.input(message) } : {}),
+					notify: (message: string) => ctx.ui.notify(message, "info"),
+					session: {
+						id: ctx.sessionManager.getSessionId(),
+						contextTokens: usage?.tokens ?? null,
+						contextWindow: usage?.contextWindow ?? 0,
+						...(ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}` } : {}),
+						...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel } : {}),
+					},
+				});
+				ctx.ui.notify(result.text, result.ok ? "info" : "error");
+			},
+		});
+	}
+}
+
 export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanPiActivation {
 	// Pi's extension API has no cwd at load time, so the loader-driven path
 	// resolves it from the process. `LEANPI_CWD` is the documented override for
@@ -378,8 +424,11 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		},
 	});
 	registerPermissionsCommand(commands, { cwd, state: permissions, env });
-	// Cost telemetry (PRD-015): `/cost` reads the same store `/status` will read.
-	registerCostCommand(commands, { cwd });
+	// Cost telemetry (PRD-015): `/cost` reads the same store `/status` will read,
+	// over the same session id every record this activation writes is stamped
+	// with — without it the command read every run in the store and called the
+	// sum "session total".
+	registerCostCommand(commands, { cwd, sessionId: manager.getSessionId() });
 	// MCP disclosure (PRD-006): `/mcp` plus the provider that fills
 	// `capabilities.mcps`; registered after the provider reset above. The provider
 	// reads the same runtime the command built, so a mid-session `/mcp disable` is
@@ -392,6 +441,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		env,
 		...(options.jevTransport ? { transport: options.jevTransport } : {}),
 	});
+	// `leanpi --no-jev` is the operator saying "run the degraded harness". The
+	// launcher only skipped the startup credential check, so a machine that had a
+	// key resolved one anyway and every site still called the control plane: the
+	// flag changed nothing about the session it was passed to. `disabled` is the
+	// mode every site already understands — each one resolves by its documented
+	// fallback and nothing is sent.
+	if (env.LEANPI_NO_JEV === "1") jev.setMode("disabled");
 	// The compiler uses the session's JEV client: one control plane per process,
 	// handed by reference rather than re-created per lane.
 	setCompilerContext({ client: jev, config, cwd });
@@ -418,11 +474,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// PRD-009 left open into real verifier entries rather than `not_run`.
 	registerRuntimeVerifiers();
 
-	// The command and session surface (PRD-016). The host points at Pi's own
-	// session manager: LeanPi keeps no session records of its own. The same
-	// manager keys the artifact store, so a compaction record and the bytes it
-	// references always resolve inside one session directory.
-	registerCommandSurface(commands, {
+	// The command and session surface (PRD-016). The surface is kept, not
+	// discarded: the turn fan-in below feeds it the compiled contract, and the
+	// Pi bridge at the end of this function is what puts these handlers on the
+	// user's `/` key. The host's manager is LeanPi's own — Pi's live one is
+	// read-only and arrives per command invocation, so the bridge hands the
+	// commands Pi's session facts through `CommandContext.session` instead.
+	const surface = registerCommandSurface(commands, {
 		cwd,
 		config,
 		host: createSessionHost({ cwd, manager }),
@@ -482,7 +540,21 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	});
 	registerGoalCommands(commands, { cwd, config, prd: () => readPrdState(cwd), sessionId: manager.getSessionId() });
 	registerReviewCommand(commands, reviewDeps);
-	registerPrdCommandsLazily(commands, { cwd, config, artifactStore: artifacts, jev });
+	// The evidence path for the native loop (§23): Pi's own loop is the executor
+	// there, so nothing verifies its work and nothing gates it. This is how the
+	// user asks for the same decision an executor-lane turn is held to.
+	registerVerifyCommand(commands, { cwd, config, artifacts, jev, contract: () => lastContext?.contract });
+	registerPrdCommandsLazily(commands, {
+		cwd,
+		config,
+		artifactStore: artifacts,
+		jev,
+		// The two dependencies `/prd create` was missing. Without the author the
+		// command refused every invocation; without the objective the status
+		// line's own invitation made the user retype the turn that triggered it.
+		author: createPrdAuthor({ cwd, registry: surface.backends, env }),
+		defaultObjective: () => lastContext?.turn.text,
+	});
 
 	// The run that is still open: a compiled turn's collector and context, held from
 	// `before_agent_start` until `agent_end` reports what the loop spent.
@@ -495,6 +567,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	const workingStateSources = workingStateSourcesFor({ cwd, todo: todoCarrier, lastContext: () => lastContext });
 	const observeTurn = (context: TurnContext): void => {
 		lastContext = context;
+		// `/route`, `/status` and `/models` read the contract off the surface, and
+		// nothing fed it before: every one of them reported "no contract compiled
+		// yet" for the whole session, however many turns had been compiled.
+		if (context.contract) surface.recordContract(context.contract);
 		// A new proof result replaces the previous one; a turn without one keeps the
 		// last verdict rather than silently clearing the todo gate.
 		if (context.proof) todoGate = gateFromProofResult(context.proof);
@@ -528,8 +604,19 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// First run without a resolved key prompts exactly once; declining is a
 	// first-class path that leaves the harness working on deterministic fallback.
-	pi.on("session_start", async (_event, ctx) => {
+	// A session that starts on a session Pi switched to (`/new`, `/resume`,
+	// `/fork`) keeps the extension but not the previous session's pins: the
+	// route overrides and the recorded contract belonged to the conversation
+	// that just went away.
+	pi.on("session_start", async (event, ctx) => {
+		if (event.reason !== "startup") {
+			surface.resetSessionState();
+			clearRoutePins();
+		}
 		if (!ctx.hasUI) return;
+		// Asking for a credential the session is configured never to use is the
+		// prompt equivalent of the `--no-jev` bug above.
+		if (jev.getMode() === "disabled") return;
 		if (resolveCredential(config, env, cwd).key !== null) return;
 		if (declined.has(declinedFor)) return;
 		const key = await ctx.ui.input("LeanPi needs a JEV API key (leave empty to use deterministic fallback):");
@@ -546,6 +633,75 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		}
 		writeStoredKey(key, env);
 		ctx.ui.notify(`LeanPi: JEV configured (model ${validation.modelVersion}).`, "info");
+	});
+
+	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
+	// configuration).
+	//
+	// Before this, the executor lane ran inside `before_agent_start`: it spawned
+	// the vendor, verified, reviewed and gated — and then returned, so Pi's own
+	// loop answered the same prompt a second time with a second model. The user
+	// paid twice, saw only Pi's answer, and the proof gate had run against a
+	// workspace another model was about to edit. `action: "handled"` is Pi's own
+	// way for an extension to *be* the turn, so the work and the answer are the
+	// same event.
+	//
+	// Native configurations return early: there Pi's loop is the executor by
+	// design (§23) and `before_agent_start` below is where the turn is compiled.
+	pi.on("input", async (event, ctx) => {
+		if (!ownsExecutionLoop(config)) return;
+		// `runTurn()` drives the lanes itself; this hook must not run them again
+		// for the prompt that entry point is about to send.
+		if (isTurnInFlight()) return;
+		const collector = createRunCollector({ taskId: event.text.slice(0, 64), sessionId: manager.getSessionId() });
+		setLaneCollector(collector);
+		// A vendor turn is tens of seconds with nothing on screen. The status line
+		// is the only progress surface Pi gives an extension that is not itself
+		// streaming, so the lanes report their phase into it.
+		const progress = (phase: string): void => ctx.ui.setStatus(LEANPI_STATUS_KEY, `LeanPi: ${phase}`);
+		progress("compiling the task");
+		try {
+			const context = await runLanes(
+				{ text: event.text },
+				{
+					turn: { text: event.text },
+					role: "balanced",
+					cwd,
+					config,
+					modelRef: resolveRole(config, "balanced"),
+					skills: [],
+					todo: todoCarrier,
+					workingStateSources,
+					prefix: "",
+					onProgress: progress,
+				},
+			);
+			observeTurn(context);
+			if (context.contract) {
+				ctx.ui.setStatus(
+					LEANPI_STATUS_KEY,
+					statusLine({
+						config,
+						contract: context.contract,
+						lane: "executor",
+						prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
+					}),
+				);
+			} else {
+				ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
+			}
+			ctx.ui.notify(renderTurnOutcome(context), context.executor?.status === "blocked" ? "error" : "info");
+			if (context.contract) {
+				emitRunTelemetry(collector, context.contract, verdictOf(context), {
+					cwd,
+					cost: resolveCostConfig(config),
+					...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
+				});
+			}
+		} finally {
+			setLaneCollector(undefined);
+		}
+		return { action: "handled" as const };
 	});
 
 	// In the interactive `pi --extension` flow the user's prompt reaches Pi, not
@@ -584,14 +740,21 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		const owns = ownsExecutionLoop(config);
 		// What Pi will actually run this turn, when Pi is the one running it.
 		let installed: string | undefined;
+		// The level the session ends the handler at, which is what the footer must
+		// name: the compiled effort only when it was applied.
+		let effort: ThinkingLevel | undefined;
 		if (context.contract && !owns) {
 			const ref = resolveRole(config, context.contract.routing.executor_class);
 			const model = ctx.modelRegistry.find(ref.backend, ref.model);
-			if (model) {
-				await pi.setModel(model);
-				installed = `${ref.backend}/${ref.model}`;
-			}
-			pi.setThinkingLevel(context.contract.reasoning.effort);
+			// `setModel` answers whether it took the model. Ignoring that answer
+			// let the footer name a model the session had refused.
+			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
+			// The operator's ceiling applies on every path (`thinkingLevelFor`), not
+			// only the programmatic one: `backends.<name>.thinkingLevel: off` is the
+			// one spending switch there is, and this handler used to raise straight
+			// past it to whatever the classifier compiled.
+			effort = thinkingLevelFor(config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
+			if (effort !== undefined) pi.setThinkingLevel(effort);
 		}
 		// "Tell me your goal, I figure out the rest" is only trustworthy if the
 		// figuring is visible: the footer carries what this turn routed to, how
@@ -599,17 +762,22 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		//
 		// `installed` is the model Pi was *given*, which is not always the one the
 		// contract asked for: an `external_harness` class has no entry in Pi's
-		// registry, `setModel` is skipped, and Pi keeps running the session model.
-		// Naming the contract's choice there would report a route that did not
-		// happen — the one failure this line exists to prevent.
+		// registry, or `setModel` refused it, and Pi keeps running the session
+		// model. Naming the contract's choice there would report a route that did
+		// not happen — the one failure this line exists to prevent. The session's
+		// *actual* model is `ctx.model`; `sessionModelFor(config)` was a second
+		// guess at it from the config, and disagreed whenever the user had
+		// switched models by hand.
 		if (context.contract) {
+			const running = owns || installed !== undefined ? undefined : ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "pi's own model";
 			ctx.ui.setStatus(
 				LEANPI_STATUS_KEY,
 				statusLine({
 					config,
 					contract: context.contract,
 					lane: owns ? "executor" : "pi_loop",
-					...(owns || installed !== undefined ? {} : { model: sessionModelFor(config) ?? "pi's own model" }),
+					...(running === undefined ? {} : { model: running }),
+					...(effort === undefined ? {} : { effort }),
 					prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
 				}),
 			);
@@ -648,6 +816,18 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
 		});
 	});
+
+	// The bridge PRD-016 was missing. Every command above registered into
+	// LeanPi's own registry, which nothing in the interactive session reads: in
+	// the TUI `/doctor`, `/route`, `/jev`, `/permissions`, `/todo` and the rest
+	// were not commands at all, and the text fell through to the model as a
+	// prompt. The permission guard's own recovery instruction ("run
+	// `/permissions set <capability> ask`") named one of them.
+	//
+	// The result is printed with `ui.notify`, not `pi.sendMessage`: a custom
+	// message would enter the LLM context and every later request in the session
+	// would carry the output of every command the user ran.
+	bridgeCommands(pi, commands, cwd);
 
 	return {
 		name: LEANPI_EXTENSION_NAME,
@@ -896,7 +1076,7 @@ export { verifyTask, WORKSPACE_HASH_KIND } from "./verify/index.js";
 // module, so importing it cannot load the PRD machinery FR-032/AC-7 require to
 // stay absent on the quick path. Everything else lives in `src/prd/*` and is
 // imported directly by the lane's consumers.
-export { laneLoads, openPrdLane, registerPrdCommandsLazily, resetLaneLoads } from "./prd/dispatch.js";
+export { createPrdAuthor, laneLoads, openPrdLane, PRD_COMMAND_HELP, registerPrdCommandsLazily, resetLaneLoads } from "./prd/dispatch.js";
 export type { PrdLaneOptions } from "./prd/dispatch.js";
 export { deriveGoal } from "./prd/goal.js";
 export type { GoalCriterion } from "./prd/goal.js";

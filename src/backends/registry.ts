@@ -278,15 +278,17 @@ function outcomeFacts(outcome: WorkerOutcome): { exitCode: number | null; tokens
 
 /**
  * One verdict per outcome, so success and failure cannot drift apart: a worker
- * that reports blocked, or claims success without moving a byte of the
- * workspace, is a failure the chain falls back from.
+ * that reports blocked is a failure the chain falls back from.
+ *
+ * "Changed no files" is deliberately not on that list. The transport cannot
+ * know whether the task wanted a patch: "explain this function" is answered in
+ * `summary` and touches nothing, and failing it here made the question
+ * unanswerable while paying a second provider to fail it again. Whether a patch
+ * was required is the contract's acceptance criteria to judge, not this layer's.
  */
 function classifyOutcome(outcome: WorkerOutcome): { ok: WorkerResult } | { failure: WorkerFailureKind; reason: string } {
 	if (isWorkerFailure(outcome)) return { failure: outcome.failure, reason: outcome.reason };
 	if (outcome.status === "blocked") return { failure: "blocked", reason: outcome.summary };
-	if (outcome.changedFiles.length === 0) {
-		return { failure: "no_change", reason: "backend reported success without changing the workspace" };
-	}
 	return { ok: outcome };
 }
 
@@ -304,10 +306,9 @@ export interface RunWorkerTurnOptions {
 }
 
 /**
- * Walk the role's backend chain until one produces a real workspace change.
- * Every invocation emits exactly one record; every failure is reported, and an
- * exhausted chain returns `blocked` carrying all of them — never a fabricated
- * success (FR-046, AC-8).
+ * Walk the role's backend chain until one succeeds. Every invocation emits
+ * exactly one record; every failure is reported, and an exhausted chain returns
+ * `blocked` carrying all of them — never a fabricated success (FR-046, AC-8).
  */
 export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorkerTurnOptions): Promise<WorkerTurnOutcome> {
 	const { registry, cwd } = options;
