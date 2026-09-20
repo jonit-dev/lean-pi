@@ -9,11 +9,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { autoConfigure, MissingJevKeyError, requireJev } from "../src/cli/bootstrap.js";
-import { candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
+import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
+import { MODEL_ROLES } from "../src/core/types.js";
 import type { JevResult } from "../src/jev/types.js";
 import { HARNESS_DESCRIPTORS, runHarness } from "../src/backends/harness.js";
 import { parseLeanPiFlags } from "../src/cli/launch.js";
 import { statusLine } from "../src/cli/statusline.js";
+import { probeVendor } from "../src/backends/subscriptions.js";
 import { loadConfig } from "../src/core/config.js";
 
 /** A machine with the vendor CLIs installed and logged in. */
@@ -28,8 +30,15 @@ function machine(options: { vendors: readonly string[] }): { cwd: string; home: 
 		codex: join(home, ".codex", "auth.json"),
 		opencode: join(home, ".local", "share", "opencode", "auth.json"),
 	};
+	// The stub answers its own status command the way the real CLI does, because
+	// that is what detection now asks.
+	const status: Record<string, string> = {
+		claude: '{"loggedIn": true}',
+		codex: "Logged in using ChatGPT",
+		opencode: "1 credentials",
+	};
 	for (const vendor of options.vendors) {
-		writeFileSync(join(bin, vendor), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		writeFileSync(join(bin, vendor), `#!/bin/sh\necho '${status[vendor] as string}'\n`, { mode: 0o755 });
 		const credential = credentials[vendor] as string;
 		mkdirSync(join(credential, ".."), { recursive: true });
 		writeFileSync(credential, "{}\n");
@@ -284,5 +293,81 @@ describe("the status line", () => {
 		const contract = { task: { execution_complexity: "LOW" }, routing: { executor_class: "quick" }, reasoning: { effort: "low" } } as never;
 
 		expect(statusLine({ config, contract, lane: "compiler" })).toContain("quick");
+	});
+});
+
+describe("detection asks the vendor", () => {
+	it("believes the CLI's own status over a credential file that is merely present", () => {
+		const { home, env } = machine({ vendors: ["claude"] });
+
+		// The file is there; the vendor says otherwise. This is a real state —
+		// `~/.claude/.credentials.json` survives a logout elsewhere — and the file
+		// check alone would write a config routing `strong` at a dead backend.
+		const state = probeVendor("claude", { env, home, verify: true, run: () => '{"loggedIn": false}' });
+
+		expect(state.signedIn).toBe(false);
+		expect(state.evidence).toContain("not signed in");
+	});
+
+	it("keeps the file check when the vendor has no answer", () => {
+		const { home, env } = machine({ vendors: ["claude"] });
+
+		const state = probeVendor("claude", {
+			env,
+			home,
+			verify: true,
+			run: () => {
+				throw new Error("command failed");
+			},
+		});
+
+		expect(state.signedIn).toBe(true);
+		expect(state.evidence).toContain(".credentials.json");
+	});
+
+	it("reads each vendor's own status output", () => {
+		const { home, env } = machine({ vendors: ["claude", "codex", "opencode"] });
+		const answers: Record<string, string> = {
+			claude: '{\n  "loggedIn": true,\n  "authMethod": "claude.ai"\n}',
+			codex: "Logged in using ChatGPT\n",
+			opencode: "│  OpenCode Go api\n└  1 credentials\n",
+		};
+
+		for (const vendor of ["claude", "codex", "opencode"] as const) {
+			expect(probeVendor(vendor, { env, home, verify: true, run: () => answers[vendor] as string }).signedIn).toBe(true);
+		}
+		// An empty OpenCode store is a logged-out machine, not a signed-in one.
+		expect(probeVendor("opencode", { env, home, verify: true, run: () => "└  0 credentials\n" }).signedIn).toBe(false);
+	});
+});
+
+describe("allocation confidence", () => {
+	it("keeps the roles JEV was sure about and ladders only the rest", async () => {
+		const candidates: ModelCandidate[] = [
+			{ vendor: "claude", model: "opus", source: "test" },
+			{ vendor: "opencode", model: "flash", source: "test" },
+		];
+		// Six questions over near-equal cheap models will have one the model is
+		// unsure about; discarding five confident answers over it is how a control
+		// plane ends up never used.
+		const client = {
+			ask: async () =>
+				MODEL_ROLES.map((role) => ({
+					kind: "Choice" as const,
+					questionId: role,
+					choice: "claude:opus",
+					probabilities: {},
+					confidence: role === "review_quick" ? 0.1 : 0.9,
+				})),
+			fallbackCount: () => 0,
+		};
+
+		const allocation = await allocateRoles(client as never, candidates);
+
+		expect(allocation.fallbackUsed).toBe(false);
+		expect(allocation.decided).not.toContain("review_quick");
+		expect(candidateKey(allocation.roles.strong)).toBe("claude:opus");
+		// The unsure role falls to the ladder, which puts the cheap model on cheap review.
+		expect(candidateKey(allocation.roles.review_quick)).toBe("opencode:flash");
 	});
 });

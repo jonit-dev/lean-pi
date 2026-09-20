@@ -39,17 +39,18 @@ export const VENDOR_DEFAULT = VENDOR_MODEL_DEFAULT;
 
 type Runner = (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => string;
 
-const runCommand: Runner = (command, args, env) =>
-	execFileSync(command, [...args], {
+const runCommand: Runner = (command, args, env) => {
+	// `opencode` colourises unless told not to, and a colourised list is not a
+	// list of model ids. `NO_COLOR` is dropped rather than set alongside
+	// `FORCE_COLOR`: Node warns on stderr when the two disagree.
+	const { NO_COLOR: _dropped, ...rest } = env;
+	return execFileSync(command, [...args], {
 		encoding: "utf8",
 		timeout: 20_000,
 		stdio: ["ignore", "pipe", "ignore"],
-		// `opencode` colourises unless told not to, and a colourised list is not a
-		// list of model ids.
-		// `FORCE_COLOR=0` alone: setting `NO_COLOR` as well makes Node warn that the
-		// two disagree, on the stderr the user reads.
-		env: { ...env, FORCE_COLOR: "0" },
+		env: { ...rest, FORCE_COLOR: "0" },
 	});
+};
 
 function readJsonField(path: string, field: string): string | undefined {
 	if (!existsSync(path)) return undefined;
@@ -151,7 +152,10 @@ export function ladderAllocation(candidates: readonly ModelCandidate[]): Record<
 
 export interface Allocation {
 	roles: Record<ModelRole, ModelCandidate>;
+	/** True when no role got a usable JEV answer. */
 	fallbackUsed: boolean;
+	/** The roles JEV decided, in `MODEL_ROLES` order; the rest took the ladder. */
+	decided: ModelRole[];
 }
 
 export async function allocateRoles(
@@ -165,9 +169,14 @@ export async function allocateRoles(
 		id: ALLOCATE_SITE_ID,
 		questions,
 		returnType: questions.map(() => "Choice" as const),
-		// A wrong role map costs money and quality but is visible and editable in
-		// the file it writes, so it is a normal-consequence decision.
-		consequence: "normal",
+		// Low, deliberately (§50's table): the answer lands in a config file the
+		// user can read and edit, is printed at every startup, and its fallback is
+		// a working ladder — the cost of a wrong pick is one edit, not a bad
+		// change shipped. It also has to clear the bar *with* four or five
+		// candidate models on the ballot, where an honest spread of probabilities
+		// sits under the 0.7 normal threshold: measured live, every role came back
+		// below it and the whole allocation fell back.
+		consequence: "low",
 		telemetryTag: ALLOCATE_SITE_ID,
 		fallback: (): JevResult[] =>
 			MODEL_ROLES.map((role) => ({
@@ -183,16 +192,24 @@ export async function allocateRoles(
 	try {
 		results = await client.ask(ALLOCATE_SITE_ID, questions, { candidates });
 	} catch {
-		return { roles: fallback, fallbackUsed: true };
+		return { roles: fallback, fallbackUsed: true, decided: [] };
 	}
-	if (client.fallbackCount() > before || !results.every((result) => accept(result, "normal"))) {
-		return { roles: fallback, fallbackUsed: true };
-	}
+	if (client.fallbackCount() > before) return { roles: fallback, fallbackUsed: true, decided: [] };
+	// Per role, not all-or-nothing: six questions over a handful of models will
+	// have one the model is genuinely unsure about — `review_quick` on a machine
+	// with two near-equal cheap models — and throwing away five confident
+	// answers because of it is how a control plane ends up never used. Each
+	// unconfident role takes the ladder; the confident ones stand.
 	const roles = {} as Record<ModelRole, ModelCandidate>;
+	const decided: ModelRole[] = [];
 	for (const role of MODEL_ROLES) {
 		const result = results.find((entry) => entry.questionId === role);
-		const chosen = result?.kind === "Choice" ? candidates.find((candidate) => candidateKey(candidate) === result.choice) : undefined;
+		const chosen =
+			result !== undefined && accept(result, "low") && result.kind === "Choice"
+				? candidates.find((candidate) => candidateKey(candidate) === result.choice)
+				: undefined;
+		if (chosen) decided.push(role);
 		roles[role] = chosen ?? fallback[role];
 	}
-	return { roles, fallbackUsed: false };
+	return { roles, fallbackUsed: decided.length === 0, decided };
 }

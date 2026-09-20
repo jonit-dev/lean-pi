@@ -19,6 +19,7 @@
  * learns it: a limit signal on an attempt cools that backend down
  * (`BackendRegistry.markLimited`).
  */
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -60,9 +61,50 @@ function onPath(command: string, env: NodeJS.ProcessEnv): boolean {
 }
 
 /** One vendor, as this machine has it: installed, and logged into. */
+/**
+ * The vendor's own answer to "am I logged in", when it has one.
+ *
+ * A credential file on disk is a guess: it can be stale, it can belong to an
+ * account that was logged out elsewhere, and on Claude it exists even when the
+ * CLI reports `Not logged in`. Every vendor here ships a status command that
+ * costs no tokens, so the first run asks instead of assuming.
+ */
+const STATUS_COMMAND: Record<HarnessVendor, readonly string[]> = {
+	claude: ["auth", "status"],
+	codex: ["login", "status"],
+	opencode: ["auth", "list"],
+};
+
+/** `true`/`false` from the vendor, or `null` when it could not be asked. */
+function askVendor(command: string, vendor: HarnessVendor, env: NodeJS.ProcessEnv, run: StatusRunner): boolean | null {
+	try {
+		const output = run(command, STATUS_COMMAND[vendor], env);
+		if (vendor === "claude") return /"loggedIn"\s*:\s*true/.test(output);
+		if (vendor === "codex") return /logged in/i.test(output);
+		// `opencode auth list` prints the credential store's entries; an empty
+		// store still exits 0, so the count is the answer.
+		return /\d+ credential/i.test(output) && !/\b0 credentials\b/i.test(output);
+	} catch {
+		return null;
+	}
+}
+
+export type StatusRunner = (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => string;
+
+const runStatus: StatusRunner = (command, args, env) => {
+	// Both streams: `codex login status` prints "Logged in using ChatGPT" on
+	// stderr, so a stdout-only capture reads a signed-in machine as signed out.
+	// `NO_COLOR` is dropped rather than added — Node warns on stderr when it and
+	// `FORCE_COLOR` disagree, and that warning is the user's first impression.
+	const { NO_COLOR: _dropped, ...rest } = env;
+	const result = spawnSync(command, [...args], { encoding: "utf8", timeout: 15_000, env: { ...rest, FORCE_COLOR: "0" } });
+	if (result.error) throw result.error;
+	return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+};
+
 export function probeVendor(
 	vendor: HarnessVendor,
-	options: { backend?: string; command?: string; env?: NodeJS.ProcessEnv; home?: string } = {},
+	options: { backend?: string; command?: string; env?: NodeJS.ProcessEnv; home?: string; verify?: boolean; run?: StatusRunner } = {},
 ): SubscriptionState {
 	const env = options.env ?? process.env;
 	const home = options.home ?? env.HOME ?? homedir();
@@ -70,15 +112,20 @@ export function probeVendor(
 	const found = onPath(command, env);
 	const credential = CREDENTIAL_PATHS[vendor](home).find((path) => existsSync(path));
 	const variable = CREDENTIAL_ENV[vendor].find((key) => (env[key] ?? "").length > 0);
+	const asked = found && options.verify === true ? askVendor(command, vendor, env, options.run ?? runStatus) : null;
 	return {
 		backend: options.backend ?? vendor,
 		vendor,
 		command,
 		onPath: found,
-		signedIn: credential !== undefined || variable !== undefined,
-		evidence: found
-			? (credential ?? (variable ? `$${variable}` : `no credential for ${vendor} (looked in ${CREDENTIAL_PATHS[vendor](home).join(", ")})`))
-			: `${command} is not on PATH`,
+		// The vendor's own answer wins; the file check is what is left when there
+		// is no answer to be had.
+		signedIn: asked ?? (credential !== undefined || variable !== undefined),
+		evidence: !found
+			? `${command} is not on PATH`
+			: asked !== null
+				? `${command} ${STATUS_COMMAND[vendor].join(" ")}: ${asked ? "signed in" : "not signed in"}`
+				: (credential ?? (variable ? `$${variable}` : `no credential for ${vendor} (looked in ${CREDENTIAL_PATHS[vendor](home).join(", ")})`)),
 	};
 }
 
@@ -87,7 +134,7 @@ export function probeVendor(
  * first run reads: a user who has already logged into Claude Code or Codex has
  * told the machine something LeanPi can act on without asking them again.
  */
-export function detectVendors(options: { env?: NodeJS.ProcessEnv; home?: string } = {}): SubscriptionState[] {
+export function detectVendors(options: { env?: NodeJS.ProcessEnv; home?: string; verify?: boolean; run?: StatusRunner } = {}): SubscriptionState[] {
 	return HARNESS_VENDORS.map((vendor) => probeVendor(vendor, options));
 }
 

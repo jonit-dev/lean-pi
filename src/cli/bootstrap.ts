@@ -15,13 +15,13 @@
  *    a missing key stops the run and says how to fix it, and `--no-jev` is the
  *    explicit way to ask for the degraded harness anyway.
  */
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type Allocation, type ModelCandidate } from "./allocate.js";
 import { CONFIG_FILENAME, configPathFor } from "../core/config.js";
-import type { LeanPiConfig, ModelRole } from "../core/types.js";
+import { MODEL_ROLES, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { createJevClient, type JevClient } from "../jev/client.js";
 import { describeCredential, resolveCredential, writeStoredKey } from "../jev/credentials.js";
 
@@ -34,6 +34,14 @@ export interface BootstrapEnv {
 function environment(options: Partial<BootstrapEnv> = {}): BootstrapEnv {
 	const env = options.env ?? process.env;
 	return { cwd: options.cwd ?? process.cwd(), env, home: options.home ?? env.HOME ?? homedir() };
+}
+
+/** How the role map was decided, for the config header and the startup line. */
+function describeAllocation(allocation: Allocation): string {
+	if (allocation.fallbackUsed) return "the cheapest-first fallback ladder (JEV had no confident answer)";
+	const undecided = MODEL_ROLES.filter((role) => !allocation.decided.includes(role));
+	const source = "JEV, from published capability and price data";
+	return undecided.length === 0 ? source : `${source}, ${undecided.join(" and ")} by the cheapest-first fallback`;
 }
 
 /** The vendor's own quota reality, the one thing about it that is not detectable. */
@@ -65,7 +73,7 @@ function renderConfig(usable: readonly SubscriptionState[], allocation: Allocati
 	}
 	lines.push(
 		"",
-		`# Roles allocated by ${allocation.fallbackUsed ? "the cheapest-first fallback ladder (JEV had no answer)" : "JEV, from published capability and price data"},`,
+		`# Roles allocated by ${describeAllocation(allocation)},`,
 		`# over the models these CLIs report: ${candidates.map((candidate) => candidateKey(candidate)).join(", ")}.`,
 		`# \`${VENDOR_DEFAULT}\` means LeanPi passes no model flag and the vendor CLI's own`,
 		"# configured model runs.",
@@ -93,7 +101,10 @@ export async function autoConfigure(
 	if (existsSync(path)) {
 		return { path, created: false, usable: [], summary: `configuration: ${path}` };
 	}
-	const usable = detectVendors({ env, home }).filter((state) => state.onPath && state.signedIn);
+	// `verify: true`: a first run may spend a second asking three CLIs whether
+	// they are actually logged in, rather than writing a config against a vendor
+	// that only *looks* signed in from its credential file.
+	const usable = detectVendors({ env, home, verify: true }).filter((state) => state.onPath && state.signedIn);
 	if (usable.length === 0) {
 		return {
 			path,
@@ -110,7 +121,9 @@ export async function autoConfigure(
 	// three vendors LeanPi does not even pass one.
 	const candidates = usable.flatMap((state) => detectModels(state.vendor, { env, home }));
 	const allocation =
-		options.client === undefined ? { roles: ladderAllocation(candidates), fallbackUsed: true } : await allocateRoles(options.client, candidates);
+		options.client === undefined
+			? { roles: ladderAllocation(candidates), fallbackUsed: true, decided: [] }
+			: await allocateRoles(options.client, candidates);
 	const target = join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "leanpi", CONFIG_FILENAME);
 	mkdirSync(dirname(target), { recursive: true });
 	writeFileSync(target, renderConfig(usable, allocation, candidates), { mode: 0o600 });
@@ -118,12 +131,9 @@ export async function autoConfigure(
 		path: target,
 		created: true,
 		usable,
-		summary: [
-			`no ${CONFIG_FILENAME} found — wrote ${target} from what this machine has:`,
-			`${usable.map((state) => state.vendor).join(", ")};`,
-			`roles allocated by ${allocation.fallbackUsed ? "cheapest-first fallback" : "JEV"}`,
-			`(strong: ${candidateKey(allocation.roles.strong)}, quick: ${candidateKey(allocation.roles.quick)})`,
-		].join(" "),
+		// One line, and the banner prints the resulting map immediately after, so
+		// this says where the file is and who decided — not the map twice.
+		summary: `no ${CONFIG_FILENAME} found — wrote ${target}; detected ${usable.map((state) => state.vendor).join(", ")}; roles by ${describeAllocation(allocation)}`,
 	};
 }
 
