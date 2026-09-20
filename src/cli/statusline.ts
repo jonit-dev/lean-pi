@@ -35,6 +35,8 @@ export interface StatusInput {
 	lane: Lane;
 	/** The role actually dispatched, when it differs from the contract's class. */
 	role?: ModelRole;
+	/** The compiler wants a PRD and none is open; the user opens one. */
+	prdWanted?: boolean;
 }
 
 const LANE_LABEL: Record<Lane, string> = {
@@ -45,7 +47,7 @@ const LANE_LABEL: Record<Lane, string> = {
 };
 
 /** `Auto: claude opus (1m) (Medium) — MEDIUM complexity — Executor lane` */
-export function statusLine({ config, contract, lane, role }: StatusInput): string {
+export function statusLine({ config, contract, lane, role, prdWanted }: StatusInput): string {
 	const resolvedRole = role ?? contract.routing.executor_class;
 	let model: string;
 	try {
@@ -57,5 +59,7 @@ export function statusLine({ config, contract, lane, role }: StatusInput): strin
 		model = resolvedRole;
 	}
 	const effort = EFFORT_LABEL[contract.reasoning.effort];
-	return `Auto: ${model} (${effort}) — ${contract.task.execution_complexity} complexity — ${LANE_LABEL[lane]}`;
+	const line = `Auto: ${model} (${effort}) — ${contract.task.execution_complexity} complexity — ${LANE_LABEL[lane]}`;
+	// The one decision LeanPi cannot make for the user: the PRD document itself.
+	return prdWanted === true ? `${line} — /prd create to open the PRD lane` : line;
 }

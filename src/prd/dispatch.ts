@@ -47,8 +47,19 @@ export async function openPrdLane(record: CompileRecord, options: PrdLaneOptions
 	// A static import of `./manager.js` would load the lane on the quick path too,
 	// which FR-032/AC-7 forbid: the module graph is the first thing that has to be
 	// absent, so this literal specifier is deliberately a loading boundary.
-	const { createPrdManager } = await import("./manager.js");
-	return createPrdManager({ ...options, contract: record.contract });
+	const { createPrdManager, NoActivePrdError } = await import("./manager.js");
+	try {
+		return createPrdManager({ ...options, contract: record.contract });
+	} catch (error) {
+		// The compiler decides a task needs a PRD *before* one exists — that is the
+		// normal order — and the lane tracks a PRD document the user creates with
+		// `/prd create`. Treating the absence as a fatal error made every
+		// PRD-classified first turn in a fresh project die with "No active PRD
+		// state", including the very first thing a new user types. The turn
+		// continues on the direct path; the status line says a PRD is wanted.
+		if (error instanceof NoActivePrdError) return null;
+		throw error;
+	}
 }
 
 /**

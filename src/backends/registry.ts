@@ -359,7 +359,12 @@ export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorker
 			return { status: "completed", backend: backend.name, result: verdict.ok, attempts };
 		}
 		if (isWorkerFailure(outcome) && outcome.sessionId && !sessionId) sessionId = outcome.sessionId;
-		if (verdict.failure === "limit") registry.markLimited(backend.name, verdict.reason);
+		// A timeout is treated like a limit for cooldown purposes. Measured on this
+		// machine: `opencode run` with an exhausted plan quota accepts the request
+		// and then never answers, so every turn paid the full attempt ceiling
+		// (120s) before falling through — and the next turn paid it again. One
+		// backend that hangs should cost the session one wait, not one per turn.
+		if (verdict.failure === "limit" || verdict.failure === "timeout") registry.markLimited(backend.name, verdict.reason);
 		attempts.push({ backend: backend.name, failure: verdict.failure, reason: verdict.reason });
 		exclude.push(backend.name);
 	}

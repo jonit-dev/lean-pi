@@ -16,6 +16,7 @@ import { HARNESS_DESCRIPTORS, runHarness } from "../src/backends/harness.js";
 import { parseLeanPiFlags } from "../src/cli/launch.js";
 import { statusLine } from "../src/cli/statusline.js";
 import { probeVendor } from "../src/backends/subscriptions.js";
+import { openPrdLane } from "../src/prd/dispatch.js";
 import { loadConfig } from "../src/core/config.js";
 
 /** A machine with the vendor CLIs installed and logged in. */
@@ -369,5 +370,37 @@ describe("allocation confidence", () => {
 		expect(candidateKey(allocation.roles.strong)).toBe("claude:opus");
 		// The unsure role falls to the ladder, which puts the cheap model on cheap review.
 		expect(candidateKey(allocation.roles.review_quick)).toBe("opencode:flash");
+	});
+});
+
+describe("a PRD the user has not written yet", () => {
+	it("does not kill the turn, and says how to open the lane", async () => {
+		// The compiler decides a task needs a PRD before one exists — that is the
+		// normal order — so the first thing a new user typed in a fresh project
+		// died with "No active PRD state under …/.leanpi/prd".
+		const record = {
+			next_stage: "prd_lane",
+			contract: { task: { planning_decision: "PRD_REQUIRED" } },
+		} as never;
+
+		const lane = await openPrdLane(record, {
+			config: { backends: {}, models: {} } as never,
+			cwd: mkdtempSync(join(tmpdir(), "leanpi-noprd-")),
+			artifactStore: {} as never,
+		});
+
+		expect(lane).toBeNull();
+
+		const line = statusLine({
+			config: { backends: {}, models: {} } as never,
+			contract: {
+				task: { execution_complexity: "HIGH", planning_decision: "PRD_REQUIRED" },
+				routing: { executor_class: "strong" },
+				reasoning: { effort: "high" },
+			} as never,
+			lane: "compiler",
+			prdWanted: true,
+		});
+		expect(line).toContain("/prd create");
 	});
 });

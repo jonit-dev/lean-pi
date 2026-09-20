@@ -86,6 +86,35 @@ describe("PRD-008 Phase 4 — vendor limits, fallback and the cost hook", () => 
 		expect(registry.selectBackend("strong")[0]!.name).toBe("codex");
 	});
 
+	it("AC-8: a backend that hangs is cooled down too, so the wait is paid once", async () => {
+		// The turn ceiling is there to bound one attempt, not to be paid on every
+		// turn of a session: with an exhausted plan quota `opencode run` accepts
+		// the request and never answers, and before this the next turn queued up
+		// behind the same ceiling again.
+		const cli = installStubCli();
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, chainConfig(cli));
+		const registry = new BackendRegistry(loadConfig(cwd));
+
+		const restore = setStubScript(cli.recordPath, { modes: { codex: "hang" }, files: { "task.txt": "opencode did it\n" }, summary: "opencode finished" });
+		const first = await runWorkerTurn({ objective: "create task.txt", role: "strong", files: ["task.txt"] }, { registry, cwd, timeoutMs: 250 });
+		restore();
+		const restoreSecond = setStubScript(cli.recordPath, {
+			modes: { codex: "hang" },
+			files: { "task-2.txt": "opencode did it again\n" },
+			summary: "opencode finished again",
+		});
+		const second = await runWorkerTurn({ objective: "create task-2.txt", role: "strong", files: ["task-2.txt"] }, { registry, cwd, timeoutMs: 250 });
+		restoreSecond();
+
+		expect(first.attempts[0]).toMatchObject({ backend: "codex", failure: "timeout" });
+		expect(first.status).toBe("completed");
+		expect(second.status).toBe("completed");
+		expect(registry.isCooling("codex")).toBe(true);
+		// One hang for the session, not one per turn.
+		expect(cli.records().filter((record) => record.vendor === "codex")).toHaveLength(1);
+	});
+
 	it("AC-8: exhausting the chain ends blocked with every backend's reason, never a fabricated success", async () => {
 		const cli = installStubCli();
 		const { cwd } = fixtureRepo();
@@ -169,5 +198,4 @@ describe.skipIf(!SMOKE_VENDOR)("PRD-008 AC-9 — owner-gated real subscription s
 		expect(outcome.status).toBe("completed");
 		expect(outcome.result?.changedFiles).toEqual(["smoke.txt"]);
 		expect(readFileSync(join(cwd, "smoke.txt"), "utf8")).toContain("leanpi smoke ok");
-	}, 900_000);
-});
+	}, 900_000);});

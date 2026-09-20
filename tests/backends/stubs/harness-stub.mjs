@@ -143,6 +143,12 @@ if (recordPath) {
 
 // ── 5. vendor scripts that are not a result ───────────────────────────────────
 const mode = (script.modes && script.modes[vendor]) ?? script.mode ?? "ok";
+if (mode === "hang") {
+	// A vendor that accepts the request and never answers: measured on this
+	// machine, `opencode run` with an exhausted plan quota does exactly this.
+	setTimeout(() => {}, 60_000);
+	await new Promise(() => {});
+}
 if (mode === "rate-limit") {
 	process.stderr.write(`${vendor}: usage limit reached — resets at 09:00 (429 rate limit)\n`);
 	process.exit(1);

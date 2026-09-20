@@ -572,6 +572,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 					contract: context.contract,
 					lane: ownsExecutionLoop(config) ? "executor" : "compiler",
 					...(ownsExecutionLoop(config) ? {} : { role: context.contract.routing.executor_class }),
+					prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
 				}),
 			);
 		}

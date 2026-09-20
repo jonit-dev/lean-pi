@@ -7,6 +7,16 @@
  * without spawning anything.
  */
 import { spawn } from "node:child_process";
+
+// `package.json` requires Node >= 22.19; an older runtime fails somewhere deep
+// in Pi's bundle with a syntax or API error that says nothing about versions.
+// nvm makes this ordinary: `leanpi` linked under one version is run from a
+// project pinned to another.
+const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+if (major < 22 || (major === 22 && minor < 19)) {
+	process.stderr.write(`leanpi needs Node >= 22.19 (running ${process.version}). With nvm: nvm use 22\n`);
+	process.exit(1);
+}
 import { autoConfigure, jevClientFor, MissingJevKeyError, requireJev, startupBanner } from "../dist/cli/bootstrap.js";
 import { loadConfig } from "../dist/core/config.js";
 import { launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
