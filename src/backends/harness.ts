@@ -189,6 +189,11 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			(packet.allowedTools ?? Object.keys(CLAUDE_TOOL_NAMES)).map((tool) => CLAUDE_TOOL_NAMES[tool] ?? tool).join(","),
 			...(schema ? ["--json-schema", schema] : []),
 			...(packet.sessionId ? ["--resume", packet.sessionId] : []),
+			// `--allowedTools` is variadic (`<tools...>`), so a prompt that follows it
+			// is read as one more tool name and the CLI exits with "Input must be
+			// provided either through stdin or as a prompt argument". Verified
+			// against the installed CLI both ways. `--` ends option parsing.
+			"--",
 			prompt,
 		],
 		parse: (stdout) =>
@@ -211,6 +216,13 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			// bounded job (FR-058).
 			"--sandbox",
 			"workspace-write",
+			// Codex refuses to run outside a trusted directory — "Not inside a
+			// trusted directory and --skip-git-repo-check was not specified" — and
+			// every Codex worker invocation failed with exit 1 before reaching the
+			// model. The trust question is Codex's own onboarding prompt, which a
+			// non-interactive worker cannot answer; the boundary LeanPi relies on is
+			// the explicit sandbox above (FR-058).
+			"--skip-git-repo-check",
 			"--json",
 			...(packet.model ? ["--model", packet.model] : []),
 			// Codex takes reasoning effort as a config override, not a flag. The

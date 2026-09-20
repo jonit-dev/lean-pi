@@ -80,9 +80,15 @@ if (vendor === "codex" || vendor === "opencode") {
 		if (!options.resume) fail("resume requires a session id", 2);
 	}
 }
+let literal = false;
 for (let index = 0; index < rest.length; index += 1) {
 	const token = rest[index];
-	if (token.startsWith("-")) {
+	if (token === "--") {
+		// End of options, as the real CLIs read it: everything after is the prompt.
+		literal = true;
+		continue;
+	}
+	if (!literal && token.startsWith("-")) {
 		if (flags.bool.includes(token)) {
 			options[token] = true;
 			continue;

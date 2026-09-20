@@ -17,7 +17,7 @@ if (major < 22 || (major === 22 && minor < 19)) {
 	process.stderr.write(`leanpi needs Node >= 22.19 (running ${process.version}). With nvm: nvm use 22\n`);
 	process.exit(1);
 }
-import { autoConfigure, jevClientFor, MissingJevKeyError, requireJev, startupBanner } from "../dist/cli/bootstrap.js";
+import { autoConfigure, jevClientFor, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
 import { loadConfig } from "../dist/core/config.js";
 import { launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 
@@ -31,8 +31,9 @@ try {
 	if (jev.stored) process.stderr.write(`leanpi: JEV key stored at ${jev.stored}\n`);
 	const configured = await autoConfigure({ client: jevClientFor() });
 	if (configured.created) process.stderr.write(`leanpi: ${configured.summary}\n`);
-	process.stderr.write(`${startupBanner(loadConfig(process.cwd()), jev)}\n`);
-	plan = launchPlan(flags.rest);
+	const config = loadConfig(process.cwd());
+	process.stderr.write(`${startupBanner(config, jev)}\n`);
+	plan = launchPlan(flags.rest, undefined, sessionModelFor(config));
 } catch (error) {
 	if (error instanceof MissingJevKeyError) {
 		process.stderr.write(`${error.message}\n`);

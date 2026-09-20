@@ -89,10 +89,18 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
  * accepts the flag more than once, and silently dropping a user's extension
  * would be the launcher deciding something it was not asked to decide.
  */
-export function launchPlan(argv: readonly string[], root: string = packageRoot()): LaunchPlan {
+export function launchPlan(argv: readonly string[], root: string = packageRoot(), sessionModel?: string): LaunchPlan {
 	const extension = join(root, "dist", "index.js");
 	if (!existsSync(extension)) {
 		throw new Error(`LeanPi is not built: ${extension} does not exist. Run \`npm run build\` in ${root}.`);
 	}
-	return { cli: resolvePiCli(root), extension, args: ["--extension", extension, ...argv] };
+	// Pi's own loop is what answers the user on this entry, and it needs a model
+	// of its own: the extension can re-route a turn, but it cannot start one. So
+	// the configured `balanced` model is passed through when Pi can run it —
+	// otherwise Pi falls back to whatever provider it happens to have, which on
+	// this machine was an unrelated endpoint with an exhausted quota and a bare
+	// `429` as the user's first experience. An explicit `--model` always wins.
+	const selects = argv.some((argument) => argument === "--model" || argument === "-m" || argument.startsWith("--model="));
+	const model = sessionModel !== undefined && !selects ? ["--model", sessionModel] : [];
+	return { cli: resolvePiCli(root), extension, args: ["--extension", extension, ...model, ...argv] };
 }

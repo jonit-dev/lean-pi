@@ -8,12 +8,12 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { autoConfigure, MissingJevKeyError, requireJev } from "../src/cli/bootstrap.js";
+import { autoConfigure, MissingJevKeyError, requireJev, sessionModelFor } from "../src/cli/bootstrap.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
 import { MODEL_ROLES } from "../src/core/types.js";
 import type { JevResult } from "../src/jev/types.js";
 import { HARNESS_DESCRIPTORS, runHarness } from "../src/backends/harness.js";
-import { parseLeanPiFlags } from "../src/cli/launch.js";
+import { launchPlan, parseLeanPiFlags } from "../src/cli/launch.js";
 import { statusLine } from "../src/cli/statusline.js";
 import { probeVendor } from "../src/backends/subscriptions.js";
 import { openPrdLane } from "../src/prd/dispatch.js";
@@ -36,7 +36,9 @@ function machine(options: { vendors: readonly string[] }): { cwd: string; home: 
 	const status: Record<string, string> = {
 		claude: '{"loggedIn": true}',
 		codex: "Logged in using ChatGPT",
-		opencode: "1 credentials",
+		// `opencode auth list` for the status probe, `opencode models` for the
+		// candidate list: the stub answers both the way the real CLI does.
+		opencode: '{"loggedIn": true}\n1 credentials\nopencode-go/deepseek-v4.1-flash',
 	};
 	for (const vendor of options.vendors) {
 		writeFileSync(join(bin, vendor), `#!/bin/sh\necho '${status[vendor] as string}'\n`, { mode: 0o755 });
@@ -76,7 +78,7 @@ describe("first run", () => {
 		// including where it contradicts the cheapest-first fallback, which would
 		// never put `claude` on `quick`.
 		const client = jevPicking((role) => (role === "strong" ? "codex:gpt-6-astra" : "claude:opus"));
-		const result = await autoConfigure({ cwd, home, env, client });
+		const result = await autoConfigure({ cwd, home, env, client, piReady: () => false });
 
 		expect(result.created).toBe(true);
 		expect(result.path).toBe(join(home, ".config", "leanpi", "leanpi.config.yaml"));
@@ -96,7 +98,7 @@ describe("first run", () => {
 	it("binds every role to the one vendor a single-subscription machine has", async () => {
 		const { cwd, home, env } = machine({ vendors: ["codex"] });
 
-		await autoConfigure({ cwd, home, env, client: jevPicking(() => "codex:gpt-6-astra") });
+		await autoConfigure({ cwd, home, env, client: jevPicking(() => "codex:gpt-6-astra"), piReady: () => false });
 
 		const config = loadConfig(cwd, {}, env);
 		expect(Object.keys(config.backends)).toEqual(["codex"]);
@@ -187,6 +189,49 @@ describe("LeanPi's own flags", () => {
 	});
 });
 
+describe("what Pi's own loop can run", () => {
+	it("writes the OpenCode subscription as a native provider when Pi already has that credential", async () => {
+		// Pi's own loop answers the user on the `--extension` entry, and it can dial
+		// a provider but cannot spawn a vendor CLI: with only CLI backends the loop
+		// falls back to whatever provider Pi happens to find, which on this machine
+		// was an unrelated endpoint whose first reply was a bare `429`.
+		const { cwd, home, env } = machine({ vendors: ["opencode"] });
+
+		const result = await autoConfigure({
+			cwd,
+			home,
+			env,
+			piReady: (provider) => provider === "opencode-go",
+			client: jevPicking(() => "opencode-go:deepseek-v4.1-flash"),
+		});
+
+		const written = readFileSync(result.path, "utf8");
+		expect(written).toContain("type: native");
+		expect(written).toContain("baseUrl: https://opencode.ai/zen/go/v1");
+		// The dialect and session facts that decide the bill and whether the
+		// endpoint answers at all travel with it.
+		expect(written).toContain("thinkingFormat: deepseek");
+		expect(written).toMatch(/x-opencode-session: [0-9a-f-]{36}/);
+		expect(written).not.toContain("vendor: opencode\n");
+
+		const config = loadConfig(cwd, {}, env);
+		expect(sessionModelFor(config)).toBe("opencode-go/deepseek-v4.1-flash");
+	});
+
+	it("passes that model to Pi, and never overrides a model the user asked for", () => {
+		const root = mkdtempSync(join(tmpdir(), "leanpi-launch-"));
+		mkdirSync(join(root, "dist"), { recursive: true });
+		writeFileSync(join(root, "dist", "index.js"), "");
+		mkdirSync(join(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle"), { recursive: true });
+		writeFileSync(join(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"), "");
+
+		expect(launchPlan([], root, "opencode-go/flash").args).toContain("opencode-go/flash");
+		expect(launchPlan(["--model", "mine/own"], root, "opencode-go/flash").args.filter((argument) => argument === "--model")).toHaveLength(1);
+		// A CLI-only config has nothing Pi can dial; the launcher says nothing.
+		expect(launchPlan([], root).args).not.toContain("--model");
+	});
+});
+
 describe("model candidates", () => {
 	it("reads each vendor's own model instead of a table in this repository", () => {
 		const { home, env } = machine({ vendors: ["claude", "codex", "opencode"] });
@@ -251,6 +296,17 @@ describe("what the vendor actually runs", () => {
 		} as never);
 		expect(codex[codex.indexOf("--model") + 1]).toBe("gpt-6-astra");
 		expect(codex).toContain('model_reasoning_effort="low"');
+		// Codex refuses to run outside a trusted directory without this, and every
+		// worker invocation exited 1 before reaching the model.
+		expect(codex).toContain("--skip-git-repo-check");
+
+		// `--allowedTools` is variadic: a prompt placed after it is read as one more
+		// tool name and Claude exits with "Input must be provided …". Verified
+		// against the installed CLI; `--` is what ends option parsing.
+		const separator = claude.indexOf("--");
+		expect(separator).toBeGreaterThan(claude.indexOf("--allowedTools"));
+		expect(claude[separator + 1]).toBe("do it");
+		expect(claude[claude.length - 1]).toBe("do it");
 	});
 
 	it("sends no model flag when the config says the vendor chooses", async () => {

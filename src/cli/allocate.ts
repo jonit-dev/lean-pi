@@ -24,6 +24,8 @@ import { MODEL_ROLES, type ModelRole } from "../core/types.js";
 
 export interface ModelCandidate {
 	vendor: HarnessVendor;
+	/** Config backend name; differs from the vendor when the backend is native. */
+	backend?: string;
 	/** The id to write into the config; `default` means "whatever the CLI picks". */
 	model: string;
 	/** How the id was obtained, for the line the bootstrap prints. */
@@ -98,7 +100,7 @@ export const ALLOCATE_SITE_ID = "bootstrap.role_models";
 
 /** `vendor:model`, the key JEV chooses by and the map this module answers with. */
 export function candidateKey(candidate: ModelCandidate): string {
-	return `${candidate.vendor}:${candidate.model}`;
+	return `${candidate.backend ?? candidate.vendor}:${candidate.model}`;
 }
 
 const ROLE_QUESTION: Record<ModelRole, string> = {
