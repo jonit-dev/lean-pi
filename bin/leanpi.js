@@ -35,10 +35,18 @@ try {
 	const jev = requireJev({ allowMissing: flags.allowMissingJev, ...(flags.jevKey === undefined ? {} : { setKey: flags.jevKey }) });
 	if (jev.stored) process.stderr.write(`leanpi: JEV key stored at ${jev.stored}\n`);
 	const configured = await autoConfigure({ client: jevClientFor() });
-	if (configured.created) process.stderr.write(`leanpi: ${configured.summary}\n`);
+	// Printed when a config was written *and* when none could be: the
+	// no-subscription branch carries the only instructions the user gets, and
+	// swallowing it left them with `no model roles configured` from the loader.
+	if (configured.created || configured.usable.length === 0) process.stderr.write(`leanpi: ${configured.summary}\n`);
+	// Nothing to route to and nothing written: the line above is the whole
+	// answer, and letting the loader also throw `no model roles configured`
+	// buries it under the error this bootstrap exists to replace.
+	if (!configured.created && configured.usable.length === 0) process.exit(1);
 	const config = loadConfig(process.cwd());
-	process.stderr.write(`${startupBanner(config, jev)}\n`);
-	plan = launchPlan(flags.rest, undefined, sessionModelFor(config));
+	const sessionModel = sessionModelFor(config);
+	process.stderr.write(`${startupBanner(config, jev, sessionModel)}\n`);
+	plan = launchPlan(flags.rest, undefined, sessionModel);
 	}
 } catch (error) {
 	if (error instanceof MissingJevKeyError) {

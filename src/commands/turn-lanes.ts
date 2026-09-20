@@ -124,6 +124,18 @@ export function skillLane(deps: TurnLaneDeps): Lane {
 
 /** §28-§34: the only consumer of a compiled contract. */
 export function executorLane(deps: TurnLaneDeps): Lane {
+	// One pool for the lane's lifetime, which is the session's: a per-turn
+	// registry starts with an empty cooldown map, so a vendor that is rate
+	// limited or hanging is re-probed on every turn and the session pays that
+	// failure again each time (PRD-008 AC-8). The collector is read per
+	// invocation rather than captured, because it is the *run's* accumulator and
+	// changes with every turn.
+	const registry = new BackendRegistry(deps.config, {
+		onInvocation: (record) => {
+			const collector = currentCollector;
+			if (collector) feedInvocation(collector, record);
+		},
+	});
 	return {
 		name: "executor",
 		async run(turn, context) {
@@ -147,12 +159,8 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 						hashWorkspace: () => workspaceHash(deps.cwd),
 					})) ?? undefined;
 			}
-			// PRD-015's accumulator, when the run's owner set one: every backend
-			// invocation this executor makes is billed into the same record, so a
-			// compiled run's `/cost` is what the run actually spent.
-			const collector = currentCollector;
 			context.executor = await runExecutor(contract, {
-				registry: new BackendRegistry(deps.config, collector ? { onInvocation: (record) => feedInvocation(collector, record) } : {}),
+				registry,
 				cwd: deps.cwd,
 				config: deps.config,
 				...(deps.jev ? { jev: deps.jev } : {}),

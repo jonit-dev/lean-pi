@@ -77,16 +77,35 @@ const STATUS_COMMAND: Record<HarnessVendor, readonly string[]> = {
 
 /** `true`/`false` from the vendor, or `null` when it could not be asked. */
 function askVendor(command: string, vendor: HarnessVendor, env: NodeJS.ProcessEnv, run: StatusRunner): boolean | null {
+	let output: string;
 	try {
-		const output = run(command, STATUS_COMMAND[vendor], env);
-		if (vendor === "claude") return /"loggedIn"\s*:\s*true/.test(output);
-		if (vendor === "codex") return /logged in/i.test(output);
-		// `opencode auth list` prints the credential store's entries; an empty
-		// store still exits 0, so the count is the answer.
-		return /\d+ credential/i.test(output) && !/\b0 credentials\b/i.test(output);
+		output = run(command, STATUS_COMMAND[vendor], env);
 	} catch {
 		return null;
 	}
+	// Three answers, not two. A CLI that ran but said something else — a second,
+	// newer `codex` on PATH rejecting the older one's `config.toml`, a CLI
+	// mid-upgrade, a help screen — has not told us the user is signed out, and
+	// treating that as "no" silently deletes a paid subscription from the
+	// generated config. Measured here: `codex login status` printed
+	// `Error loading configuration: …/config.toml:475:1: invalid type: map` while
+	// the same account was live, and detection dropped it.
+	if (vendor === "claude") {
+		if (/"loggedIn"\s*:\s*true/.test(output)) return true;
+		if (/"loggedIn"\s*:\s*false/.test(output)) return false;
+		return null;
+	}
+	if (vendor === "codex") {
+		// Order matters: "Not logged in" contains "logged in".
+		if (/not logged in/i.test(output)) return false;
+		if (/logged in/i.test(output)) return true;
+		return null;
+	}
+	// `opencode auth list` prints the credential store's entries; an empty store
+	// still exits 0, so the count is the answer.
+	if (/\b0 credentials?\b/i.test(output)) return false;
+	if (/\d+ credentials?\b/i.test(output)) return true;
+	return null;
 }
 
 export type StatusRunner = (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => string;
@@ -97,7 +116,16 @@ const runStatus: StatusRunner = (command, args, env) => {
 	// `NO_COLOR` is dropped rather than added — Node warns on stderr when it and
 	// `FORCE_COLOR` disagree, and that warning is the user's first impression.
 	const { NO_COLOR: _dropped, ...rest } = env;
-	const result = spawnSync(command, [...args], { encoding: "utf8", timeout: 15_000, env: { ...rest, FORCE_COLOR: "0" } });
+	// `stdio` closes the child's stdin: a CLI that would prompt sees EOF and
+	// exits instead of holding the first run hostage for the whole timeout. Five
+	// seconds, because a status command that has not answered by then is not
+	// going to, and three of these run before the banner prints.
+	const result = spawnSync(command, [...args], {
+		encoding: "utf8",
+		timeout: 5_000,
+		stdio: ["ignore", "pipe", "pipe"],
+		env: { ...rest, FORCE_COLOR: "0" },
+	});
 	if (result.error) throw result.error;
 	return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 };

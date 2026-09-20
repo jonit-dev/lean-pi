@@ -27,7 +27,7 @@ export function prettyModel(backend: string, model: string): string {
 	return bare.replace(/\[([^\]]+)\]$/, " ($1)");
 }
 
-export type Lane = "pi_loop" | "executor" | "review" | "proof";
+export type Lane = "pi_loop" | "executor";
 
 export interface StatusInput {
 	config: LeanPiConfig;
@@ -35,6 +35,8 @@ export interface StatusInput {
 	lane: Lane;
 	/** The role actually dispatched, when it differs from the contract's class. */
 	role?: ModelRole;
+	/** The model actually running, when it is not the one the role resolves to. */
+	model?: string;
 	/** The compiler wants a PRD and none is open; the user opens one. */
 	prdWanted?: boolean;
 }
@@ -46,21 +48,25 @@ const LANE_LABEL: Record<Lane, string> = {
 	// would name a lane that did not run.
 	pi_loop: "Pi loop",
 	executor: "Executor lane",
-	review: "Reviewer lane",
-	proof: "Proof gate",
 };
 
 /** `Auto: claude opus (1m) (Medium) — MEDIUM complexity — Executor lane` */
-export function statusLine({ config, contract, lane, role, prdWanted }: StatusInput): string {
+export function statusLine({ config, contract, lane, role, model: running, prdWanted }: StatusInput): string {
 	const resolvedRole = role ?? contract.routing.executor_class;
 	let model: string;
-	try {
-		const ref = resolveRole(config, resolvedRole);
-		model = prettyModel(ref.backend, ref.model);
-	} catch {
-		// An unconfigured role is a real state (the config names fewer roles than
-		// the compiler uses); the line says which role rather than throwing.
-		model = resolvedRole;
+	if (running !== undefined) {
+		// The caller knows what is executing and it is not the role's model — Pi
+		// kept the session model because the class has no entry in its registry.
+		model = running.includes("/") ? prettyModel(...(running.split("/", 2) as [string, string])) : running;
+	} else {
+		try {
+			const ref = resolveRole(config, resolvedRole);
+			model = prettyModel(ref.backend, ref.model);
+		} catch {
+			// An unconfigured role is a real state (the config names fewer roles than
+			// the compiler uses); the line says which role rather than throwing.
+			model = resolvedRole;
+		}
 	}
 	const effort = EFFORT_LABEL[contract.reasoning.effort];
 	const line = `Auto: ${model} (${effort}) — ${contract.task.execution_complexity} complexity — ${LANE_LABEL[lane]}`;

@@ -348,6 +348,11 @@ describe("PRD-007 — the reviewer's verdict and the escalation categories", () 
 		const { packets } = await escalatedPackets(h, "GET_MORE_CONTEXT");
 
 		expect(packets).toHaveLength(3);
+		// The compiler's per-turn reasoning budget has to be *on* the packet or a
+		// vendor CLI never learns it: Codex takes it as `-c
+		// model_reasoning_effort=` and otherwise runs at its own configured
+		// effort (`xhigh` on the machine this was written on) on every turn.
+		expect(packets[0]!.effort).toBe("low");
 		expect(packets[2]).not.toEqual(packets[1]);
 		expect(packets[2]!.files).toContain("src/target.ts");
 		expect(packets[2]!.prompt).toContain("widened files");

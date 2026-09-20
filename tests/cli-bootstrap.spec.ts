@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { autoConfigure, MissingJevKeyError, requireJev, sessionModelFor } from "../src/cli/bootstrap.js";
+import { autoConfigure, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../src/cli/bootstrap.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
 import { MODEL_ROLES } from "../src/core/types.js";
 import type { JevResult } from "../src/jev/types.js";
@@ -17,6 +17,7 @@ import { launchPlan, parseLeanPiFlags } from "../src/cli/launch.js";
 import { statusLine } from "../src/cli/statusline.js";
 import { probeVendor } from "../src/backends/subscriptions.js";
 import { openPrdLane } from "../src/prd/dispatch.js";
+import { activate, clearLanes } from "../src/index.js";
 import { loadConfig } from "../src/core/config.js";
 
 /** A machine with the vendor CLIs installed and logged in. */
@@ -149,6 +150,19 @@ describe("the control plane is not optional", () => {
 		expect(message).toContain("--no-jev");
 	});
 
+	it("accepts the key the user configured in leanpi.config.yaml", () => {
+		// `config.jev.apiKey` is the first source `resolveCredential` checks, and
+		// the startup gate used to read a synthetic config instead — refusing a
+		// configured operator with "LeanPi needs a JEV key".
+		const { cwd, home, env } = machine({ vendors: ["codex"] });
+		writeFileSync(
+			join(cwd, "leanpi.config.yaml"),
+			["backends:", "  codex: { type: external_harness, vendor: codex }", "models:", "  quick:", "    backend: codex", "    model: gpt-6-astra", "jev:", "  apiKey: jev-from-config", ""].join("\n"),
+		);
+
+		expect(requireJev({ cwd, home, env }).source).toContain("config");
+	});
+
 	it("accepts the key from the project's .env, which is never exported", () => {
 		const { cwd, home, env } = machine({ vendors: ["codex"] });
 		writeFileSync(join(cwd, ".env"), "JEV_API_KEY=jev-from-dotenv\n");
@@ -216,6 +230,22 @@ describe("what Pi's own loop can run", () => {
 
 		const config = loadConfig(cwd, {}, env);
 		expect(sessionModelFor(config)).toBe("opencode-go/deepseek-v4.1-flash");
+		// The banner says who answers the prompt, because Pi's loop is not the
+		// role map.
+		expect(startupBanner(config, { source: "env" }, sessionModelFor(config))).toContain("pi runs opencode-go/deepseek-v4.1-flash");
+	});
+
+	it("passes no model to Pi when the role says `default`, which a native provider cannot mean", () => {
+		// `default` means "let the vendor CLI choose" and a native provider has no
+		// CLI: passed through, Pi registers `default` as a model id and the
+		// endpoint answers `400 Model is unavailable`.
+		const config = {
+			backends: { "opencode-go": { type: "native", baseUrl: "https://example.test" } },
+			models: { balanced: { backend: "opencode-go", model: VENDOR_DEFAULT } },
+		} as never;
+
+		expect(sessionModelFor(config)).toBeUndefined();
+		expect(startupBanner(config, { source: "env" }, undefined)).toContain("pi's own model");
 	});
 
 	it("passes that model to Pi, and never overrides a model the user asked for", () => {
@@ -283,16 +313,29 @@ describe("what the vendor actually runs", () => {
 		// own configured model at the vendor's own reasoning effort (`xhigh` on the
 		// machine this was written on), so the role map and the compiler's
 		// per-turn effort decision were decoration on two of three backends.
+		// `env` explicitly, both ways: the `--bare` branch keys off
+		// `ANTHROPIC_API_KEY`, and reading it from the ambient environment makes
+		// this assertion pass or fail depending on the developer's shell.
 		const claude = HARNESS_DESCRIPTORS.claude.argv({
 			packet: { objective: "x", role: "strong", model: "opus", effort: "high" },
 			prompt: "do it",
+			env: {},
 		} as never);
+		const withKey = HARNESS_DESCRIPTORS.claude.argv({
+			packet: { objective: "x", role: "strong", model: "opus" },
+			prompt: "do it",
+			env: { ANTHROPIC_API_KEY: "sk-test" },
+		} as never);
+		// With an API key `--bare` is safe and is the stronger suppression; with a
+		// subscription login it disables OAuth and the backend is dead.
+		expect(withKey).toContain("--bare");
 		expect(claude).toContain("--model");
 		expect(claude[claude.indexOf("--model") + 1]).toBe("opus");
 
 		const codex = HARNESS_DESCRIPTORS.codex.argv({
 			packet: { objective: "x", role: "quick", model: "gpt-6-astra", effort: "low" },
 			prompt: "do it",
+			env: {},
 		} as never);
 		expect(codex[codex.indexOf("--model") + 1]).toBe("gpt-6-astra");
 		expect(codex).toContain('model_reasoning_effort="low"');
@@ -395,6 +438,25 @@ describe("detection asks the vendor", () => {
 		}
 		// An empty OpenCode store is a logged-out machine, not a signed-in one.
 		expect(probeVendor("opencode", { env, home, verify: true, run: () => "└  0 credentials\n" }).signedIn).toBe(false);
+		// "Not logged in" contains "logged in": the naive matcher read a logged-out
+		// Codex as signed in and wrote a config routing every role at it.
+		expect(probeVendor("codex", { env, home, verify: true, run: () => "Not logged in\n" }).signedIn).toBe(false);
+	});
+
+	it("says \"could not ask\" — not \"signed out\" — when the CLI answers with something else", () => {
+		// Measured here: a second, newer `codex` on PATH printed `Error loading
+		// configuration: …/config.toml:475:1: invalid type: map` while that
+		// account was live, and detection dropped a paid subscription. An answer
+		// that is neither shape is not an answer, so the credential file decides.
+		const { home, env } = machine({ vendors: ["codex", "claude"] });
+
+		const codex = probeVendor("codex", { env, home, verify: true, run: () => "Error loading configuration: config.toml:475:1: invalid type: map" });
+		expect(codex.signedIn).toBe(true);
+		expect(codex.evidence).toContain("auth.json");
+
+		const claude = probeVendor("claude", { env, home, verify: true, run: () => "panic: something else entirely" });
+		expect(claude.signedIn).toBe(true);
+		expect(claude.evidence).toContain(".credentials.json");
 	});
 });
 
@@ -458,5 +520,66 @@ describe("a PRD the user has not written yet", () => {
 			prdWanted: true,
 		});
 		expect(line).toContain("/prd create");
+	});
+});
+
+describe("the status line reaches the footer", () => {
+	it("is installed by the turn handler, naming the model Pi was actually given", async () => {
+		// The renderer had tests; nothing asserted the extension ever calls
+		// `ctx.ui.setStatus`, so deleting the call would have been invisible.
+		const { cwd, home, env } = machine({ vendors: [] });
+		writeFileSync(
+			join(cwd, "leanpi.config.yaml"),
+			[
+				"backends:",
+				"  local: { type: native, baseUrl: https://example.test, apiKey: LOCAL_KEY }",
+				"  claude: { type: external_harness, vendor: claude }",
+				"models:",
+				"  quick:",
+				"    backend: local",
+				"    model: cheap",
+				"  balanced:",
+				"    backend: local",
+				"    model: cheap",
+				"  strong:",
+				"    backend: claude",
+				"    model: opus",
+				"jev:",
+				"  mode: disabled",
+				"",
+			].join("\n"),
+		);
+		const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
+		const statuses: Array<[string, string | undefined]> = [];
+		const pi = {
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, handler),
+			registerTool: () => {},
+			registerProvider: () => {},
+			setModel: async () => {},
+			setThinkingLevel: () => {},
+		};
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+
+		const handler = handlers.get("before_agent_start");
+		expect(handler).toBeDefined();
+		await handler?.(
+			{ prompt: "rename the helper in src/target.ts", systemPrompt: "you are an assistant" },
+			{
+				// Pi has no model for the `strong` class here — it is a vendor CLI —
+				// so `setModel` is skipped and Pi keeps running the session model.
+				modelRegistry: { find: (backend: string) => (backend === "local" ? { id: "cheap" } : undefined) },
+				ui: { setStatus: (key: string, text: string | undefined) => statuses.push([key, text]) },
+			},
+		);
+		clearLanes();
+
+		const [entry] = statuses;
+		expect(entry?.[0]).toBe("leanpi");
+		expect(entry?.[1]).toMatch(/^Auto: /);
+		expect(entry?.[1]).toMatch(/complexity/);
+		// Never the class's model when Pi was not given it: with JEV disabled the
+		// fallback route is what runs, and the line has to name what Pi will dial.
+		expect(entry?.[1]).not.toContain("opus");
 	});
 });

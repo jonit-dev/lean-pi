@@ -64,6 +64,7 @@ import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
+import { sessionModelFor } from "./cli/bootstrap.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
@@ -555,23 +556,35 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// only things the classification can change. `setModel` is skipped when Pi
 		// has no authenticated model for the class (an external-harness role), and
 		// the level is clamped to the model's own capabilities by the host.
-		if (context.contract && !ownsExecutionLoop(config)) {
+		const owns = ownsExecutionLoop(config);
+		// What Pi will actually run this turn, when Pi is the one running it.
+		let installed: string | undefined;
+		if (context.contract && !owns) {
 			const ref = resolveRole(config, context.contract.routing.executor_class);
 			const model = ctx.modelRegistry.find(ref.backend, ref.model);
-			if (model) await pi.setModel(model);
+			if (model) {
+				await pi.setModel(model);
+				installed = `${ref.backend}/${ref.model}`;
+			}
 			pi.setThinkingLevel(context.contract.reasoning.effort);
 		}
 		// "Tell me your goal, I figure out the rest" is only trustworthy if the
 		// figuring is visible: the footer carries what this turn routed to, how
 		// hard it was told to think, and what it was classified as.
+		//
+		// `installed` is the model Pi was *given*, which is not always the one the
+		// contract asked for: an `external_harness` class has no entry in Pi's
+		// registry, `setModel` is skipped, and Pi keeps running the session model.
+		// Naming the contract's choice there would report a route that did not
+		// happen — the one failure this line exists to prevent.
 		if (context.contract) {
 			ctx.ui.setStatus(
 				LEANPI_STATUS_KEY,
 				statusLine({
 					config,
 					contract: context.contract,
-					lane: ownsExecutionLoop(config) ? "executor" : "pi_loop",
-					...(ownsExecutionLoop(config) ? {} : { role: context.contract.routing.executor_class }),
+					lane: owns ? "executor" : "pi_loop",
+					...(owns || installed !== undefined ? {} : { model: sessionModelFor(config) ?? "pi's own model" }),
 					prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
 				}),
 			);

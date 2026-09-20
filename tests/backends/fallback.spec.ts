@@ -6,8 +6,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BackendRegistry, runWorkerTurn, type BackendInvocation } from "../../src/backends/index.js";
-import { loadConfig } from "../../src/index.js";
+import { clearLanes, loadConfig, registerTurnLanes, runTurn } from "../../src/index.js";
+import { setCompilerContext } from "../../src/compiler/index.js";
+import { REVIEW_LEVEL_QUESTION_ID, REVIEW_LEVEL_SITE_ID } from "../../src/review/gate.js";
 import { fixtureRepo, writeConfig } from "../helpers/fixtures.js";
+import { choice, fakeExec, scriptedJev, VERIFY_COMMANDS } from "../executor/helpers.js";
 import { installStubCli, setStubScript, type StubCli } from "./helpers.js";
 
 function chainConfig(cli: StubCli) {
@@ -84,6 +87,48 @@ describe("PRD-008 Phase 4 — vendor limits, fallback and the cost hook", () => 
 		clock = limited!.until;
 		expect(registry.isCooling("codex")).toBe(false);
 		expect(registry.selectBackend("strong")[0]!.name).toBe("codex");
+	});
+
+	it("AC-8: the executor lane keeps one pool across turns, so a limited vendor is asked once per session", async () => {
+		// The cooldown lives in the `BackendRegistry` the lane holds. The lane used
+		// to build one per turn, which emptied the cooldown map between turns and
+		// made every later turn pay the limited vendor's failure again — the cost
+		// the cooldown exists to remove. This drives the real lane, not a
+		// hand-held registry, because that is where the lifetime is decided.
+		const cli = installStubCli();
+		const { cwd } = fixtureRepo();
+		// Every role on the same two-backend chain: the compiler picks the class,
+		// and a class with no backend would block before any vendor is spawned.
+		const roles = ["quick", "balanced", "strong"];
+		writeConfig(cwd, {
+			backends: {
+				codex: { type: "external_harness", command: cli.bin.codex, roles, priority: 20, quota_class: "premium" },
+				opencode: { type: "external_harness", command: cli.bin.opencode, roles, priority: 10, quota_class: "low-cost" },
+			},
+			models: Object.fromEntries(roles.map((role) => [role, { backend: "codex", model: "strong" }])),
+		});
+		const config = loadConfig(cwd);
+		clearLanes();
+		setCompilerContext({ config, cwd });
+		registerTurnLanes({
+			cwd,
+			config,
+			exec: fakeExec({ pass: true }),
+			verifyCommands: VERIFY_COMMANDS,
+			jev: scriptedJev({ [REVIEW_LEVEL_SITE_ID]: () => choice(REVIEW_LEVEL_QUESTION_ID, "NO_SEMANTIC_REVIEW") }),
+		});
+
+		const restore = setStubScript(cli.recordPath, { modes: { codex: "rate-limit" }, files: { "one.txt": "opencode did it\n" } });
+		await runTurn({ text: "create one.txt with a line of text" }, { config, cwd });
+		const restoreSecond = setStubScript(cli.recordPath, { modes: { codex: "rate-limit" }, files: { "two.txt": "opencode did it again\n" } });
+		await runTurn({ text: "create two.txt with a line of text" }, { config, cwd });
+		restore();
+		restoreSecond();
+		clearLanes();
+
+		// Two turns, one probe of the limited vendor.
+		expect(cli.records().filter((record) => record.vendor === "codex")).toHaveLength(1);
+		expect(cli.records().filter((record) => record.vendor === "opencode").length).toBeGreaterThanOrEqual(2);
 	});
 
 	it("AC-8: a backend that hangs is cooled down too, so the wait is paid once", async () => {

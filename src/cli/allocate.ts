@@ -76,10 +76,13 @@ export function detectModels(
 		// The one vendor LeanPi passes `--model` to, and the one with a list
 		// command: `opencode models` prints `provider/model` per line.
 		try {
+			// `provider/model` per line, and only the provider LeanPi has a rate card
+			// for: an `anthropic/…` line from the same list would otherwise be
+			// written under OpenCode's base URL and priced with OpenCode's numbers.
 			const listed = run("opencode", ["models"], env)
 				.split("\n")
 				.map((line) => line.trim())
-				.filter((line) => line.length > 0 && line.includes("/"));
+				.filter((line) => line.startsWith("opencode-go/"));
 			if (listed.length > 0) return listed.map((model) => ({ vendor, model, source: "opencode models" }));
 		} catch {
 			// Not installed, not signed in, or offline — fall through to the config.

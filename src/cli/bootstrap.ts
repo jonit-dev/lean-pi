@@ -22,7 +22,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type Allocation, type ModelCandidate } from "./allocate.js";
-import { CONFIG_FILENAME, configPathFor } from "../core/config.js";
+import { CONFIG_FILENAME, configPathFor, loadConfig } from "../core/config.js";
 import { resolvePiCli } from "./launch.js";
 import { MODEL_ROLES, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { createJevClient, type JevClient } from "../jev/client.js";
@@ -79,13 +79,17 @@ export function piProviderReady(provider: string, options: { run?: (cli: string,
  */
 const OPENCODE_GO_PROVIDER = "opencode-go";
 
-function nativeOpenCodeGo(models: readonly string[], sessionId: string): string[] {
+function nativeOpenCodeGo(sessionId: string, env: NodeJS.ProcessEnv): string[] {
 	return [
 		`  ${OPENCODE_GO_PROVIDER}:`,
 		"    type: native",
 		"    baseUrl: https://opencode.ai/zen/go/v1",
 		"    api: openai-completions",
-		"    apiKey: OPENCODE_API_KEY",
+		// Only when the variable is actually set: the evidence for writing this
+		// block is `pi auth check`, which reads Pi's own credential store, and
+		// naming an unset variable would hand Pi the literal string
+		// `OPENCODE_API_KEY` as the key instead of letting it use that store.
+		...(env.OPENCODE_API_KEY === undefined ? [] : ["    apiKey: OPENCODE_API_KEY"]),
 		"    reasoning: true",
 		"    # This endpoint serves the model with DeepSeek's `thinking` field rather",
 		"    # than OpenAI's `reasoning_effort`; without the declaration Pi sends no",
@@ -94,7 +98,9 @@ function nativeOpenCodeGo(models: readonly string[], sessionId: string): string[
 		"    compat:",
 		"      thinkingFormat: deepseek",
 		"    # The endpoint refuses a request with no session header and keys its",
-		"    # prompt cache off it, so the value has to stay stable for the session.",
+		"    # prompt cache off it, so the value must not change between requests.",
+		"    # Generated once, when this file was written, and stable for as long as",
+		"    # the file lives — change it to split this machine's prompt cache.",
 		"    headers:",
 		`      x-opencode-session: ${sessionId}`,
 		"    contextWindow: 1000000",
@@ -103,7 +109,6 @@ function nativeOpenCodeGo(models: readonly string[], sessionId: string): string[
 		"      input: 0.15",
 		"      output: 0.6",
 		"      cacheRead: 0.003",
-		...models.map((model) => `    # model: ${model}`),
 	];
 }
 
@@ -115,7 +120,13 @@ export interface AutoConfigResult {
 	summary: string;
 }
 
-function renderConfig(usable: readonly SubscriptionState[], allocation: Allocation, candidates: readonly ModelCandidate[], sessionId: string): string {
+function renderConfig(
+	usable: readonly SubscriptionState[],
+	allocation: Allocation,
+	candidates: readonly ModelCandidate[],
+	sessionId: string,
+	env: NodeJS.ProcessEnv,
+): string {
 	const lines = [
 		"# Written by `leanpi` on first run, from what this machine has installed and",
 		"# signed in. It is an ordinary config file: edit it, or delete it to have it",
@@ -136,7 +147,7 @@ function renderConfig(usable: readonly SubscriptionState[], allocation: Allocati
 		lines.push(`    vendor: ${state.vendor}`);
 		lines.push(`    quota_class: ${QUOTA_CLASS[state.vendor] ?? "premium"}`);
 	}
-	if (native.length > 0) lines.push(...nativeOpenCodeGo(native.map((candidate) => candidate.model), sessionId));
+	if (native.length > 0) lines.push(...nativeOpenCodeGo(sessionId, env));
 	lines.push(
 		"",
 		`# Roles allocated by ${describeAllocation(allocation)},`,
@@ -206,7 +217,7 @@ export async function autoConfigure(
 			: await allocateRoles(options.client, candidates);
 	const target = join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "leanpi", CONFIG_FILENAME);
 	mkdirSync(dirname(target), { recursive: true });
-	writeFileSync(target, renderConfig(usable, allocation, candidates, randomUUID()), { mode: 0o600 });
+	writeFileSync(target, renderConfig(usable, allocation, candidates, randomUUID(), env), { mode: 0o600 });
 	return {
 		path: target,
 		created: true,
@@ -248,7 +259,7 @@ export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boo
 	// `jev.apiKey` in config, the credential store, `$JEV_API_KEY`, the project's
 	// `.env` — the same order the client resolves, so the check cannot disagree
 	// with the session it is about to start.
-	const credential = resolveCredential(bootstrapConfig(), { ...env, HOME: home }, cwd);
+	const credential = resolveCredential(bootstrapConfig({ cwd, env, home }), { ...env, HOME: home }, cwd);
 	if (credential.key !== null) return { source: describeCredential(credential) };
 	if (options.allowMissing === true) return { source: "not configured (--no-jev)" };
 	throw new MissingJevKeyError(
@@ -268,18 +279,31 @@ export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boo
 }
 
 /**
- * The config the bootstrap itself runs on, before a real one exists. Only the
- * `jev` block is read — by `resolveCredential` and by the client — so this is
- * the whole of it, not a stub standing in for a loaded file.
+ * The config the bootstrap runs on.
+ *
+ * The user's own file when there is one — `jev.apiKey` is the *first* source
+ * `resolveCredential` checks and `jev.endpoint`/`jev.model` are what the client
+ * dials, so a stub here would refuse a configured operator at startup and send
+ * the one allocation call to the public default. A config that exists but does
+ * not load (mid-edit, missing roles) is not a reason to refuse a key: the
+ * synthetic block covers that and the genuine first run.
  */
-function bootstrapConfig(): Parameters<typeof createJevClient>[0]["config"] {
+function bootstrapConfig(options: BootstrapEnv): Parameters<typeof createJevClient>[0]["config"] {
+	const path = configPathFor(options.cwd, options.env);
+	if (existsSync(path)) {
+		try {
+			return loadConfig(options.cwd, {}, options.env);
+		} catch {
+			// Fall through: the key check is not the place to report a broken config.
+		}
+	}
 	return { jev: { mode: "enabled", apiKey: null } } as Parameters<typeof createJevClient>[0]["config"];
 }
 
 /** A JEV client for the one decision made before a session exists: the role map. */
 export function jevClientFor(options: Partial<BootstrapEnv> = {}): JevClient {
 	const { cwd, env, home } = environment(options);
-	return createJevClient({ config: bootstrapConfig(), cwd, env: { ...env, HOME: home } });
+	return createJevClient({ config: bootstrapConfig({ cwd, env, home }), cwd, env: { ...env, HOME: home } });
 }
 
 /**
@@ -288,7 +312,7 @@ export function jevClientFor(options: Partial<BootstrapEnv> = {}): JevClient {
  * the control plane is live. One screen line each, on stderr, so a piped
  * `--print` run still yields clean stdout.
  */
-export function startupBanner(config: LeanPiConfig, jev: JevCheck): string {
+export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?: string): string {
 	const label = (role: ModelRole): string => {
 		const entry = config.models[role];
 		if (entry === undefined) return "—";
@@ -300,6 +324,14 @@ export function startupBanner(config: LeanPiConfig, jev: JevCheck): string {
 		`  models   ${roles.join("  ·  ")}`,
 		`  review   ${label("review_quick")} → ${label("review_strong")}`,
 		`  control  JEV ${jev.source}`,
+		// Who answers the prompt. Pi's own loop cannot dial a vendor CLI, so on a
+		// subscription-only config it runs on whatever provider Pi has — and the
+		// roles above describe the workers LeanPi spawns *inside* the turn, not
+		// the loop. Saying so is the difference between a surprising `429` from an
+		// endpoint the user never configured and an expected one.
+		sessionModel === undefined
+			? "  loop     pi's own model — the roles above are vendor CLIs LeanPi runs inside the turn"
+			: `  loop     pi runs ${sessionModel}`,
 	].join("\n");
 }
 
@@ -316,5 +348,10 @@ export function sessionModelFor(config: LeanPiConfig): string | undefined {
 	if (entry === undefined) return undefined;
 	const backend = config.backends[entry.backend] as { type?: string; enabled?: boolean } | undefined;
 	if (backend?.type !== "native" || backend.enabled === false) return undefined;
+	// `default` means "let the vendor CLI choose" and a native provider has no
+	// CLI: passed through it becomes `--model opencode-go/default`, which Pi
+	// registers as a real model id and the endpoint answers with
+	// `400 Model is unavailable`.
+	if (entry.model === VENDOR_DEFAULT) return undefined;
 	return `${entry.backend}/${entry.model}`;
 }
