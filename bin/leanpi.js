@@ -19,12 +19,17 @@ if (major < 22 || (major === 22 && minor < 19)) {
 }
 import { autoConfigure, jevClientFor, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
 import { loadConfig } from "../dist/core/config.js";
-import { launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
+import { isInformational, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 
 const flags = parseLeanPiFlags(process.argv.slice(2));
 
 let plan;
 try {
+	// `--help`/`--version` print and exit: they start no session, so they neither
+	// need a control plane nor deserve a refusal.
+	if (isInformational(flags.rest)) {
+		plan = launchPlan(flags.rest);
+	} else {
 	// The key first: JEV allocates the roles the config is written with, so a run
 	// that has no control plane must stop before it writes anything.
 	const jev = requireJev({ allowMissing: flags.allowMissingJev, ...(flags.jevKey === undefined ? {} : { setKey: flags.jevKey }) });
@@ -34,6 +39,7 @@ try {
 	const config = loadConfig(process.cwd());
 	process.stderr.write(`${startupBanner(config, jev)}\n`);
 	plan = launchPlan(flags.rest, undefined, sessionModelFor(config));
+	}
 } catch (error) {
 	if (error instanceof MissingJevKeyError) {
 		process.stderr.write(`${error.message}\n`);

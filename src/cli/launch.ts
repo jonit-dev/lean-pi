@@ -43,6 +43,11 @@ export function resolvePiCli(root: string = packageRoot()): string {
 	throw new Error(`Pi's CLI was not found at ${bundled}. Run \`npm install\` in ${root}.`);
 }
 
+/** Pi's own informational flags: they print and exit, and configure nothing. */
+export function isInformational(argv: readonly string[]): boolean {
+	return argv.some((argument) => argument === "--help" || argument === "-h" || argument === "--version" || argument === "-v");
+}
+
 export interface LeanPiFlags {
 	/** `--no-jev`: start the degraded harness deliberately. */
 	allowMissingJev: boolean;

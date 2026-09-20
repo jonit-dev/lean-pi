@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
-import { launchPlan, packageRoot, resolvePiCli } from "../../src/cli/launch.js";
+import { isInformational, launchPlan, packageRoot, resolvePiCli } from "../../src/cli/launch.js";
 import { tempDir } from "../helpers/fixtures.js";
 
 describe("the leanpi launcher", () => {
@@ -61,6 +61,15 @@ describe("the leanpi launcher", () => {
 		// behind the command.
 		expect(help.replace(/\u001b\[[0-9;]*m/g, "")).toContain("pi - AI coding assistant");
 		expect(help).toContain("--extension");
+	});
+
+	it("treats --help and --version as informational, so they need no key and no config", () => {
+		// They print and exit: refusing them for a missing JEV key, or writing a
+		// config on the way to printing a version string, is the launcher doing
+		// something the user did not ask for.
+		expect(isInformational(["--help"])).toBe(true);
+		expect(isInformational(["-v"])).toBe(true);
+		expect(isInformational(["--print", "do the thing"])).toBe(false);
 	});
 
 	it("resolves its own package root from the built module", () => {
