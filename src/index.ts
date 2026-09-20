@@ -570,17 +570,17 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 				statusLine({
 					config,
 					contract: context.contract,
-					lane: ownsExecutionLoop(config) ? "executor" : "compiler",
+					lane: ownsExecutionLoop(config) ? "executor" : "pi_loop",
 					...(ownsExecutionLoop(config) ? {} : { role: context.contract.routing.executor_class }),
 					prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
 				}),
 			);
 		}
-		// Pi's blanket catalog, on the entry that does not go through the resource
-		// loader: `createLeanPiSession` suppresses it with `skillsOverride`, and
-		// `pi --extension` never builds that loader, so the same 82,343 bytes come
-		// back in the system prompt of every request. LeanPi already disclosed the
-		// skills this turn needs (PRD-005); this removes the duplicate library.
+		// Pi's blanket catalog, for any entry that still assembles one: the
+		// `leanpi` launcher passes `--no-skills` and `createLeanPiSession` sets
+		// `skillsOverride`, but a user running `pi --extension` by hand gets Pi's
+		// discovery, and that is 82,343 bytes of the system prompt of every
+		// request (~20.6k tokens) duplicating disclosure LeanPi already did.
 		const systemPrompt = withoutSkillCatalog(event.systemPrompt);
 		if (context.contract) {
 			// The record is written at `agent_end`, not here: with Pi's own loop as

@@ -104,15 +104,49 @@ documented path on Node 22.
 ```sh
 npm install
 npm run build
+npm link          # puts `leanpi` on PATH
+leanpi            # run it anywhere
 ```
 
-Two entry points, one code path:
+**First run configures itself.** With no `leanpi.config.yaml` anywhere above the
+working directory, `leanpi` asks the machine what it has — which vendor CLIs are
+installed *and* signed in (`claude auth status`, `codex login status`,
+`opencode auth list`), which models those CLIs report, and whether Pi already
+holds a provider credential — then writes
+`~/.config/leanpi/leanpi.config.yaml` with JEV allocating the six roles over
+those models from published capability and price data. It is an ordinary file:
+edit it, or delete it to have it written again. No credential is ever written
+into it.
+
+```
+leanpi — tell me your goal, I figure out the rest.
+  models   quick opencode-go deepseek-v4.1-flash  ·  balanced codex gpt-6-astra  ·  strong claude opus[1m]
+  review   opencode-go deepseek-v4.1-flash → claude opus[1m]
+  control  JEV configured (source: env file)
+```
+
+While a turn runs, the footer carries the decision it made:
+`Auto: opus (1m) (Medium) — MEDIUM complexity — Executor lane`.
+
+**The JEV key is required.** The task compiler, the skill disclosure and the
+proof gate are JEV decisions; without a key every one of them falls back to a
+heuristic, which is a different harness than the measured one, so `leanpi`
+refuses to start and says how to configure it:
 
 ```sh
-# 1. As a Pi extension (interactive)
-npx pi --extension ./dist/index.js
+leanpi --jev-key <key>          # stored at ~/.config/leanpi/credentials.json (0600)
+export JEV_API_KEY=<key>        # or this shell
+echo 'JEV_API_KEY=<key>' >> .env  # or this project — read, never exported
+leanpi --no-jev                 # or run the degraded harness deliberately
+```
 
-# 2. As a library (the same activate() path the tests exercise)
+Two other entry points, one code path:
+
+```sh
+# As a Pi extension by hand (what `leanpi` does for you)
+npx pi --extension ./dist/leanpi.js --no-skills
+
+# As a library (the same activate() path the tests exercise)
 node -e "import('./dist/index.js').then(async (m) => {
   const session = await m.createLeanPiSession();
   await session.runTurn('summarize this repository');
@@ -120,11 +154,12 @@ node -e "import('./dist/index.js').then(async (m) => {
 })"
 ```
 
-Configuration lives in `leanpi.config.yaml` beside the working directory:
-`backends` (native OpenAI-compatible endpoints and `external_harness` CLIs),
-`models` (the six roles `quick`/`balanced`/`strong`/`specialist`/`review_quick`/
-`review_strong`), `jev`, `capabilities`, `permissions`, `limits`. Credentials are
-resolved from the environment by name — no key is ever written into the repo.
+Configuration lives in `leanpi.config.yaml` beside the working directory (or in
+`$XDG_CONFIG_HOME/leanpi/`): `backends` (native OpenAI-compatible endpoints and
+`external_harness` CLIs), `models` (the six roles `quick`/`balanced`/`strong`/
+`specialist`/`review_quick`/`review_strong`), `jev`, `capabilities`,
+`permissions`, `limits`. Credentials are resolved from the environment by name —
+no key is ever written into the repo.
 
 Annotated example: [`leanpi.config.yaml`](leanpi.config.yaml).
 

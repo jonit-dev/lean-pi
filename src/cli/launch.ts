@@ -90,7 +90,9 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
  * would be the launcher deciding something it was not asked to decide.
  */
 export function launchPlan(argv: readonly string[], root: string = packageRoot(), sessionModel?: string): LaunchPlan {
-	const extension = join(root, "dist", "index.js");
+	// `dist/leanpi.js`, not `dist/index.js`: Pi names an extension after its
+	// file and the banner is the user's first screen (`[Extensions] leanpi`).
+	const extension = join(root, "dist", "leanpi.js");
 	if (!existsSync(extension)) {
 		throw new Error(`LeanPi is not built: ${extension} does not exist. Run \`npm run build\` in ${root}.`);
 	}
@@ -102,5 +104,12 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// `429` as the user's first experience. An explicit `--model` always wins.
 	const selects = argv.some((argument) => argument === "--model" || argument === "-m" || argument.startsWith("--model="));
 	const model = sessionModel !== undefined && !selects ? ["--model", sessionModel] : [];
-	return { cli: resolvePiCli(root), extension, args: ["--extension", extension, ...model, ...argv] };
+	// LeanPi owns skill disclosure (PRD-005): the compiler picks the few a task
+	// needs and the prompt carries those. Pi's own discovery loads every
+	// installed skill — 190 on this machine, listed across the whole first
+	// screen, and 82,343 bytes of the system prompt of every request. `-ns` is
+	// the vendor's own switch for exactly that, so the library path's
+	// `skillsOverride` and this entry now suppress the same thing the same way.
+	const skills = argv.includes("--skill") ? [] : ["--no-skills"];
+	return { cli: resolvePiCli(root), extension, args: ["--extension", extension, ...skills, ...model, ...argv] };
 }

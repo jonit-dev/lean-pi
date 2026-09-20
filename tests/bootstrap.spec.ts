@@ -81,7 +81,7 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 		stub = await startStubBackend([{ text: "hello" }]);
 		const tsc = join(PACKAGE_ROOT, "node_modules/.bin/tsc");
 		execFileSync(tsc, ["-p", "tsconfig.json"], { cwd: PACKAGE_ROOT, stdio: "pipe" });
-		const entry = join(PACKAGE_ROOT, "dist/index.js");
+		const entry = join(PACKAGE_ROOT, "dist/leanpi.js");
 		expect(existsSync(entry)).toBe(true);
 
 		const { cwd } = fixtureRepo();

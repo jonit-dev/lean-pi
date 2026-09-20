@@ -27,7 +27,7 @@ export function prettyModel(backend: string, model: string): string {
 	return bare.replace(/\[([^\]]+)\]$/, " ($1)");
 }
 
-export type Lane = "compiler" | "executor" | "review" | "proof";
+export type Lane = "pi_loop" | "executor" | "review" | "proof";
 
 export interface StatusInput {
 	config: LeanPiConfig;
@@ -40,7 +40,11 @@ export interface StatusInput {
 }
 
 const LANE_LABEL: Record<Lane, string> = {
-	compiler: "Compiler",
+	// Who is actually running the turn. With subscription backends LeanPi's own
+	// executor lane spawns the vendor; with a native provider Pi's loop does the
+	// work and LeanPi has set its model and effort — saying "Executor lane" there
+	// would name a lane that did not run.
+	pi_loop: "Pi loop",
 	executor: "Executor lane",
 	review: "Reviewer lane",
 	proof: "Proof gate",

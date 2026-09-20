@@ -17,8 +17,11 @@ describe("the leanpi launcher", () => {
 	it("runs Pi's own CLI with this package's extension in front of the user's argv", () => {
 		const plan = launchPlan(["--print", "do the thing"], PACKAGE_ROOT);
 
-		expect(plan.extension).toBe(join(PACKAGE_ROOT, "dist", "index.js"));
-		expect(plan.args).toEqual(["--extension", plan.extension, "--print", "do the thing"]);
+		expect(plan.extension).toBe(join(PACKAGE_ROOT, "dist", "leanpi.js"));
+		// `--no-skills` rides along: LeanPi does its own disclosure (PRD-005), and
+		// Pi's discovery loads every installed skill — 190 on the machine this was
+		// written on, and 82,343 bytes of the system prompt of every request.
+		expect(plan.args).toEqual(["--extension", plan.extension, "--no-skills", "--print", "do the thing"]);
 		// Pi's CLI comes from the dependency, not from PATH: the version LeanPi is
 		// built against is the one it should run under.
 		expect(plan.cli).toBe(join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"));
@@ -29,7 +32,7 @@ describe("the leanpi launcher", () => {
 		const plan = launchPlan(["--extension", "/tmp/mine.js"], PACKAGE_ROOT);
 		// Pi takes the flag more than once; dropping the caller's would be the
 		// launcher deciding something it was not asked to decide.
-		expect(plan.args).toEqual(["--extension", plan.extension, "--extension", "/tmp/mine.js"]);
+		expect(plan.args).toEqual(["--extension", plan.extension, "--no-skills", "--extension", "/tmp/mine.js"]);
 	});
 
 	it("says what to do when the package is not built", () => {
@@ -42,7 +45,7 @@ describe("the leanpi launcher", () => {
 	it("says what to do when Pi is not installed", () => {
 		const root = tempDir("leanpi-nodeps-");
 		mkdirSync(join(root, "dist"), { recursive: true });
-		writeFileSync(join(root, "dist", "index.js"), "export {};\n");
+		writeFileSync(join(root, "dist", "leanpi.js"), "export {};\n");
 		expect(() => resolvePiCli(root)).toThrow(/npm install/);
 	});
 

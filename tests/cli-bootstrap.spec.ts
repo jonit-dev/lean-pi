@@ -221,7 +221,7 @@ describe("what Pi's own loop can run", () => {
 	it("passes that model to Pi, and never overrides a model the user asked for", () => {
 		const root = mkdtempSync(join(tmpdir(), "leanpi-launch-"));
 		mkdirSync(join(root, "dist"), { recursive: true });
-		writeFileSync(join(root, "dist", "index.js"), "");
+		writeFileSync(join(root, "dist", "leanpi.js"), "");
 		mkdirSync(join(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle"), { recursive: true });
 		writeFileSync(join(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"), "");
 
@@ -349,7 +349,7 @@ describe("the status line", () => {
 		const config = { backends: {}, models: {} } as never;
 		const contract = { task: { execution_complexity: "LOW" }, routing: { executor_class: "quick" }, reasoning: { effort: "low" } } as never;
 
-		expect(statusLine({ config, contract, lane: "compiler" })).toContain("quick");
+		expect(statusLine({ config, contract, lane: "pi_loop" })).toContain("quick");
 	});
 });
 
@@ -454,7 +454,7 @@ describe("a PRD the user has not written yet", () => {
 				routing: { executor_class: "strong" },
 				reasoning: { effort: "high" },
 			} as never,
-			lane: "compiler",
+			lane: "pi_loop",
 			prdWanted: true,
 		});
 		expect(line).toContain("/prd create");
