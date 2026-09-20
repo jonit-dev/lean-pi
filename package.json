@@ -42,11 +42,6 @@
 		"typebox": "^1.0.0",
 		"yaml": "^2.8.1"
 	},
-	"pnpm": {
-		"onlyBuiltDependencies": [
-			"esbuild"
-		]
-	},
 	"devDependencies": {
 		"@types/node": "^22.10.0",
 		"oxlint": "^1.30.0",

@@ -60,6 +60,8 @@ export interface McpSelectionInput {
 	cwd: string;
 	client?: JevSelector;
 	maxTools?: number;
+	/** The per-turn budget's signal, threaded into the site's `ask`. */
+	signal?: AbortSignal;
 	/** Test seam for the schema reader. */
 	readCache?: (cwd: string) => Record<string, CachedTool[]>;
 }
@@ -205,11 +207,16 @@ export async function selectMcpTools(input: McpSelectionInput): Promise<McpSelec
 	const before = client.fallbackCount();
 	let results: JevResult[] | undefined;
 	try {
-		results = await client.ask(MCP_SITE_ID, relevanceQuestions(input.catalog.tools), {
-			request: input.request,
-			phase: "disclosure",
-			catalog: input.catalog.tools.map((record) => `${mcpToolId(record.server, record.tool)}: ${record.summary.slice(0, 120)}`),
-		});
+		results = await client.ask(
+			MCP_SITE_ID,
+			relevanceQuestions(input.catalog.tools),
+			{
+				request: input.request,
+				phase: "disclosure",
+				catalog: input.catalog.tools.map((record) => `${mcpToolId(record.server, record.tool)}: ${record.summary.slice(0, 120)}`),
+			},
+			{ signal: input.signal },
+		);
 	} catch {
 		results = undefined;
 	}
@@ -235,7 +242,7 @@ export async function selectMcpTools(input: McpSelectionInput): Promise<McpSelec
 	const beforeTools = client.fallbackCount();
 	let confirmation: JevResult[] | undefined;
 	try {
-		confirmation = await client.ask(MCP_SITE_ID, toolQuestions(candidates), { request: input.request, phase: "disclosure", servers: decision.servers });
+		confirmation = await client.ask(MCP_SITE_ID, toolQuestions(candidates), { request: input.request, phase: "disclosure", servers: decision.servers }, { signal: input.signal });
 	} catch {
 		confirmation = undefined;
 	}
@@ -372,7 +379,7 @@ export function mcpCapabilityProvider(deps: McpDisclosureDeps): CapabilityProvid
 	const catalog = deps.catalog ?? (() => buildCatalog({ cwd: deps.cwd, config: deps.config, ...(deps.home === undefined ? {} : { home: deps.home }) }));
 	return {
 		kind: "mcps",
-		supply: async (draft: ExecutionContract, _packet: TaskPacket): Promise<SelectedMcpTool[]> => {
+		supply: async (draft: ExecutionContract, _packet: TaskPacket, options?: { signal?: AbortSignal }): Promise<SelectedMcpTool[]> => {
 			const selection = await selectMcpTools({
 				catalog: catalog(),
 				request: draft.task.user_request,
@@ -380,6 +387,7 @@ export function mcpCapabilityProvider(deps: McpDisclosureDeps): CapabilityProvid
 				cwd: deps.cwd,
 				...(deps.client ? { client: deps.client } : {}),
 				...(deps.maxTools === undefined ? {} : { maxTools: deps.maxTools }),
+				...(options?.signal ? { signal: options.signal } : {}),
 			});
 			return selection.tools;
 		},

@@ -121,14 +121,16 @@ export interface ComplexityInput {
 	request: string;
 	packet: TaskPacket;
 	config: LeanPiConfig;
+	/** The per-turn budget's signal, threaded into the site's `ask`. */
+	options?: { signal?: AbortSignal };
 }
 
-export async function classifyExecution({ client, request, packet, config }: ComplexityInput): Promise<ClassifiedExecution> {
+export async function classifyExecution({ client, request, packet, config, options }: ComplexityInput): Promise<ClassifiedExecution> {
 	registerClassifierSites();
 	const before = client.fallbackCount();
 	let results: JevResult[];
 	try {
-		results = await client.ask(COMPLEXITY_SITE_ID, COMPLEXITY_QUESTIONS, { request, packet });
+		results = await client.ask(COMPLEXITY_SITE_ID, COMPLEXITY_QUESTIONS, { request, packet }, options);
 	} catch {
 		const band = heuristicBand(request, packet);
 		return { band, complexity: COMPLEXITY_BY_BAND[band], fallbackUsed: true, confidence: 0, tokens: zero() };
@@ -166,7 +168,7 @@ export interface CapabilityInput extends ComplexityInput {
 	band: ExecutionBand;
 }
 
-export async function deriveRequiredCapability({ client, request, packet, band }: CapabilityInput): Promise<ClassifiedCapability> {
+export async function deriveRequiredCapability({ client, request, packet, band, options }: CapabilityInput): Promise<ClassifiedCapability> {
 	registerClassifierSites();
 	const specialization = packet.repository.languages[0];
 	const fallback: RequiredCapability = {
@@ -176,7 +178,7 @@ export async function deriveRequiredCapability({ client, request, packet, band }
 	const before = client.fallbackCount();
 	let results: JevResult[];
 	try {
-		results = await client.ask(CAPABILITY_SITE_ID, CAPABILITY_QUESTIONS, { request, packet });
+		results = await client.ask(CAPABILITY_SITE_ID, CAPABILITY_QUESTIONS, { request, packet }, options);
 	} catch {
 		return { required_capability: fallback, fallbackUsed: true, confidence: 0, tokens: zero() };
 	}
@@ -244,6 +246,8 @@ export interface ReviewRiskInput {
 	request: string;
 	packet: TaskPacket;
 	elevateReview: boolean;
+	/** The per-turn budget's signal, threaded into the site's `ask`. */
+	options?: { signal?: AbortSignal };
 }
 
 export interface ClassifiedReviewRisk {
@@ -261,14 +265,14 @@ function confidenceOf(results: JevResult[]): number {
 	return results.length === 0 ? 0 : Math.min(...results.map((result) => result.confidence));
 }
 
-export async function classifyReviewRisk({ client, request, packet, elevateReview }: ReviewRiskInput): Promise<ClassifiedReviewRisk> {
+export async function classifyReviewRisk({ client, request, packet, elevateReview, options }: ReviewRiskInput): Promise<ClassifiedReviewRisk> {
 	registerClassifierSites();
 	const signals = reviewRiskSignals(request, packet);
 	const deterministic = reviewRiskFromSignals(signals, elevateReview);
 	const before = client.fallbackCount();
 	let results: JevResult[];
 	try {
-		results = await client.ask(REVIEW_RISK_SITE_ID, REVIEW_RISK_QUESTIONS, { request, packet });
+		results = await client.ask(REVIEW_RISK_SITE_ID, REVIEW_RISK_QUESTIONS, { request, packet }, options);
 	} catch {
 		return { review_risk: deterministic, fallbackUsed: true, confidence: 0, tokens: zero() };
 	}
