@@ -209,6 +209,36 @@ dialect, same disclosure, same verification; 10 repeats per task per arm on
 spend included. Falsified if spend per golden-verified solve is not lower, or if
 ordinary verification accepts cheap attempts that the held-out golden rejects.
 
+## F7 — the branch end to end: ×0.65, and what part of that is the change
+
+One pair, the validated suite, the benchmark's permission profile, same model,
+alternating arms, `bench/out/cost-z1-*`: A = `ed05f8d`, B = this tree as merged.
+
+| task | A `ed05f8d` | B this tree | ratio | verdicts |
+| --- | --- | --- | --- | --- |
+| express | $0.010472 | $0.008752 | ×0.84 | complete / complete |
+| flask | $0.018278 | $0.016159 | ×0.88 | complete / complete |
+| preact | $0.074164 | $0.043793 | ×0.59 | complete / complete |
+| slugify | $0.023848 | $0.014130 | ×0.59 | complete / complete |
+| **total** | **$0.126762** | **$0.082834** | **×0.65 (−35%)** | **4/4 both** |
+
+**Cost per verified solve $0.031691 → $0.020709, with the same four solves.** The
+input side is unambiguous and visible in every row: uncached input 33,389 → 16,034
+on `express`, 408,021 → 57,060 on `preact`, and cached input 1,337,728 → 2,811,136
+on `preact` (the smaller prompt is reused instead of re-sent). Reasoning went *up*
+on the two larger tasks (9,808 → 18,334 on `preact`), which is the honest shape of
+this change: it removes bytes, it does not decide thinking.
+
+**What the ×0.65 is worth as a claim.** Not much on its own, for one reason: A's
+`preact` row is $0.074164 here against $0.028034 and $0.028381 in the two earlier
+baseline runs of the same task — the high sample of three. The two tasks whose
+baseline agrees with its own history are the honest ones, and they read **×0.84
+and ×0.88**, i.e. 12–16% — the same order as the 13% the input rows price out.
+So: **a measured ~10–15% per verified solve at equal quality, with one pair
+behind it and a suite total that swings with one task's variance.** That is the
+number this branch owns; the 50% goal remains unmet, and the mechanism that could
+reach it is F6's, unmeasured.
+
 ## What shipped (this pass)
 
 | file | change |
