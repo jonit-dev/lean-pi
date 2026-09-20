@@ -22,7 +22,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type Allocation, type ModelCandidate } from "./allocate.js";
-import { CONFIG_FILENAME, configPathFor, loadConfig } from "../core/config.js";
+import { CONFIG_FILENAME, configPathFor, loadConfig, userConfigPath } from "../core/config.js";
 import { resolvePiCli } from "./launch.js";
 import { MODEL_ROLES, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { createJevClient, type JevClient } from "../jev/client.js";
@@ -193,7 +193,7 @@ export async function autoConfigure(
 			usable,
 			summary: [
 				`no ${CONFIG_FILENAME} found, and no vendor CLI on this machine is both installed and signed in.`,
-				`Write ${join(home, ".config", "leanpi", CONFIG_FILENAME)} with a backend and a model role, or log into one of: claude, codex, opencode.`,
+				`Write ${userConfigPath({ ...env, HOME: home }) ?? join(cwd, CONFIG_FILENAME)} with a backend and a model role, or log into one of: claude, codex, opencode.`,
 			].join(" "),
 		};
 	}
@@ -215,7 +215,9 @@ export async function autoConfigure(
 		options.client === undefined
 			? { roles: ladderAllocation(candidates), fallbackUsed: true, decided: [] }
 			: await allocateRoles(options.client, candidates);
-	const target = join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "leanpi", CONFIG_FILENAME);
+	// The same computation discovery uses, so the file written here is the file
+	// found on the next line.
+	const target = userConfigPath({ ...env, HOME: home }) ?? join(cwd, CONFIG_FILENAME);
 	mkdirSync(dirname(target), { recursive: true });
 	writeFileSync(target, renderConfig(usable, allocation, candidates, randomUUID(), env), { mode: 0o600 });
 	return {
@@ -268,7 +270,7 @@ export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boo
 			"and without one every site falls back to a heuristic — a different harness than the measured one.",
 			"",
 			"Configure it in any of these ways:",
-			`  leanpi --jev-key <key>      store it for this machine (${join(home, ".config", "leanpi", "credentials.json")}, mode 0600)`,
+			`  leanpi --jev-key <key>      store it for this machine (${join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "leanpi", "credentials.json")}, mode 0600)`,
 			"  export JEV_API_KEY=<key>    for this shell",
 			"  echo 'JEV_API_KEY=<key>' >> .env    for this project (read, never exported)",
 			"",

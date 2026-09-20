@@ -50,6 +50,16 @@ const JEV_MODES: readonly JevMode[] = ["enabled", "disabled", "metadata-only", "
  * a configured project at all. The returned path is the project-level one when
  * nothing exists, so a caller that writes config writes it where it looked.
  */
+/**
+ * The machine-wide config, where a first run writes one and where discovery
+ * looks after the walk-up. One definition: a writer that computed this path
+ * differently from the reader would write a file the next line cannot find.
+ */
+export function userConfigPath(env: { XDG_CONFIG_HOME?: string; HOME?: string } = process.env): string | undefined {
+	const base = env.XDG_CONFIG_HOME ?? (env.HOME === undefined ? undefined : join(env.HOME, ".config"));
+	return base === undefined ? undefined : join(base, "leanpi", CONFIG_FILENAME);
+}
+
 export function configPathFor(cwd: string, env: { XDG_CONFIG_HOME?: string; HOME?: string } = process.env): string {
 	const project = join(cwd, CONFIG_FILENAME);
 	let directory = cwd;
@@ -60,8 +70,7 @@ export function configPathFor(cwd: string, env: { XDG_CONFIG_HOME?: string; HOME
 		if (parent === directory) break;
 		directory = parent;
 	}
-	const base = env.XDG_CONFIG_HOME ?? (env.HOME === undefined ? undefined : join(env.HOME, ".config"));
-	const user = base === undefined ? undefined : join(base, "leanpi", CONFIG_FILENAME);
+	const user = userConfigPath(env);
 	return user !== undefined && existsSync(user) ? user : project;
 }
 

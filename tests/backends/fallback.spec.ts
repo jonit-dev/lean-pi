@@ -243,4 +243,5 @@ describe.skipIf(!SMOKE_VENDOR)("PRD-008 AC-9 — owner-gated real subscription s
 		expect(outcome.status).toBe("completed");
 		expect(outcome.result?.changedFiles).toEqual(["smoke.txt"]);
 		expect(readFileSync(join(cwd, "smoke.txt"), "utf8")).toContain("leanpi smoke ok");
-	}, 900_000);});
+	}, 900_000);
+});

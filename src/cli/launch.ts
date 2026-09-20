@@ -107,7 +107,11 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// otherwise Pi falls back to whatever provider it happens to have, which on
 	// this machine was an unrelated endpoint with an exhausted quota and a bare
 	// `429` as the user's first experience. An explicit `--model` always wins.
-	const selects = argv.some((argument) => argument === "--model" || argument === "-m" || argument.startsWith("--model="));
+	// Every way Pi lets a user name a model: naming one over theirs would be the
+	// launcher overriding an explicit instruction.
+	const selects = argv.some(
+		(argument) => argument === "--model" || argument === "-m" || argument === "--models" || argument.startsWith("--model=") || argument.startsWith("--models="),
+	);
 	const model = sessionModel !== undefined && !selects ? ["--model", sessionModel] : [];
 	// LeanPi owns skill disclosure (PRD-005): the compiler picks the few a task
 	// needs and the prompt carries those. Pi's own discovery loads every
@@ -115,6 +119,6 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// screen, and 82,343 bytes of the system prompt of every request. `-ns` is
 	// the vendor's own switch for exactly that, so the library path's
 	// `skillsOverride` and this entry now suppress the same thing the same way.
-	const skills = argv.includes("--skill") ? [] : ["--no-skills"];
+	const skills = argv.some((argument) => argument === "--skill" || argument === "--no-skills" || argument === "-ns") ? [] : ["--no-skills"];
 	return { cli: resolvePiCli(root), extension, args: ["--extension", extension, ...skills, ...model, ...argv] };
 }

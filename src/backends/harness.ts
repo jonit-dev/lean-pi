@@ -176,8 +176,18 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			// keychain are never read)", so on a Claude subscription every call
 			// returned `Not logged in · Please run /login` and the backend was dead.
 			// Verified against the installed CLI: with `--bare` and a subscription
-			// login the request fails; without it the same prompt runs. The context
-			// suppression `--bare` bundled is kept where a flag exists for it.
+			// login the request fails; without it the same prompt runs.
+			//
+			// What that costs, measured rather than assumed: `--strict-mcp-config`
+			// and `--disable-slash-commands` replace the MCP and skill halves, but
+			// hooks, LSP, auto-memory and CLAUDE.md discovery come back, so a worker
+			// re-reads context LeanPi already assembled (§24's double pay — 2 KB of
+			// CLAUDE.md + AGENTS.md in this repository, more in a large one). The two
+			// alternatives were tried and both fail: `CLAUDE_CODE_SIMPLE=1` without
+			// `--bare` is the same switch and returns `Not logged in`, and a
+			// `--settings` JSON disabling hooks/memory still loaded CLAUDE.md
+			// (verified: the model read a token planted there). A subscription login
+			// cannot have `--bare`'s suppression; an API-key run can, and does.
 			...((env ?? process.env).ANTHROPIC_API_KEY ? ["--bare"] : ["--strict-mcp-config", "--disable-slash-commands"]),
 			// The role's model, when the config names one. Without it the vendor's
 			// own configured default runs and the role map is decoration: `strong`
