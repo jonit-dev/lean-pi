@@ -115,6 +115,12 @@ function nativeOpenCodeGo(sessionId: string, env: NodeJS.ProcessEnv): string[] {
 export interface AutoConfigResult {
 	path: string;
 	created: boolean;
+	/**
+	 * What happened, because "created: false" covers two opposite situations: a
+	 * config the user already has (carry on) and a machine with nothing to write
+	 * one from (stop and say so).
+	 */
+	outcome: "existing" | "written" | "no-subscription";
 	usable: SubscriptionState[];
 	/** One line a human can read: what was detected, and what was written. */
 	summary: string;
@@ -180,7 +186,7 @@ export async function autoConfigure(
 	const { cwd, env, home } = environment(options);
 	const path = configPathFor(cwd, env);
 	if (existsSync(path)) {
-		return { path, created: false, usable: [], summary: `configuration: ${path}` };
+		return { path, created: false, outcome: "existing", usable: [], summary: `configuration: ${path}` };
 	}
 	// `verify: true`: a first run may spend a second asking three CLIs whether
 	// they are actually logged in, rather than writing a config against a vendor
@@ -190,6 +196,7 @@ export async function autoConfigure(
 		return {
 			path,
 			created: false,
+			outcome: "no-subscription",
 			usable,
 			summary: [
 				`no ${CONFIG_FILENAME} found, and no vendor CLI on this machine is both installed and signed in.`,
@@ -223,6 +230,7 @@ export async function autoConfigure(
 	return {
 		path: target,
 		created: true,
+		outcome: "written",
 		usable,
 		// One line, and the banner prints the resulting map immediately after, so
 		// this says where the file is and who decided — not the map twice.
@@ -332,7 +340,7 @@ export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?
 		// the loop. Saying so is the difference between a surprising `429` from an
 		// endpoint the user never configured and an expected one.
 		sessionModel === undefined
-			? "  loop     pi's own model — the roles above are vendor CLIs LeanPi runs inside the turn"
+			? "  loop     pi's own model — the roles above are vendor CLIs LeanPi runs inside the turn (`pi auth login` gives the loop its own)"
 			: `  loop     pi runs ${sessionModel}`,
 	].join("\n");
 }

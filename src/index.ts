@@ -140,7 +140,12 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig): void {
 		pi.registerProvider(name, {
 			name: backend.name ?? name,
 			baseUrl: backend.baseUrl,
-			apiKey: toPiConfigValue(backend.apiKey ?? "LEANPI_BACKEND_API_KEY"),
+			// Only when the config names one. The old default — the literal
+			// `LEANPI_BACKEND_API_KEY` — is not an env var on any machine, so
+			// `toPiConfigValue` passed the *name itself* through as the key and
+			// overrode the credential Pi already holds for that provider. A backend
+			// with no declared key means "Pi's own auth for this provider".
+			...(backend.apiKey === undefined || backend.apiKey === null ? {} : { apiKey: toPiConfigValue(backend.apiKey as string) }),
 			api: backend.api ?? "openai-completions",
 			...(declaredHeaders === null
 				? {}

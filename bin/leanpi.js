@@ -38,11 +38,15 @@ try {
 	// Printed when a config was written *and* when none could be: the
 	// no-subscription branch carries the only instructions the user gets, and
 	// swallowing it left them with `no model roles configured` from the loader.
-	if (configured.created || configured.usable.length === 0) process.stderr.write(`leanpi: ${configured.summary}\n`);
+	// Printed when a config was written *and* when none could be: the
+	// no-subscription branch carries the only instructions the user gets, and
+	// swallowing it left them with `no model roles configured` from the loader.
+	// An existing config is not news.
+	if (configured.outcome !== "existing") process.stderr.write(`leanpi: ${configured.summary}\n`);
 	// Nothing to route to and nothing written: the line above is the whole
 	// answer, and letting the loader also throw `no model roles configured`
 	// buries it under the error this bootstrap exists to replace.
-	if (!configured.created && configured.usable.length === 0) process.exit(1);
+	if (configured.outcome === "no-subscription") process.exit(1);
 	const config = loadConfig(process.cwd());
 	const sessionModel = sessionModelFor(config);
 	process.stderr.write(`${startupBanner(config, jev, sessionModel)}\n`);
