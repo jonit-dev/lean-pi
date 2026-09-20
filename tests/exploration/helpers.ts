@@ -247,6 +247,11 @@ export async function harness(options: HarnessOptions): Promise<ExploreHarness> 
 		},
 	};
 	const packet = scoutTask(options.cwd, options.objective);
+	// An injected port is the caller saying a language server is there. The governor
+	// gates its symbol query on the packet (`symbolHitsOf`), so without this the
+	// port is passed in and never consulted, and the fixture's PATH — not the test —
+	// decides the outcome.
+	if (options.symbols) packet.workspace.lsp_available = true;
 	let selection: ContextSelection | undefined;
 	const deps = {
 		search,
