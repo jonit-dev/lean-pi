@@ -27,6 +27,8 @@ import {
 	scanSkills,
 	scoutTask,
 	SKILL_RANK_LIMIT,
+	VERIFY_TOOL_DESCRIPTION,
+	VERIFY_TOOL_NAME,
 	withoutSkillCatalog,
 } from "../src/index.js";
 import { registerLane } from "../src/commands/session.js";
@@ -367,6 +369,45 @@ describe("PRD-028 follow-up — the wiring the cost audit found open", () => {
 		try {
 			await session.session.prompt("work on the parser");
 			expect(goals.load()?.turns_used).toBe(1);
+		} finally {
+			session.session.dispose();
+			await backend.close();
+		}
+	});
+
+
+	it("hands the executor the gate instead of running it for them", async () => {
+		// The trigger belongs to whoever just changed the code. A rule in the
+		// harness can only force the project's suite after every edit or never run
+		// it, and the first of those is what an operator notices as their session
+		// spending four minutes on a turn that renamed a variable.
+		const backend = await startStubBackend([{ toolCalls: [{ name: "verify", args: {} }] }, { text: "done" }]);
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(backend.baseUrl) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+			// A verifier that exists and passes: what the gate is being asked to run.
+			verify: { commands: { targeted_test: "true", build: "true", lint: "true" }, timeoutMs: 10_000 },
+		});
+		// `verify` spawns the operator's verifier commands, so it is a shell call and
+		// the PRD-017 guard asks about it like any other. `--safety low` is the
+		// operator having already answered, which is what an unattended run is.
+		const session = await bootSession({ cwd, agentDir, env: { ...process.env, LEANPI_SAFETY: "low" } });
+		try {
+			await session.session.prompt("fix the off-by-one in the parser");
+			// Offered, and offered with its triggers: the description is the only
+			// instruction the model reads at the moment it decides.
+			const offered = (backend.requests[0]!.body as { tools?: { function?: { name?: string; description?: string } }[] }).tools ?? [];
+			const tool = offered.find((entry) => entry.function?.name === VERIFY_TOOL_NAME);
+			expect(tool).toBeDefined();
+			expect(tool!.function!.description).toBe(VERIFY_TOOL_DESCRIPTION);
+			expect(tool!.function!.description).toContain("regression risk");
+			expect(tool!.function!.description).toContain("red to green");
+			// And when the model calls it, the turn stops reporting `not_run`: the
+			// record carries the gate's real answer.
+			const run = readRuns(cwd)[0]!;
+			expect(run.result.verification).not.toBe("not_run");
+			expect(run.result.proof_gate).not.toBe("not_run");
 		} finally {
 			session.session.dispose();
 			await backend.close();

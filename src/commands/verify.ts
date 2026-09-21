@@ -7,17 +7,19 @@
  * Every claim of done on that path was therefore the model's word, which is the
  * one thing this harness exists not to ship.
  *
- * `verifyAndGate` is what the native turn now runs by itself, and the choice
- * that used to make this a command is made from the workspace instead of from
- * the user: a turn that edited nothing has nothing to prove and pays nothing, a
- * turn that changed a file is verified without being asked. The command stays
- * for the other direction — proving the workspace on demand, mid-session, when
- * no turn just changed it.
+ * `verifyAndGate` is the gate itself, reached two ways. The executor calls it
+ * through the `verify` tool when its own change carries regression risk — that
+ * decision belongs to the model that just made the change and knows what it
+ * touched, not to a rule in the harness, and not to the user being told to run a
+ * command. This command is the other door: proving the workspace on demand,
+ * mid-session, when no turn just changed it.
  *
  * It regenerates nothing. It runs the contract's verifiers, gates their records
  * and reports — so a `PASS` here is the same decision the executor lane's turns
  * are held to.
  */
+import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type { ExecutionContract } from "../compiler/contract.js";
 import type { ArtifactStore } from "../context/artifacts.js";
 import type { LeanPiConfig } from "../core/types.js";
@@ -96,4 +98,65 @@ export function registerVerifyCommand(registry: CommandRegistry, deps: VerifyCom
 		usage: "/verify",
 		run: () => runVerifyCommand(deps),
 	});
+}
+
+export const VERIFY_TOOL_NAME = "verify";
+
+/**
+ * When the executor should reach for it.
+ *
+ * This is the tool's description, which is the only instruction the model reads
+ * at the moment it decides. Two triggers, both about risk rather than ceremony:
+ * a change that could break something already working, and a bug fix, which is
+ * not proved by code that passes — it is proved by a test that failed before the
+ * fix and passes after it.
+ */
+export const VERIFY_TOOL_DESCRIPTION = [
+	"Run this task's verifiers against the workspace and put the result through the proof gate.",
+	"",
+	"Call it when your change carries regression risk — it touches shared code, a caller you did not read, or behaviour something else depends on. Run the tests related to what you changed, not the whole suite, unless the change is broad enough to warrant it.",
+	"For a bug fix, work red to green: write the failing test first and call this to watch it fail, then fix, then call it again to watch it pass. A fix with no test that ever failed proves nothing.",
+	"Skip it for a change that cannot regress anything — a comment, a docs edit, an answer with no edit at all.",
+].join("\n");
+
+export interface VerifyToolDeps extends Omit<VerifyCommandDeps, "contract"> {
+	/** The turn's compiled contract; `undefined` before anything has compiled one. */
+	contract: () => ExecutionContract | undefined;
+	/** Where the result lands so the turn's record and the goal boundary can read it. */
+	onVerified?: (result: VerifyAndGateResult) => void;
+}
+
+export function verifyToolDefinition(deps: VerifyToolDeps): ToolDefinition {
+	return {
+		name: VERIFY_TOOL_NAME,
+		label: VERIFY_TOOL_NAME,
+		description: VERIFY_TOOL_DESCRIPTION,
+		parameters: Type.Object({}),
+		execute: async (): Promise<AgentToolResult<Record<string, unknown>>> => {
+			const contract = deps.contract();
+			// eslint-disable-next-line no-console
+			if (!contract) {
+				return { content: [{ type: "text", text: "unavailable: no task has been compiled in this session yet" }], details: {} };
+			}
+			const gated = await verifyAndGate(contract, deps);
+			deps.onVerified?.(gated);
+			// The gate's own words. An unproved criterion names itself and its reason
+			// because that is what the model has to act on next; a bare FAIL would
+			// send it guessing.
+			const lines = [
+				`proof: ${gated.proof.decision}`,
+				`verification: ${gated.verification.status}${gated.verification.commands.length > 0 ? ` — ${gated.verification.commands.join(" · ")}` : " — no verifier matched this task"}`,
+				...gated.proof.criteria
+					.filter((criterion) => criterion.decision !== "PASS")
+					.map((criterion) => `unproved ${criterion.id}: ${criterion.decision} — ${criterion.reasons.join("; ")}`),
+			];
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { proof: gated.proof.decision } };
+		},
+	};
+}
+
+/** Registers the tool and returns its name, for the session's allowlist. */
+export function registerVerifyTool(pi: ExtensionAPI, deps: VerifyToolDeps): string {
+	pi.registerTool(verifyToolDefinition(deps));
+	return VERIFY_TOOL_NAME;
 }

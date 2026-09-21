@@ -104,7 +104,10 @@ describe("PRD-002 Phase 1 — typed batched client", () => {
 		});
 
 		const session = await bootSession({ cwd: repo, agentDir });
-		expect(session.activation.tools).toEqual(["read", "search", "edit", "write", "execute"]);
+		// `verify` joins the baseline five: it is the proof gate the executor can ask
+		// for, and the gate resolves JEV internally exactly as the executor lane does
+		// — which is what FR-010 means by "not directly callable".
+		expect(session.activation.tools).toEqual(["read", "search", "edit", "write", "execute", "verify"]);
 
 		// Every tool the session offers is enumerated and none of them is JEV-backed.
 		expect(toolNamesOf(agentBackend.requests[0]?.body ?? {})).toEqual([]);

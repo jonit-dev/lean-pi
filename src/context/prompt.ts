@@ -7,7 +7,7 @@
  * This module never re-authors the Ponytail text; it places PRD-001's bytes.
  */
 import { createHash } from "node:crypto";
-import { BASELINE_TOOL_NAMES } from "../core/tools.js";
+import { TOOL_NAMES } from "../core/tools.js";
 import { buildStaticPrefix } from "../core/instructions/prefix.js";
 import type { LeanPiConfig, SelectedSkill } from "../core/types.js";
 import type { ExecutionContract } from "../compiler/contract.js";
@@ -45,7 +45,10 @@ export interface AssembledPrompt {
 	hashes: Set<string>;
 }
 
-const TOOL_PROTOCOL = `Tool protocol: ${BASELINE_TOOL_NAMES.join(", ")}. Read before editing; verify with the project's own runner.`;
+const TOOL_PROTOCOL = [
+	`Tool protocol: ${TOOL_NAMES.join(", ")}. Read before editing.`,
+	"Call `verify` when your change carries regression risk — run the tests related to what you touched. Fixing a bug: red to green, the failing test first, then the fix, then verify.",
+].join(" ");
 
 function hashBlock(text: string): string {
 	return createHash("sha256").update(text).digest("hex").slice(0, 12);

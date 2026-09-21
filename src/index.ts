@@ -66,11 +66,10 @@ import { defaultSkillRoots, scanSkills, createSkillControl, withoutSkillCatalog,
 import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
-import { registerVerifyCommand, verifyAndGate } from "./commands/verify.js";
-import { workspaceHash } from "./verify/hash.js";
+import { registerVerifyCommand, registerVerifyTool, VERIFY_TOOL_NAME } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
-import { renderProofOutcome, renderTurnOutcome } from "./cli/outcome.js";
+import { renderTurnOutcome } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
@@ -555,6 +554,28 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// there, so nothing verifies its work and nothing gates it. This is how the
 	// user asks for the same decision an executor-lane turn is held to.
 	registerVerifyCommand(commands, { cwd, config, artifacts, jev, contract: () => lastContext?.contract });
+	// PRD-009/PRD-010's gate, as something the executor can ask for. The turn that
+	// just changed the code is the only party that knows whether the change could
+	// break anything, so the trigger is its judgement (the tool's description and
+	// the prompt's tool protocol carry when to use it), not a rule here that would
+	// either run the project's suite after every edit or never run it at all.
+	tools.push(
+		registerVerifyTool(pi, {
+			cwd,
+			config,
+			artifacts,
+			jev,
+			contract: () => lastContext?.contract,
+			// The result belongs to the turn in flight: `verdictOf` reads it, so a
+			// proved native turn records a real verdict instead of `not_run`.
+			onVerified: (gated) => {
+				const context = pendingRun?.context ?? lastContext;
+				if (!context) return;
+				context.verification = gated.verification.records;
+				context.proof = gated.proof;
+			},
+		}),
+	);
 	registerPrdCommandsLazily(commands, {
 		cwd,
 		config,
@@ -569,7 +590,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// The run that is still open: a compiled turn's collector and context, held from
 	// `before_agent_start` until `agent_end` reports what the loop spent.
-	let pendingRun: { collector: RunCollector; context: TurnContext; hashBefore: string } | undefined;
+	let pendingRun: { collector: RunCollector; context: TurnContext } | undefined;
 
 	// The per-turn fan-in: lanes write the turn's compiled state onto the context,
 	// the entry points hand it back here, and the command surfaces, the working
@@ -805,12 +826,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			// the executor this handler returns *before* the loop spends anything, so
 			// emitting now would write a zeroed row for every native turn. The holder
 			// keeps the run open until the loop reports what it used.
-			// The workspace as the loop found it. Comparing it with the workspace the
-			// loop leaves behind is what decides whether this turn owes evidence:
-			// `workspaceHash` is git's dirty set plus a hash of those files, so the
-			// check costs one `git status` and answers exactly the question the
-			// `/verify` command used to put to the user.
-			pendingRun = { collector, context, hashBefore: workspaceHash(cwd) };
+			pendingRun = { collector, context };
 		} else {
 			setLaneCollector(undefined);
 		}
@@ -819,7 +835,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// PRD-015's sink for the path Pi itself drives: one call per assistant message
 	// the loop produced, plus the tool calls it made, then exactly one record.
-	pi.on("agent_end", async (event, ctx) => {
+	pi.on("agent_end", async (event) => {
 		const run = pendingRun;
 		pendingRun = undefined;
 		if (!run) {
@@ -829,21 +845,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		const spend = callsFromMessages(event.messages, run.context.modelRef);
 		for (const call of spend.calls) run.collector.add(call);
 		run.collector.noteToolCall(spend.toolCalls);
-		// PRD-009's verification and PRD-010's gate, for the path that never ran
-		// them. "Did this turn change the workspace" is the whole condition: a turn
-		// that answered a question owes no evidence and spends no test command, and
-		// a turn that edited a file is held to the same gate the executor lane's
-		// turns are held to — without the user having to know there was a choice.
-		if (run.context.contract && workspaceHash(cwd) !== run.hashBefore) {
-			ctx.ui.setStatus(LEANPI_STATUS_KEY, "LeanPi: verifying what this turn changed");
-			const gated = await verifyAndGate(run.context.contract, { cwd, config, artifacts, jev });
-			run.context.verification = gated.verification.records;
-			run.context.proof = gated.proof;
-			observeTurn(run.context);
-			// The gate's own words, not a badge: an unproved criterion says which one
-			// and why, because that is what the next turn has to act on.
-			ctx.ui.notify(renderProofOutcome(gated), gated.proof.decision === "PASS" ? "info" : "error");
-		}
 		emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdictOf(run.context), {
 			cwd,
 			cost: resolveCostConfig(config),
@@ -980,11 +981,13 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 		// The allowlist admits the LSP tools to the registry; the mode, applied per
 		// turn by `runTurn`, decides which of them are active. They start inactive
 		// (§15), exactly as the LSP tool tests boot their session.
-		tools: [...BASELINE_TOOL_NAMES, ...LSP_TOOL_NAMES, ARTIFACT_TOOL_NAME],
+		tools: [...BASELINE_TOOL_NAMES, VERIFY_TOOL_NAME, ...LSP_TOOL_NAMES, ARTIFACT_TOOL_NAME],
 	});
-	// The five baseline names plus the expand affordance: the LSP tools stay
-	// inactive until a turn's mode selects its group.
-	session.setActiveToolsByName([...BASELINE_TOOL_NAMES, ARTIFACT_TOOL_NAME]);
+	// The five baseline names, `verify` and the expand affordance: the LSP tools
+	// stay inactive until a turn's mode selects its group. `verify` is active from
+	// the first turn — a tool the executor is told to reach for when its change
+	// carries regression risk is no use behind a mode it cannot select.
+	session.setActiveToolsByName([...BASELINE_TOOL_NAMES, VERIFY_TOOL_NAME, ARTIFACT_TOOL_NAME]);
 
 	// One §52 record per turn that compiled a contract: the seam runs the real
 	// `runTurn()`, hands the context to the activation's fan-in, and prices the
@@ -1142,6 +1145,7 @@ export {
 } from "./capabilities/skills.js";
 export type { ScanOptions, ScanStats, SkillControl, SkillRecord, SkillRoot, SkillStateEntry, SourceClass } from "./capabilities/skills.js";
 export { lexicalSelect, registerSkillSite, selectSkills, SKILL_RANK_LIMIT, SKILL_SITE_ID, DEFAULT_TOP_K } from "./capabilities/skill-select.js";
+export { runVerifyCommand, verifyAndGate, verifyToolDefinition, VERIFY_TOOL_DESCRIPTION, VERIFY_TOOL_NAME } from "./commands/verify.js";
 export type { SelectSkillsInput, SelectSkillsResult, SkillDisclosureDecision } from "./capabilities/skill-select.js";
 export { registerSkillsCommands } from "./commands/skills.js";
 export { bundledRoot, BundledIntegrityError, clearPackCache, isBundledPath, packEntries, packLock, packVersion, verifyBundledFile, type PackEntry, type PackFile, type PackLock } from "./skills/pack.js";

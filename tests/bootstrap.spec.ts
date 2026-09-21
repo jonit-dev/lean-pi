@@ -60,7 +60,7 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 		expect(session.leanpi.name).toBe("leanpi");
 		expect(session.leanpi.version).toBe(LEANPI_VERSION);
 		expect(session.activation.config.models.balanced).toEqual({ backend: "local", model: "cheap-fast" });
-		expect(session.activation.tools.sort()).toEqual(["edit", "execute", "read", "search", "write"]);
+		expect(session.activation.tools.sort()).toEqual(["edit", "execute", "read", "search", "verify", "write"]);
 
 		// Negative control: the same boot without the extension registers no LeanPi surface.
 		const bareDir = tempDir("leanpi-agent-");
@@ -102,7 +102,7 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 			// five baseline names active (asserted through `activation.tools` above
 			// and by the AC-2 turn below).
 			expect([...loaded.extensions[0]!.tools.keys()].sort()).toEqual(
-				["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME, ...LSP_TOOL_NAMES].sort(),
+				["edit", "execute", "read", "search", "verify", "write", ARTIFACT_TOOL_NAME, ...LSP_TOOL_NAMES].sort(),
 			);
 		} finally {
 			delete process.env.LEANPI_CWD;
@@ -191,7 +191,7 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 		// large result into an `artifact://` reference. The LSP group stays inactive.
 		expect(stub.requests).toHaveLength(6);
 		for (const request of stub.requests) {
-			expect(toolNamesOf(request.body)).toEqual(["artifact", "edit", "execute", "read", "search", "write"]);
+			expect(toolNamesOf(request.body)).toEqual(["artifact", "edit", "execute", "read", "search", "verify", "write"]);
 		}
 
 		// write → search → read → edit → execute, each observed at the next request.

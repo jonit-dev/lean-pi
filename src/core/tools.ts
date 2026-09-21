@@ -1,10 +1,17 @@
 /**
  * Baseline tool surface (PRD-001 Phase 1, ROADMAP §44).
  *
- * LeanPi exposes exactly five tools — read, search, edit, write, execute — and
+ * LeanPi exposes five baseline tools — read, search, edit, write, execute — and
  * delegates each to Pi's own implementation rather than reimplementing it.
  * Additional capabilities are routed internally (§44) instead of permanently
  * widening the model's tool surface.
+ *
+ * `verify` (PRD-009/PRD-010, registered in `commands/verify.ts`) is the one
+ * addition, and it is not a capability: it is how the executor asks for its own
+ * work to be proved. §44 exists so the model is not handed a wider surface than
+ * the task needs; the decision to run the verifiers has to sit with whoever just
+ * made the change, because only they know what it could break. A rule in the
+ * harness either forces the project's suite after every edit or never runs it.
  */
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
@@ -27,6 +34,9 @@ export const BASELINE_TOOL_MAP = {
 export type BaselineToolName = keyof typeof BASELINE_TOOL_MAP;
 
 export const BASELINE_TOOL_NAMES = Object.keys(BASELINE_TOOL_MAP) as BaselineToolName[];
+
+/** The full surface the prompt announces: the five baseline tools plus `verify`. */
+export const TOOL_NAMES: readonly string[] = [...BASELINE_TOOL_NAMES, "verify"];
 
 /**
  * The ceiling on one shell command, in seconds.
