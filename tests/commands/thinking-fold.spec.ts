@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/index.js";
 import { registerThinkingFoldCommand } from "../../src/commands/thinking-fold.js";
 import { bundledExtensions, dependencyDir, launchPlan, packageRoot, thinkingFoldExtension } from "../../src/cli/launch.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { thinkingFoldEnabled } from "../../src/cli/ui-settings.js";
 import { tempDir } from "../helpers/fixtures.js";
@@ -59,7 +59,10 @@ describe("/thinking-fold", () => {
 		expect(live.bundled.some((path) => path.includes("pi-thinking-fold"))).toBe(false);
 		expect(live.bundled.some((path) => path.includes("pi-claude-code-ui"))).toBe(true);
 		// Every attached path is a real file, so Pi is never handed a missing one.
-		for (const path of bundledExtensions()) expect(path).toBeTruthy();
+		// `existsSync`, not `toBeTruthy`: `bundledExtensions` drops the fold when
+		// the vendored copy is missing, which is the silent no-op this whole
+		// change exists to kill, and a joined path is truthy either way.
+		for (const path of bundledExtensions()) expect(existsSync(path), path).toBe(true);
 	});
 
 	it("ships the installed build, so a version bump cannot leave a stale copy attached", () => {

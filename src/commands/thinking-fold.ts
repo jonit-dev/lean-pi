@@ -1,9 +1,10 @@
 /**
  * `/thinking-fold` — which reasoning display the next session starts with.
  *
- * On (the default), the launcher attaches `@99percentpeople/pi-thinking-fold`
- * and a streaming reasoning block folds to a timed tail preview that Ctrl+T
- * expands. Off, nothing is attached and Pi's own live rendering — the one
+ * On (the default), the launcher attaches the vendored copy of
+ * `@99percentpeople/pi-thinking-fold` (`vendor/`, see `cli/launch.ts`) and a
+ * streaming reasoning block folds to a timed tail preview that Ctrl+T expands.
+ * Off, nothing is attached and Pi's own live rendering — the one
  * `pi-claude-code-ui` styles — shows the reasoning as it streams.
  *
  * The choice is an extension attachment, and extensions are attached before a
