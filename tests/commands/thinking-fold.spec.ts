@@ -5,7 +5,9 @@
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/index.js";
 import { registerThinkingFoldCommand } from "../../src/commands/thinking-fold.js";
-import { bundledExtensions, launchPlan } from "../../src/cli/launch.js";
+import { bundledExtensions, dependencyDir, launchPlan, packageRoot, thinkingFoldExtension } from "../../src/cli/launch.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { thinkingFoldEnabled } from "../../src/cli/ui-settings.js";
 import { tempDir } from "../helpers/fixtures.js";
 
@@ -58,5 +60,14 @@ describe("/thinking-fold", () => {
 		expect(live.bundled.some((path) => path.includes("pi-claude-code-ui"))).toBe(true);
 		// Every attached path is a real file, so Pi is never handed a missing one.
 		for (const path of bundledExtensions()) expect(path).toBeTruthy();
+	});
+
+	it("ships the installed build, so a version bump cannot leave a stale copy attached", () => {
+		// `vendor/` is committed, and only `npm run build` regenerates it. Bumping
+		// the dependency without building would otherwise attach last version's
+		// bytes — silently, since a stale extension still loads.
+		const installed = dependencyDir(join("@99percentpeople", "pi-thinking-fold", "index.min.js"), packageRoot());
+		expect(installed, "@99percentpeople/pi-thinking-fold is not installed").toBeTruthy();
+		expect(readFileSync(thinkingFoldExtension(), "utf8")).toBe(readFileSync(installed as string, "utf8"));
 	});
 });
