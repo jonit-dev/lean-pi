@@ -23,7 +23,34 @@ import { resolveRole } from "../core/roles.js";
 export const LEANPI_STATUS_KEY = "leanpi";
 
 /** The separator between chips; spaced so each chip reads as its own word. */
-const SEP = "  ·  ";
+const SEP = "  \u00b7  ";
+
+/**
+ * SGR colour for the status slot.
+ *
+ * Pi's `setStatus` takes a plain string and passes it to the TUI verbatim —
+ * measured, not assumed: a bold sequence written into the slot reaches the
+ * terminal intact. The theme cannot reach here (it colours Pi's own chrome, not
+ * an extension's status text), so these are ordinary escapes and the palette
+ * they resolve against is the terminal's.
+ */
+const RESET = "\u001b[0m";
+const BOLD = "\u001b[1m";
+
+/**
+ * Effort as a temperature, matching the theme's `thinking*` ramp: cheap and safe
+ * is green, costly is red. A scale is readable at a glance in a way that four
+ * unrelated hues are not.
+ */
+const EFFORT_COLOR: Record<ThinkingLevel, string> = {
+	off: "\u001b[38;5;244m",
+	minimal: "\u001b[38;5;247m",
+	low: "\u001b[38;5;77m",
+	medium: "\u001b[38;5;221m",
+	high: "\u001b[38;5;208m",
+	xhigh: "\u001b[38;5;203m",
+	max: "\u001b[38;5;196m",
+};
 
 /** Pi's level names are already English; only the squashed one needs a hyphen. */
 function effortLabel(level: ThinkingLevel): string {
@@ -71,10 +98,15 @@ export interface StatusInput {
 	goal?: string;
 	/** The compiler wants a PRD and none is open; the user opens one. */
 	prdWanted?: boolean;
+	/**
+	 * Emit SGR escapes: the model bold, the effort on the green-to-red ramp.
+	 * Off by default so a caller comparing the line as text gets text.
+	 */
+	color?: boolean;
 }
 
 /** `deepseek-v4.1-flash  ·  thinking: medium  ·  hard task  ·  $0.42` */
-export function statusLine({ config, contract, lane, role, model: running, effort: applied, cost, goal, prdWanted }: StatusInput): string {
+export function statusLine({ config, contract, lane, role, model: running, effort: applied, cost, goal, prdWanted, color }: StatusInput): string {
 	const resolvedRole = role ?? contract.routing.executor_class;
 	let model: string;
 	if (running !== undefined) {
@@ -91,7 +123,13 @@ export function statusLine({ config, contract, lane, role, model: running, effor
 			model = resolvedRole;
 		}
 	}
-	const parts = [model, `thinking: ${effortLabel(applied ?? contract.reasoning.effort)}`, COMPLEXITY_LABEL[contract.task.execution_complexity]];
+	const level = applied ?? contract.reasoning.effort;
+	const effort = `thinking: ${effortLabel(level)}`;
+	const parts = [
+		color === true ? `${BOLD}${model}${RESET}` : model,
+		color === true ? `${EFFORT_COLOR[level]}${effort}${RESET}` : effort,
+		COMPLEXITY_LABEL[contract.task.execution_complexity],
+	];
 	// Spend is the one number an operator steers on, and a harness that routes
 	// for cost without ever showing the bill is asking to be trusted on it.
 	if (cost !== undefined) parts.push(`$${cost.toFixed(2)}`);

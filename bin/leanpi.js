@@ -17,7 +17,7 @@ if (major < 22 || (major === 22 && minor < 19)) {
 	process.stderr.write(`leanpi needs Node >= 22.19 (running ${process.version}). With nvm: nvm use 22\n`);
 	process.exit(1);
 }
-import { autoConfigure, jevClientFor, missingBackendKeys, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
+import { autoConfigure, jevClientFor, unusableBackendKeys, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
 import { loadConfig } from "../dist/core/config.js";
 import { isInformational, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 import { ensureGitIgnored } from "../dist/runtime/ignore.js";
@@ -60,11 +60,12 @@ try {
 	if (configured.outcome === "no-subscription") process.exit(1);
 	const config = loadConfig(process.cwd());
 	const sessionModel = sessionModelFor(config);
-	process.stderr.write(`${startupBanner(config, jev, sessionModel)}\n`);
-	// A named credential the shell does not hold: the provider would answer
-	// `401 Invalid API key` and the user would read it as a verdict on the key
-	// they just configured.
-	for (const { backend, variable } of missingBackendKeys(config)) {
+	process.stderr.write(`${startupBanner(config, jev, sessionModel, { color: process.stderr.isTTY === true })}\n`);
+	// A named credential the shell does not hold *and* Pi cannot cover from its
+	// own store: the provider would answer `401 Invalid API key` and the user
+	// would read it as a verdict on the key they just configured. When `pi auth`
+	// already has the provider, the variable is unused and there is nothing to say.
+	for (const { backend, variable } of unusableBackendKeys(config)) {
 		process.stderr.write(`leanpi: backend "${backend}" reads its key from $${variable}, which is not set in this shell — export it, or remove the \`apiKey\` line to use pi's own credential for that provider.\n`);
 	}
 	plan = launchPlan(flags.rest, undefined, sessionModel);

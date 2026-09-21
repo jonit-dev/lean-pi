@@ -26,6 +26,7 @@ import { CONFIG_FILENAME, configPathFor, loadConfig, userConfigPath } from "../c
 import { resolvePiCli } from "./launch.js";
 import { MODEL_ROLES, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { createJevClient, type JevClient } from "../jev/client.js";
+import { LEANPI_VERSION } from "../core/package-info.js";
 import { describeCredential, resolveCredential, writeStoredKey } from "../jev/credentials.js";
 
 export interface BootstrapEnv {
@@ -372,50 +373,90 @@ export function jevClientFor(options: Partial<BootstrapEnv> = {}): JevClient {
  * the control plane is live. One screen line each, on stderr, so a piped
  * `--print` run still yields clean stdout.
  */
-/** `JEV on · credential store`, or why it is not deciding anything. */
+/** `JEV on (credential store)`, or why it is not deciding anything. */
 function jevLine(source: string): string {
 	if (source.startsWith("disabled") || source.startsWith("not configured")) {
 		return `JEV ${source} — decisions take their built-in defaults`;
 	}
 	// "configured (source: credential store)" → "credential store".
 	const inner = /\(source:\s*([^)]+)\)/.exec(source);
-	return `JEV on · ${inner ? inner[1] : source}`;
+	// Not a middot: the banner already joins its facts with one, and a second
+	// inside a fact makes the line read as two.
+	return `JEV on (${inner ? inner[1] : source})`;
 }
 
-export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?: string): string {
-	const label = (role: ModelRole): string => {
-		const entry = config.models[role];
-		if (entry === undefined) return "—";
-		return entry.model === VENDOR_DEFAULT ? entry.backend : `${entry.backend} ${entry.model}`;
-	};
-	// A config that points every role at one model — which is what a single-provider
-	// setup looks like — printed that model's full id six times across three lines.
-	// The repetition was the banner's whole bulk, and it said nothing: three lines
-	// of identical vendor strings read as noise scrolling past on launch.
-	const roleNames: ModelRole[] = ["quick", "balanced", "strong"];
-	const roles = roleNames.map(label);
-	const oneModel = roles.every((name) => name === roles[0]);
-	const reviewers = `${label("review_quick")} → ${label("review_strong")}`;
-	return [
-		"leanpi — tell me your goal, I figure out the rest.",
-		oneModel
-			? `  models   ${roles[0]} for every role`
-			: `  models   ${roleNames.map((role, index) => `${role} ${roles[index]}`).join("  ·  ")}`,
-		...(reviewers === `${roles[0]} → ${roles[0]}` && oneModel ? [] : [`  review   ${reviewers}`]),
-		// "control  JEV <source>" named an internal plane and left the user to guess
-		// whether the thing was on. Say what it does and whether it is doing it.
-		// `describeCredential` already parenthesises its source, so wrapping it
-		// again produced `JEV on (configured (source: credential store))`.
-		`  routing  ${jevLine(jev.source)}`,
-		// Who answers the prompt. Pi's own loop cannot dial a vendor CLI, so on a
-		// subscription-only config it runs on whatever provider Pi has — and the
-		// roles above describe the workers LeanPi spawns *inside* the turn, not
-		// the loop. Saying so is the difference between a surprising `429` from an
-		// endpoint the user never configured and an expected one.
-		sessionModel === undefined
-			? "  running  pi's own model — the roles above are vendor CLIs LeanPi runs inside the turn (`pi auth login` gives the loop its own)"
-			: `  running  pi runs ${sessionModel}`,
-	].join("\n");
+/** The π mark, four rows of block glyphs, sized to sit beside four facts. */
+const MARK: readonly string[] = ["\u2597\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2596", " \u2590\u2588\u258c \u2590\u2588\u258c ", " \u2590\u2588\u258c \u2590\u2588\u258c ", " \u259d\u2580\u2598 \u259d\u2580\u2598 "];
+
+/**
+ * Emphasis, written the way the eye reads a masthead: one bright thing.
+ *
+ * The name is the only text at full weight. Everything else — the version, the
+ * model, the control plane, the path — is supporting detail and is muted, so
+ * the block that opens the session has a single focal point instead of four
+ * lines competing at the same brightness.
+ */
+const MARK_COLOR = "\u001b[38;5;43m";
+const NAME = "\u001b[1m";
+const MUTED = "\u001b[38;5;245m";
+const OFF = "\u001b[0m";
+
+/** `/home/joao/x` → `~/x`: the home prefix is noise in a line about location. */
+function tildify(cwd: string, home: string): string {
+	return cwd === home ? "~" : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
+}
+
+export interface BannerStyle {
+	/** Emit SGR escapes. Off by default so a redirected stream stays plain text. */
+	color?: boolean;
+	cwd?: string;
+	home?: string;
+}
+
+/**
+ * The first screen: the mark, then what is running, beside it.
+ *
+ * Four facts, not a config dump. The previous banner printed every role, both
+ * reviewers, the control plane and the loop — six model ids for a config that
+ * names one model, which is what made the launch read as noise. Role bindings,
+ * reasoning level, backend health and session cost all already have a home in
+ * `/status`; this says only what a user needs before typing the first word.
+ */
+export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?: string, style: BannerStyle = {}): string {
+	const cwd = style.cwd ?? process.cwd();
+	const home = style.home ?? homedir();
+	const on = style.color === true;
+	const paint = (code: string, text: string): string => (on ? `${code}${text}${OFF}` : text);
+	// The model that answers the prompt. The roles are the workers LeanPi spawns
+	// *inside* a turn, and naming them here described something the user is not
+	// about to talk to.
+	const running = sessionModel === undefined ? "pi's own model — `pi auth login` gives it one" : sessionModel.slice(sessionModel.indexOf("/") + 1);
+	const facts = [
+		// The one bright thing, and its version muted beside it.
+		`${paint(NAME, "leanpi")} ${paint(MUTED, `v${LEANPI_VERSION}`)}`,
+		// LeanPi picks the effort per task; naming a fixed level would be a lie.
+		paint(MUTED, `${running}${sessionModel === undefined ? "" : ", effort chosen per task"}`),
+		paint(MUTED, jevLine(jev.source)),
+		paint(MUTED, tildify(cwd, home)),
+	];
+	return MARK.map((row, index) => `${paint(MARK_COLOR, row)}  ${facts[index] ?? ""}`.trimEnd()).join("\n");
+}
+
+/**
+ * Named credentials the shell does not hold *and* Pi cannot cover.
+ *
+ * A missing variable is only a problem when nothing else can authenticate the
+ * provider: Pi keeps its own credential store, and on a machine where `pi auth`
+ * already has the provider the request succeeds and the warning is a false
+ * alarm — which is exactly what it was, printed on every launch, above a
+ * session that then worked perfectly.
+ */
+export function unusableBackendKeys(
+	config: LeanPiConfig,
+	env: NodeJS.ProcessEnv = process.env,
+	piReady: (provider: string) => boolean = piProviderReady,
+): Array<{ backend: string; variable: string }> {
+	return missingBackendKeys(config, env).filter(({ backend }) => !piReady(backend));
 }
 
 /**

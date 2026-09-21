@@ -746,6 +746,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 						contract: context.contract,
 						lane: "executor",
 						...statusExtras(),
+						color: true,
 						prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
 					}),
 				);
@@ -853,6 +854,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 					contract: context.contract,
 					lane: owns ? "executor" : "pi_loop",
 					...statusExtras(),
+					color: true,
 					...(running === undefined ? {} : { model: running }),
 					...(effort === undefined ? {} : { effort }),
 					prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,

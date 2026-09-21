@@ -16,7 +16,9 @@
 		"amber": "#FFB454",
 		"red": "#FF6B6B",
 		"selected": "#24404A",
-		"failure": "#3A1F24"
+		"failure": "#3A1F24",
+		"yellow": "#FFD24A",
+		"orange": "#FF9B42"
 	},
 	"colors": {
 		"accent": "teal",
@@ -69,11 +71,11 @@
 		"syntaxPunctuation": "muted",
 		"thinkingOff": "dim",
 		"thinkingMinimal": "muted",
-		"thinkingLow": "teal",
-		"thinkingMedium": "blue",
-		"thinkingHigh": "amber",
-		"thinkingXhigh": "#FFA06B",
-		"thinkingMax": "#FF7A5C",
+		"thinkingLow": "green",
+		"thinkingMedium": "yellow",
+		"thinkingHigh": "orange",
+		"thinkingXhigh": "red",
+		"thinkingMax": "#FF3B3B",
 		"bashMode": "blue"
 	},
 	"export": {

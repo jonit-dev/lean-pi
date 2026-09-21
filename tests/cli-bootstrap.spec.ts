@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { autoConfigure, missingBackendKeys, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../src/cli/bootstrap.js";
+import { autoConfigure, missingBackendKeys, MissingJevKeyError, requireJev, sessionModelFor, startupBanner, unusableBackendKeys } from "../src/cli/bootstrap.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
 import { MODEL_ROLES } from "../src/core/types.js";
 import type { JevResult } from "../src/jev/types.js";
@@ -249,7 +249,9 @@ describe("what Pi's own loop can run", () => {
 		expect(sessionModelFor(config)).toBe("opencode-go/deepseek-v4.1-flash");
 		// The banner says who answers the prompt, because Pi's loop is not the
 		// role map.
-		expect(startupBanner(config, { source: "env" }, sessionModelFor(config))).toContain("pi runs opencode-go/deepseek-v4.1-flash");
+		// The banner names the model that answers, not the backend path to it:
+		// `/status` owns role bindings, reasoning level and cost.
+		expect(startupBanner(config, { source: "env" }, sessionModelFor(config))).toContain("deepseek-v4.1-flash");
 	});
 
 	it("passes no model to Pi when the role says `default`, which a native provider cannot mean", () => {
@@ -406,6 +408,28 @@ describe("the status line", () => {
 		// line names no internal lane: "Executor lane" is a word the operator
 		// cannot act on. The lane's one visible consequence is the /verify chip.
 		expect(line).toBe("opus (1m)  ·  thinking: medium  ·  normal task");
+	});
+
+	it("colours the model and the effort only when asked, so the plain line stays plain", () => {
+		const config = { backends: {}, models: {} } as never;
+		const mk = (effort: string, color?: boolean) =>
+			statusLine({
+				config,
+				contract: { task: { execution_complexity: "LOW" }, routing: { executor_class: "quick" }, reasoning: { effort }, verification: { required: [] } } as never,
+				lane: "executor",
+				...(color === undefined ? {} : { color }),
+			});
+		// Measured, not assumed: Pi's `setStatus` passes the string to the TUI
+		// verbatim, so an escape written here reaches the terminal.
+		expect(mk("low", true)).toContain("\u001b[1mquick\u001b[0m");
+		// Effort is a green-to-red ramp, so the number is readable as a cost.
+		expect(mk("low", true)).toContain("\u001b[38;5;77m");
+		expect(mk("medium", true)).toContain("\u001b[38;5;221m");
+		expect(mk("high", true)).toContain("\u001b[38;5;208m");
+		expect(mk("max", true)).toContain("\u001b[38;5;196m");
+		// A caller that did not ask gets text it can compare as text.
+		expect(mk("low")).not.toContain("\u001b");
+		expect(mk("low")).toBe("quick  ·  thinking: low  ·  simple task");
 	});
 
 	it("names the role when the config has no model for it, instead of throwing mid-turn", () => {
@@ -627,6 +651,20 @@ describe("a credential the config names and the shell does not have", () => {
 		// Pi's own syntax is Pi's to resolve and Pi's to complain about.
 		const piSyntax = { backends: { p: { type: "native", baseUrl: "https://x.test", apiKey: "$SOME_VAR" } }, models: {} } as never;
 		expect(missingBackendKeys(piSyntax, {})).toEqual([]);
+	});
+
+	it("warns about a missing key only when Pi cannot cover the provider itself", () => {
+		const config = { backends: { "opencode-go": { type: "native", baseUrl: "https://x.test", apiKey: "OPENCODE_API_KEY" } }, models: {} } as never;
+		// The variable is unset either way — that is the question `missingBackendKeys`
+		// answers, and it is not on its own a problem.
+		expect(missingBackendKeys(config, {})).toHaveLength(1);
+		// Pi's own credential store already has the provider: the request will
+		// succeed, so saying anything is a false alarm. This one printed on every
+		// single launch above a session that then worked perfectly.
+		expect(unusableBackendKeys(config, {}, () => true)).toEqual([]);
+		// Nothing can authenticate it: now the 401 is coming and the name of the
+		// variable is the actionable thing to say.
+		expect(unusableBackendKeys(config, {}, () => false)).toEqual([{ backend: "opencode-go", variable: "OPENCODE_API_KEY" }]);
 	});
 
 	it("registers no key at all rather than the variable's name, so Pi can use its own credential", async () => {
