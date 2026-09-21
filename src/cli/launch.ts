@@ -139,13 +139,22 @@ export function dependencyDir(entry: string, from: string): string | undefined {
  * The bundled extensions present in this installation, as absolute paths.
  */
 export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "compact", thinkingFold = true): string[] {
-	const installed = [...BUNDLED_EXTENSIONS, ...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])]
-		.map((entry) => dependencyDir(entry, root))
-		.filter((path): path is string => path !== undefined);
-	// Vendored rather than resolved, and skipped when the copy is absent — the
-	// launcher's job is to start a session, not to insist on a display.
+	// Reasoning before the compact UI, and that order is load-bearing. Folding
+	// works by setting `hideThinkingBlock` on the component and delegating to the
+	// `updateContent` that was on the prototype when the extension loaded: Pi's
+	// own honours the flag, `pi-claude-code-ui`'s replacement renders thinking
+	// its own way and ignores it. Attached second, thinking-fold captured the
+	// compact UI's and every trace streamed in full under `--ui compact` while
+	// folding correctly under `--ui plain`.
 	const fold = thinkingFold ? thinkingFoldExtension(root) : undefined;
-	return fold !== undefined && existsSync(fold) ? [...installed, fold] : installed;
+	const vendored = fold !== undefined && existsSync(fold) ? [fold] : [];
+	return [
+		...BUNDLED_EXTENSIONS.map((entry) => dependencyDir(entry, root)).filter((path): path is string => path !== undefined),
+		...vendored,
+		...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])
+			.map((entry) => dependencyDir(entry, root))
+			.filter((path): path is string => path !== undefined),
+	];
 }
 
 /** This package's root, from the module's own location (`dist/cli/launch.js`). */

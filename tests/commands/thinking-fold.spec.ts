@@ -48,6 +48,12 @@ describe("/thinking-fold", () => {
 		// patched a second copy of `AssistantMessageComponent` and folded nothing
 		// while loading without error. The vendored copy is the same bytes renamed.
 		expect(folded.bundled.filter((path) => path.includes("pi-thinking-fold"))).toEqual([expect.stringMatching(/\.ts$/)]);
+		// Before the compact UI, and that order is the fix: folding delegates to
+		// whichever `updateContent` was on the prototype when it loaded, and only
+		// Pi's own honours `hideThinkingBlock`. Attached after `pi-claude-code-ui`,
+		// every trace streamed in full under the default `--ui compact`.
+		const order = folded.bundled.map((path) => (path.includes("pi-thinking-fold") ? "fold" : path.includes("pi-claude-code-ui") ? "cc-ui" : "other"));
+		expect(order.indexOf("fold")).toBeLessThan(order.indexOf("cc-ui"));
 		expect(live.bundled.some((path) => path.includes("pi-thinking-fold"))).toBe(false);
 		expect(live.bundled.some((path) => path.includes("pi-claude-code-ui"))).toBe(true);
 		// Every attached path is a real file, so Pi is never handed a missing one.
