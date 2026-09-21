@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { compactUiAttached } from "../../src/core/tools.js";
-import { bundledExtensions, isInformational, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli } from "../../src/cli/launch.js";
+import { bundledExtensions, isInformational, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, spinnerExtension } from "../../src/cli/launch.js";
 import { tempDir } from "../helpers/fixtures.js";
 
 describe("the leanpi launcher", () => {
@@ -23,9 +23,21 @@ describe("the leanpi launcher", () => {
 		// Pi's discovery loads every installed skill — 190 on the machine this was
 		// written on, and 82,343 bytes of the system prompt of every request.
 		const theme = ["--theme", join(PACKAGE_ROOT, "themes", "leanpi.json"), "--use-theme", "leanpi"];
-		// The bundled extensions ride between LeanPi's own and the switches.
+		// The bundled extensions ride between LeanPi's own and the switches, and the
+		// frames ride last: their patch is installed at session start and has to sit
+		// on top of the compact UI's module-load one.
 		const bundled = bundledExtensions(PACKAGE_ROOT).flatMap((path) => ["--extension", path]);
-		expect(plan.args).toEqual(["--extension", plan.extension, ...bundled, "--no-skills", ...theme, "--print", "do the thing"]);
+		expect(plan.args).toEqual([
+			"--extension",
+			plan.extension,
+			...bundled,
+			"--extension",
+			spinnerExtension(PACKAGE_ROOT),
+			"--no-skills",
+			...theme,
+			"--print",
+			"do the thing",
+		]);
 		// Pi's CLI comes from the dependency, not from PATH: the version LeanPi is
 		// built against is the one it should run under.
 		expect(plan.cli).toBe(join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"));
@@ -113,13 +125,22 @@ describe("the leanpi launcher", () => {
 		expect(compactUiAttached(plain.args)).toBe(false);
 	});
 
+	it("attaches the frames as TypeScript, so Pi loads them through jiti", () => {
+		// A compiled `.js` extension is imported by Node and gets this package's own
+		// pi-tui, so its patch lands on a prototype the interactive mode never
+		// draws with. The Loader class Pi renders with is only reachable through
+		// jiti's virtual-module map, which is keyed on a `.ts` extension.
+		expect(spinnerExtension(PACKAGE_ROOT).endsWith(".ts")).toBe(true);
+		expect(existsSync(spinnerExtension(PACKAGE_ROOT))).toBe(true);
+	});
+
 	it("attaches the bundled extensions after LeanPi's own, and none that duplicate a LeanPi subsystem", () => {
 		const plan = launchPlan([]);
 		const attached = plan.args.filter((argument, index) => plan.args[index - 1] === "--extension");
 		// LeanPi first: it registers the baseline tools and PRD-017's guard, and a
 		// bundled extension that replaces a tool name needs that surface to exist.
 		expect(attached[0]).toBe(plan.extension);
-		expect(attached.slice(1)).toEqual(bundledExtensions());
+		expect(attached.slice(1)).toEqual([...bundledExtensions(), spinnerExtension()]);
 		// Every bundled path is a real file, so Pi is never handed a missing one.
 		for (const path of bundledExtensions()) expect(existsSync(path)).toBe(true);
 		// Nothing LeanPi already owns: PRD-018 (LSP), PRD-019 (output reduction),

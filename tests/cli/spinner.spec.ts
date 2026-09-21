@@ -4,7 +4,7 @@
  */
 import { Loader } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
-import { SPINNER_FRAMES, installSpinnerFrames } from "../../src/cli/spinner.js";
+import registerSpinnerFrames, { SPINNER_FRAMES, installSpinnerFrames } from "../../src/cli/spinner.js";
 
 function drawnFrames(count: number, advance = true): string[] {
 	installSpinnerFrames();
@@ -36,5 +36,16 @@ describe("LeanPi's spinner frames", () => {
 		// The vendor's dedupe key: a tick that produces the same line is dropped
 		// before it reaches the UI, so the loader does not re-render for nothing.
 		expect(drawnFrames(3, false)).toEqual([SPINNER_FRAMES[0]]);
+	});
+
+	it("installs them at session start, when every extension has already patched the loader", () => {
+		const handlers: (() => void)[] = [];
+		const pi = { on: (_event: string, handler: () => void) => void handlers.push(handler) };
+		registerSpinnerFrames(pi as unknown as Parameters<typeof registerSpinnerFrames>[0]);
+		expect(handlers).toHaveLength(1);
+		handlers[0]?.();
+		// The session-start handler replaced the method on the loader's prototype,
+		// which is the one the compact UI leaves behind at module load.
+		expect(Loader.prototype.updateDisplay.name).toBe("patchedUpdateDisplay");
 	});
 });

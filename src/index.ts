@@ -76,7 +76,6 @@ import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
 import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
-import { installSpinnerFrames } from "./cli/spinner.js";
 import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
@@ -648,9 +647,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// route overrides and the recorded contract belonged to the conversation
 	// that just went away.
 	pi.on("session_start", async (event, ctx) => {
-		// After every extension is loaded, so LeanPi's frames sit on top of the
-		// compact UI's own loader patch rather than under it.
-		installSpinnerFrames();
 		if (event.reason !== "startup") {
 			surface.resetSessionState();
 			clearRoutePins();

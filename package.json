@@ -38,6 +38,7 @@
 		"skills",
 		"themes",
 		"src/capability/models.json",
+		"src/cli/spinner.ts",
 		"src/core/instructions/ponytail.md",
 		"src/core/instructions/ponytail.lock.json"
 	],

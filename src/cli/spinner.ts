@@ -12,7 +12,16 @@
  * the vendor's own symbols, so the two agree about the last text drawn and the
  * active UI; if the vendor's loader patch grows a behaviour this copy lacks,
  * take the frames upstream instead of widening this.
+ *
+ * This file is the extension Pi is handed — the `.ts` source, not its build
+ * output — and that is the reason the glyphs were still Claude's stars. Pi
+ * loads a `.ts` extension through jiti, which resolves `@earendil-works/pi-tui`
+ * through its virtual-module map to the Loader class the interactive mode
+ * renders with. A compiled `.js` extension is imported by Node itself, so it
+ * gets this package's own copy of pi-tui and patches a prototype nothing draws
+ * with. Keep it TypeScript, and keep the import a value import.
  */
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Loader } from "@earendil-works/pi-tui";
 
 /** One cycle of the bar, rise and fall. */
@@ -27,9 +36,9 @@ const RAW_ANSI = /\x1b\[[0-9;]*m/;
 /**
  * Installs the frames on Pi's loader prototype.
  *
- * Must run after every extension is loaded — `pi-claude-code-ui` patches the
- * same method at module load, and LeanPi's extension is attached first. Session
- * start is the first point at which the load order is settled.
+ * Must run after every extension is loaded: `pi-claude-code-ui` patches the
+ * same method at module load, and session start is the first point at which the
+ * load order is settled.
  */
 export function installSpinnerFrames(frames: readonly string[] = SPINNER_FRAMES): void {
 	const loader = Loader.prototype as unknown as Record<string, unknown>;
@@ -52,4 +61,15 @@ export function installSpinnerFrames(frames: readonly string[] = SPINNER_FRAMES)
 			self.ui.requestRender();
 		}
 	};
+}
+
+/**
+ * The entry Pi attaches for the frames.
+ *
+ * Session start, not module load: it is the first point at which every
+ * extension has patched the loader, so LeanPi's frames land on top of the
+ * compact UI's rather than under them.
+ */
+export default function registerSpinnerFrames(pi: ExtensionAPI): void {
+	pi.on("session_start", () => installSpinnerFrames());
 }

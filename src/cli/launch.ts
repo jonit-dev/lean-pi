@@ -68,6 +68,20 @@ const COMPACT_UI_EXTENSIONS: readonly string[] = [
 ];
 
 /**
+ * LeanPi's own spinner frames, as a path to *source*, not to the build output.
+ *
+ * Pi loads a `.ts` extension through jiti, which resolves
+ * `@earendil-works/pi-tui` through its virtual-module map to the Loader class
+ * the interactive mode renders with. A compiled `.js` extension is imported by
+ * Node itself, so it gets this package's own pi-tui copy and patches a prototype
+ * nothing draws with — which is exactly why the vendor's star set stayed on
+ * screen. Keep this one attached as TypeScript.
+ */
+export function spinnerExtension(root: string = packageRoot()): string {
+	return join(root, "src", "cli", "spinner.ts");
+}
+
+/**
  * The bundled extensions present in this installation, as absolute paths.
  *
  * Resolved through the symlink: Pi's loader requires an extension's own
@@ -244,6 +258,6 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 		cli: resolvePiCli(root),
 		extension,
 		bundled,
-		args: ["--extension", extension, ...bundledArgs, ...skills, ...theme, ...model, ...argv],
+		args: ["--extension", extension, ...bundledArgs, "--extension", spinnerExtension(root), ...skills, ...theme, ...model, ...argv],
 	};
 }
