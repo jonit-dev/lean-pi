@@ -1,9 +1,9 @@
 /**
  * Disclosure pipeline: rank → verify → load (PRD-005 Phase 2, ROADMAP §16).
  *
- * The full lightweight registry goes to one JEV request; only the top-K
- * candidates' full frontmatter goes to a second; only confirmed skills' bodies
- * are read. JEV may answer *no skill required*, which is the normal, cheapest
+ * A bounded slice of the lightweight registry goes to one JEV request; only the
+ * top-K candidates' full frontmatter goes to a second; only confirmed skills'
+ * bodies are read. JEV may answer *no skill required*, which is the normal, cheapest
  * outcome — and when JEV is off the same pipeline degrades to lexical/tag
  * routing with pins still honored (§49).
  */
@@ -16,6 +16,19 @@ import { loadSkillBody, type SkillControl, type SkillRecord } from "./skills.js"
 
 export const SKILL_SITE_ID = "skill.disclosure";
 export const DEFAULT_TOP_K = 5;
+
+/**
+ * How many candidates the rank stage scores.
+ *
+ * Stage 1 asks one question per candidate, so its bill used to be the size of
+ * the operator's library: on the audited machine 42 candidates cost ~29k JEV
+ * input tokens on *every* turn — including the ones whose whole text was "hi" —
+ * for a library where nothing scored above "tangential". Bounding the reranker's
+ * input is what a retrieval stage is for: the lexical pass proposes, the rank
+ * stage scores what it proposed, and `DEFAULT_TOP_K` of those reach
+ * verification. The cap leaves better than two candidates per loaded slot.
+ */
+export const SKILL_RANK_LIMIT = 12;
 
 export interface SkillDisclosureDecision {
 	topK: string[];
@@ -89,6 +102,27 @@ export function lexicalSelect(records: SkillRecord[], request: string, limit: nu
 		.map((entry) => entry.record);
 }
 
+/**
+ * The bounded set stage 1 scores: lexical hits first, then the rest of the
+ * registry in scan order.
+ *
+ * A library at or under the cap is passed whole — small libraries keep the
+ * purely semantic ranking they always had. Above it, the padding matters as much
+ * as the hits: a request that shares no token with any skill still gets a batch
+ * for JEV to judge, rather than silently losing disclosure the moment the
+ * library grows past the cap.
+ */
+function rankCandidates(records: SkillRecord[], request: string): SkillRecord[] {
+	if (records.length <= SKILL_RANK_LIMIT) return records;
+	const ranked = lexicalSelect(records, request, SKILL_RANK_LIMIT);
+	const seen = new Set(ranked.map((record) => record.name));
+	for (const record of records) {
+		if (ranked.length >= SKILL_RANK_LIMIT) break;
+		if (!seen.has(record.name)) ranked.push(record);
+	}
+	return ranked;
+}
+
 function relevanceQuestions(records: SkillRecord[]): JevQuestion[] {
 	return [
 		{ id: "any_skill", kind: "Choice", text: "Does this task require any skill from the library?", options: { yes: "yes", no: "no" } },
@@ -154,12 +188,13 @@ export async function selectSkills(input: SelectSkillsInput): Promise<SelectSkil
 	// without a request, resolves the site through its fallback and writes the
 	// telemetry row the decision log owes. No second code path to drift.
 	if (client) {
+		const ranked = rankCandidates(candidates, request);
 		const before = client.fallbackCount();
 		let results: JevResult[] | undefined;
 		try {
-			results = await client.ask(SKILL_SITE_ID, relevanceQuestions(candidates), {
+			results = await client.ask(SKILL_SITE_ID, relevanceQuestions(ranked), {
 				request,
-				registry: candidates.map((record) => `${record.name}: ${record.description.slice(0, 120)}`),
+				registry: ranked.map((record) => `${record.name}: ${record.description.slice(0, 120)}`),
 			});
 		} catch {
 			results = undefined;
@@ -172,7 +207,7 @@ export async function selectSkills(input: SelectSkillsInput): Promise<SelectSkil
 				decision.reason = "JEV answered: no skill required";
 				return finish([]);
 			}
-			const scored = candidates
+			const scored = ranked
 				.map((record) => {
 					const answer = results!.find((result) => result.questionId === `relevance:${record.name}`);
 					const score = answer && answer.kind === "Score" && accept(answer, "normal") ? answer.score : -1;

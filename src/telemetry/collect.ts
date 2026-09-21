@@ -12,7 +12,7 @@
  * inside `api_usd`; `retries` only records how many there were.
  */
 import type { BackendInvocation, Billing } from "../backends/worker.js";
-import type { DecisionRow } from "../jev/log.js";
+import type { DecisionLog, DecisionRow } from "../jev/log.js";
 import type { SiteTelemetryRow } from "../compiler/contract.js";
 import type { BackendType, ModelRole } from "../core/types.js";
 import type { JevAnswer, JevDecisionRow, RunExecution, RunUsage } from "./record.js";
@@ -314,5 +314,28 @@ export function createRunCollector(init: { taskId: string; sessionId: string }):
 			return true;
 		},
 		emitted: () => emitted,
+	};
+}
+
+/**
+ * The decision ledger, wired to whichever run is in flight.
+ *
+ * Every JEV site appends its row to the ledger, and `recordJevDecision` was
+ * called from the bench harness and nowhere else — so a real session wrote
+ * `.leanpi/decisions.jsonl` beside a run record that said `jev_tokens: 0`. On
+ * the audited session that hid 292k tokens of control-plane spend from `/cost`
+ * and from the goal budget that reads it. Decorating the log bills both from the
+ * same write, so the record and the ledger cannot drift apart.
+ *
+ * The collector is resolved per append, not captured: one log serves the whole
+ * session and the run it belongs to changes every turn.
+ */
+export function billingDecisionLog(log: DecisionLog, collector: () => RunCollector | undefined): DecisionLog {
+	return {
+		...log,
+		append(row) {
+			log.append(row);
+			collector()?.recordJevDecision(row);
+		},
 	};
 }

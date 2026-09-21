@@ -11,6 +11,7 @@ export {
 } from "./aggregate.js";
 export {
 	billedRefs,
+	billingDecisionLog,
 	billingOf,
 	callOfInvocation,
 	callsFromMessages,

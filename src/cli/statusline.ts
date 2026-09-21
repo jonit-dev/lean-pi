@@ -86,12 +86,11 @@ export function statusLine({ config, contract, lane, role, model: running, effor
 	}
 	const effort = EFFORT_LABEL[applied ?? contract.reasoning.effort];
 	const parts = [`Auto: ${model} (${effort}) — ${contract.task.execution_complexity} complexity — ${LANE_LABEL[lane]}`];
-	// The turn the user is about to get is unverified, and saying so is the
-	// difference between "evidence-driven completion" and a slogan: on the Pi
-	// loop LeanPi's executor lane never runs, so PRD-009's verification and
-	// PRD-010's gate never run either. `/verify` is where the user can ask for
-	// them against the workspace the turn leaves behind.
-	if (lane === "pi_loop" && contract.verification.required.length > 0) parts.push("unverified — /verify");
+	// No "unverified — /verify" here any more. This line is drawn *before* the
+	// turn runs, so it could only ever guess; the Pi loop now verifies itself
+	// whenever the turn changed the workspace, and reports the gate's actual
+	// decision afterwards. A footer telling the user to run a command the harness
+	// already ran is worse than no footer.
 	// The one decision LeanPi cannot make for the user: the PRD document itself.
 	if (prdWanted === true) parts.push("/prd create to open the PRD lane");
 	return parts.join(" — ");

@@ -11,7 +11,9 @@
  * that *did* spend metered tokens is a different thing — that 0 is missing
  * accounting, not free work — so no rate is ever invented and `unpricedCalls`
  * names those rows, which is what lets a report say "known spend plus N
- * unpriced calls" instead of presenting a short total as the whole bill.
+ * unpriced calls" instead of presenting a short total as the whole bill. JEV is
+ * the one exception to "absent is 0": it is a single endpoint at a published
+ * rate, so an unconfigured JEV rate is that price, not free.
  *
  * `api_usd` is metered spend only. A subscription call draws from a pool and a
  * local call burns compute, so both price at 0 here — the subscription/local
@@ -19,6 +21,7 @@
  * which is the FR-055 separation this record exists to carry.
  */
 import type { LeanPiConfig } from "../core/types.js";
+import { JEV_INPUT_COST_PER_MILLION } from "../jev/client.js";
 import { billingOf, type BackendCall } from "./collect.js";
 import type { CallRow, RunCost, RunUsage } from "./record.js";
 
@@ -69,9 +72,25 @@ export function resolveCostConfig(config?: LeanPiConfig | null): CostConfig {
 		quota_shadow_usd: raw.quota_shadow_usd ?? {},
 		local_usd_per_gpu_sec: numberOf(raw.local_usd_per_gpu_sec),
 		latency_usd_per_sec: numberOf(raw.latency_usd_per_sec),
-		jev_usd_per_mtok: numberOf((config?.jev as { usd_per_mtok?: unknown } | undefined)?.usd_per_mtok),
+		jev_usd_per_mtok: jevRate(config),
 		...(typeof raw.telemetry_path === "string" && raw.telemetry_path.length > 0 ? { telemetry_path: raw.telemetry_path } : {}),
 	};
+}
+
+/**
+ * The JEV rate: the operator's `jev.usd_per_mtok` when they set one, else the
+ * published price.
+ *
+ * Everything else here prices at 0 when unconfigured, which is right for a
+ * backend LeanPi knows nothing about. JEV is not that: it is one endpoint at one
+ * published rate, and defaulting it to 0 reported the control plane as free on
+ * every machine that had never written the key — the audited session's whole
+ * ledger, 292k tokens of it, costed at nothing. A deliberate `0` is still
+ * honoured; only an absent value falls back.
+ */
+function jevRate(config?: LeanPiConfig | null): number {
+	const declared = (config?.jev as { usd_per_mtok?: unknown } | undefined)?.usd_per_mtok;
+	return typeof declared === "number" && Number.isFinite(declared) ? declared : JEV_INPUT_COST_PER_MILLION;
 }
 
 /** The rate a call is billed at: the per-model override, else the backend's Pi `cost` block, else 0. */

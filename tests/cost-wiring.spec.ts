@@ -17,7 +17,20 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { clearLanes, compileTask, readRuns, scoutTask, withoutSkillCatalog } from "../src/index.js";
+import {
+	clearLanes,
+	compileTask,
+	createGoalStore,
+	newGoalState,
+	readDecisions,
+	readRuns,
+	scanSkills,
+	scoutTask,
+	SKILL_RANK_LIMIT,
+	VERIFY_TOOL_DESCRIPTION,
+	VERIFY_TOOL_NAME,
+	withoutSkillCatalog,
+} from "../src/index.js";
 import { registerLane } from "../src/commands/session.js";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend } from "./helpers/stub-backend.js";
@@ -264,4 +277,141 @@ describe("PRD-028 follow-up — the wiring the cost audit found open", () => {
 		// "nothing to replace" from "replaced".
 		expect(withoutSkillCatalog("no catalog here")).toBe("no catalog here");
 	});
+
+	it("bills a native turn for the JEV decisions it made", async () => {
+		// The ledger recorded every decision and the run record said `jev_tokens: 0`:
+		// the collector's JEV sink was wired in the bench and nowhere else, so the
+		// control plane's own spend was invisible to `/cost` and to the goal budget
+		// that reads it. The two must agree — the ledger is the only witness there is.
+		const jev = await startStubJev();
+		const backend = await startStubBackend([{ text: "done" }]);
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(backend.baseUrl) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+			jev: { endpoint: jev.url, apiKey: "test-key" },
+		});
+		const session = await bootSession({ cwd, agentDir });
+		try {
+			await session.session.prompt("rename a helper");
+			const ledger = readDecisions(cwd);
+			expect(ledger.length).toBeGreaterThan(0);
+			const spent = ledger.reduce((sum, row) => sum + row.tokens.inputTokens + row.tokens.outputTokens, 0);
+			const run = readRuns(cwd)[0]!;
+			expect(run.usage.jev_tokens).toBe(spent);
+			// And priced: a config that names no rate still pays JEV's published one,
+			// because "no rate configured" is not "the control plane is free".
+			expect(run.cost.jev_usd).toBeGreaterThan(0);
+			expect(run.cost.effective_cost).toBeGreaterThanOrEqual(run.cost.jev_usd);
+		} finally {
+			session.session.dispose();
+			await backend.close();
+			await jev.close();
+		}
+	});
+
+	it("does not scale the disclosure batch with the size of the skill library", async () => {
+		// One relevance question per candidate, and the operator's library is the
+		// candidate set: 42 skills cost 29k JEV input tokens per turn on the audited
+		// machine, for a library where nothing scored above "tangential". The rank
+		// stage is a retrieval, so it is bounded; only the bounded set is reranked.
+		const jev = await startStubJev();
+		const backend = await startStubBackend([{ text: "ok" }]);
+		const { cwd } = fixtureRepo();
+		const skillRoot = tempDir("leanpi-skills-");
+		writeSkills(skillRoot, [
+			...SKILLS,
+			...Array.from({ length: 40 }, (_, index) => ({
+				name: `filler-${String(index).padStart(2, "0")}`,
+				description: `unrelated fixture skill number ${index}`,
+				body: "IRRELEVANT-BODY",
+			})),
+		]);
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(backend.baseUrl) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+			capabilities: { skillRoots: [skillRoot] },
+			jev: { endpoint: jev.url, apiKey: "test-key" },
+		});
+		const session = await bootSession({ cwd, agentDir: skillRoot });
+		try {
+			await session.runTurn("run the targeted test for the helper");
+			const rank = jev.requests.find((request) => "any_skill" in (request.body.questions as Record<string, unknown>));
+			expect(rank).toBeDefined();
+			const asked = Object.keys(rank!.body.questions as Record<string, unknown>).filter((id) => id.startsWith("relevance:"));
+			// The cap only means something if the library is bigger than it: 42
+			// fixtures plus the bundled pack, against a stage that scores 12.
+			expect(scanSkills(cwd, { roots: [{ path: skillRoot, class: "user" }] }).length).toBeGreaterThan(SKILL_RANK_LIMIT);
+			expect(asked.length).toBeLessThanOrEqual(SKILL_RANK_LIMIT);
+			// Bounded, not blind: the skill the request actually names survives the cut.
+			expect(asked).toContain("relevance:targeted-testing");
+		} finally {
+			session.session.dispose();
+			await backend.close();
+			await jev.close();
+		}
+	});
+
+	it("counts a native turn against the goal's turn cap", async () => {
+		// The boundary lived inside the executor lane, which a native configuration
+		// never registers: `turns_used` stayed 0 for the life of the session and
+		// `max_turns` could not trip. Pi's loop is the executor there, so its turn
+		// is the one the cap has to count.
+		const backend = await startStubBackend([{ text: "done" }]);
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(backend.baseUrl) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+		});
+		const goals = createGoalStore(cwd);
+		goals.save(newGoalState("ship the parser", { max_turns: 5, max_cost: 2 }, new Date().toISOString()));
+		const session = await bootSession({ cwd, agentDir });
+		try {
+			await session.session.prompt("work on the parser");
+			expect(goals.load()?.turns_used).toBe(1);
+		} finally {
+			session.session.dispose();
+			await backend.close();
+		}
+	});
+
+
+	it("hands the executor the gate instead of running it for them", async () => {
+		// The trigger belongs to whoever just changed the code. A rule in the
+		// harness can only force the project's suite after every edit or never run
+		// it, and the first of those is what an operator notices as their session
+		// spending four minutes on a turn that renamed a variable.
+		const backend = await startStubBackend([{ toolCalls: [{ name: "verify", args: {} }] }, { text: "done" }]);
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(backend.baseUrl) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+			// A verifier that exists and passes: what the gate is being asked to run.
+			verify: { commands: { targeted_test: "true", build: "true", lint: "true" }, timeoutMs: 10_000 },
+		});
+		// `verify` spawns the operator's verifier commands, so it is a shell call and
+		// the PRD-017 guard asks about it like any other. `--safety low` is the
+		// operator having already answered, which is what an unattended run is.
+		const session = await bootSession({ cwd, agentDir, env: { ...process.env, LEANPI_SAFETY: "low" } });
+		try {
+			await session.session.prompt("fix the off-by-one in the parser");
+			// Offered, and offered with its triggers: the description is the only
+			// instruction the model reads at the moment it decides.
+			const offered = (backend.requests[0]!.body as { tools?: { function?: { name?: string; description?: string } }[] }).tools ?? [];
+			const tool = offered.find((entry) => entry.function?.name === VERIFY_TOOL_NAME);
+			expect(tool).toBeDefined();
+			expect(tool!.function!.description).toBe(VERIFY_TOOL_DESCRIPTION);
+			expect(tool!.function!.description).toContain("regression risk");
+			expect(tool!.function!.description).toContain("red to green");
+			// And when the model calls it, the turn stops reporting `not_run`: the
+			// record carries the gate's real answer.
+			const run = readRuns(cwd)[0]!;
+			expect(run.result.verification).not.toBe("not_run");
+			expect(run.result.proof_gate).not.toBe("not_run");
+		} finally {
+			session.session.dispose();
+			await backend.close();
+		}
+	});
+
 });

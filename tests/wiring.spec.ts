@@ -105,9 +105,9 @@ describe("activation wiring", () => {
 			// The five baseline names stay the activation's surface claim (§44); the
 			// LSP group is registered and inactive, and the expand affordance the
 			// tool-output pipeline needs is active with the baseline.
-			expect([...session.activation.tools].sort()).toEqual(["edit", "execute", "read", "search", "write"]);
+			expect([...session.activation.tools].sort()).toEqual(["edit", "execute", "read", "search", "verify", "write"]);
 			const active = (session.session as unknown as { getActiveToolNames(): string[] }).getActiveToolNames();
-			expect(active.sort()).toEqual(["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME].sort());
+			expect(active.sort()).toEqual(["edit", "execute", "read", "search", "verify", "write", ARTIFACT_TOOL_NAME].sort());
 			for (const name of LSP_TOOL_NAMES) expect(active).not.toContain(name);
 		} finally {
 			session.session.dispose();

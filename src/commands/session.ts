@@ -15,6 +15,7 @@ import type { BackendRef, LeanPiConfig, ModelRole, SelectedSkill } from "../core
 import type { ExecutionContract } from "../compiler/contract.js";
 import type { ExecutorOutcome } from "../executor/lane.js";
 import type { ProofGateResult } from "../proof/gate.js";
+import type { EvidenceRecord } from "../verify/evidence.js";
 import type { ContextSelection } from "../exploration/governor.js";
 import type { GoalEvaluation } from "../goal/index.js";
 import type { PrdManager } from "../prd/manager.js";
@@ -45,6 +46,11 @@ export interface TurnContext {
 	executor?: ExecutorOutcome;
 	/** PRD-010's verdict for the contract's criteria, when the gate ran. */
 	proof?: ProofGateResult;
+	/**
+	 * PRD-009's records, when verification ran outside an executor lane — the
+	 * native path, where Pi's loop is the executor and the turn verifies itself.
+	 */
+	verification?: readonly EvidenceRecord[];
 	/** PRD-013's boundary verdict for the active goal, when one was active. */
 	goal?: GoalEvaluation;
 	/** PRD-012's lane, opened by the executor lane when the gate dispatched to it. */
