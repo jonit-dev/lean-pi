@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/index.js";
 import { registerThinkingFoldCommand } from "../../src/commands/thinking-fold.js";
-import { bundledExtensions, dependencyDir, launchPlan, packageRoot, thinkingFoldExtension } from "../../src/cli/launch.js";
+import { bundledExtensions, dependencyDir, foldCacheExtension, launchPlan, packageRoot, thinkingFoldExtension } from "../../src/cli/launch.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { thinkingFoldEnabled } from "../../src/cli/ui-settings.js";
@@ -63,6 +63,20 @@ describe("/thinking-fold", () => {
 		// the vendored copy is missing, which is the silent no-op this whole
 		// change exists to kill, and a joined path is truthy either way.
 		for (const path of bundledExtensions()) expect(existsSync(path), path).toBe(true);
+	});
+
+	it("clears the compact UI's render cache, but only where both are attached", () => {
+		// Ctrl+T rebuilds the folded block without going through `updateContent`,
+		// so the compact UI's per-width cache keeps serving the pre-toggle lines
+		// and the expand does nothing. Pointless with either half missing.
+		const args = (ui: "compact" | "plain", fold: boolean) => launchPlan([], undefined, undefined, ui, fold).args.join(" ");
+		expect(args("compact", true)).toContain(foldCacheExtension());
+		expect(args("plain", true)).not.toContain(foldCacheExtension());
+		expect(args("compact", false)).not.toContain(foldCacheExtension());
+		// Last, so it wraps the compact UI's own `render` patch rather than sitting under it.
+		const plan = launchPlan([], undefined, undefined, "compact", true);
+		const attached = plan.args.filter((argument, index) => plan.args[index - 1] === "--extension");
+		expect(attached[attached.length - 1]).toBe(foldCacheExtension());
 	});
 
 	it("ships the installed build, so a version bump cannot leave a stale copy attached", () => {

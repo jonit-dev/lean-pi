@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { compactUiAttached } from "../../src/core/tools.js";
-import { bundledExtensions, isInformational, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, spinnerExtension } from "../../src/cli/launch.js";
+import { bundledExtensions, foldCacheExtension, isInformational, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, spinnerExtension } from "../../src/cli/launch.js";
 import { tempDir } from "../helpers/fixtures.js";
 
 describe("the leanpi launcher", () => {
@@ -25,7 +25,8 @@ describe("the leanpi launcher", () => {
 		const theme = ["--theme", join(PACKAGE_ROOT, "themes", "leanpi.json"), "--use-theme", "leanpi"];
 		// The bundled extensions ride between LeanPi's own and the switches, and the
 		// frames ride last: their patch is installed at session start and has to sit
-		// on top of the compact UI's module-load one.
+		// on top of the compact UI's module-load one. The fold's cache-clear rides
+		// after them for the same reason, and only with the compact UI attached.
 		const bundled = bundledExtensions(PACKAGE_ROOT).flatMap((path) => ["--extension", path]);
 		expect(plan.args).toEqual([
 			"--extension",
@@ -33,6 +34,8 @@ describe("the leanpi launcher", () => {
 			...bundled,
 			"--extension",
 			spinnerExtension(PACKAGE_ROOT),
+			"--extension",
+			foldCacheExtension(PACKAGE_ROOT),
 			"--no-skills",
 			...theme,
 			"--print",
@@ -168,7 +171,7 @@ describe("the leanpi launcher", () => {
 		// LeanPi first: it registers the baseline tools and PRD-017's guard, and a
 		// bundled extension that replaces a tool name needs that surface to exist.
 		expect(attached[0]).toBe(plan.extension);
-		expect(attached.slice(1)).toEqual([...bundledExtensions(), spinnerExtension()]);
+		expect(attached.slice(1)).toEqual([...bundledExtensions(), spinnerExtension(), foldCacheExtension()]);
 		// Every bundled path is a real file, so Pi is never handed a missing one.
 		for (const path of bundledExtensions()) expect(existsSync(path)).toBe(true);
 		// Nothing LeanPi already owns: PRD-018 (LSP), PRD-019 (output reduction),

@@ -106,6 +106,15 @@ export function spinnerExtension(root: string = packageRoot()): string {
 }
 
 /**
+ * The cache-clear that lets Ctrl+T expand a folded reasoning block under the
+ * compact UI. Attached last, so it wraps that package's own `render` patch;
+ * `fold-cache.ts` has the why. Pointless without both, so only when both are on.
+ */
+export function foldCacheExtension(root: string = packageRoot()): string {
+	return join(root, "src", "cli", "fold-cache.ts");
+}
+
+/**
  * Where `entry` lives under `node_modules`, searched upward the way Node's own
  * resolver does: this package's `node_modules`, then each ancestor's.
  *
@@ -321,6 +330,17 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 		cli: resolvePiCli(root),
 		extension,
 		bundled,
-		args: ["--extension", extension, ...bundledArgs, "--extension", spinnerExtension(root), ...skills, ...theme, ...model, ...argv],
+		args: [
+			"--extension",
+			extension,
+			...bundledArgs,
+			"--extension",
+			spinnerExtension(root),
+			...(thinkingFold && ui === "compact" ? ["--extension", foldCacheExtension(root)] : []),
+			...skills,
+			...theme,
+			...model,
+			...argv,
+		],
 	};
 }
