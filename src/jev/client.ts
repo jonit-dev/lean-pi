@@ -28,6 +28,12 @@ export interface JevTransportRequest {
 	url: string;
 	headers: Record<string, string>;
 	body: string;
+	/**
+	 * The per-turn budget's signal, when the caller set one. A transport that
+	 * honours it aborts its request instead of holding the turn; one that ignores
+	 * it is still bounded by `ask`, which resolves the site's fallback on abort.
+	 */
+	signal?: AbortSignal;
 }
 
 export interface JevTransportResponse {
@@ -59,7 +65,7 @@ export interface JevTestResult {
 
 export interface JevClient {
 	/** One request per decision point, never one per question (FR-011). */
-	ask(siteId: string, questions: JevQuestion[], state: unknown): Promise<JevResult[]>;
+	ask(siteId: string, questions: JevQuestion[], state: unknown, options?: { signal?: AbortSignal }): Promise<JevResult[]>;
 	sites(): DecisionSite[];
 	/** Token usage of the most recently resolved site; zero when it fell back. */
 	lastUsage(): JevUsage;
@@ -100,6 +106,50 @@ interface WireAnswer {
 class JevResponseError extends Error {}
 
 /**
+ * The per-turn budget's one enforcement point.
+ *
+ * `send` is not cancellable from outside when a caller-supplied transport ignores
+ * its `AbortSignal`, so the ask races it against the signal and rejects when the
+ * budget aborts. The losing `send` is never awaited, but its rejection is always
+ * observed (including when the signal was already aborted) so it cannot surface
+ * as an unhandled rejection. `send` checks `signal.aborted` before it touches
+ * `reachable`/`modelVersion`, so a late response is dropped rather than logged.
+ * Timers and listeners are removed on both outcomes.
+ */
+function raceBudget<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+	if (!signal) return work;
+	return new Promise<T>((resolve, reject) => {
+		let settled = false;
+		const onAbort = (): void => {
+			settled = true;
+			reject(new Error(JEV_BUDGET_EXCEEDED_REASON));
+		};
+		if (signal.aborted) {
+			// The work already exists: keep an observer on it so its eventual
+			// rejection is handled rather than surfacing as an unhandled rejection.
+			work.catch(() => {});
+			onAbort();
+			return;
+		}
+		signal.addEventListener("abort", onAbort, { once: true });
+		work.then(
+			(value) => {
+				if (settled) return;
+				settled = true;
+				signal.removeEventListener("abort", onAbort);
+				resolve(value);
+			},
+			(error) => {
+				if (settled) return;
+				settled = true;
+				signal.removeEventListener("abort", onAbort);
+				reject(error);
+			},
+		);
+	});
+}
+
+/**
  * The control plane is on the critical path of every turn — the compiler asks
  * before any model runs — and `fetch` has no timeout of its own: an endpoint
  * that accepts the connection and never answers held the whole session with
@@ -109,8 +159,14 @@ class JevResponseError extends Error {}
  */
 export const JEV_REQUEST_TIMEOUT_MS = 20_000;
 
-function defaultTransport({ url, headers, body }: JevTransportRequest): Promise<JevTransportResponse> {
-	return fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(JEV_REQUEST_TIMEOUT_MS) }).then(async (response) => ({
+/** The fallback reason a site records when a caller's per-turn budget expired it. */
+export const JEV_BUDGET_EXCEEDED_REASON = "compile-budget-exceeded";
+
+function defaultTransport({ url, headers, body, signal }: JevTransportRequest): Promise<JevTransportResponse> {
+	// The request's own timeout and the caller's per-turn budget, whichever fires
+	// first. `AbortSignal.any` keeps a single signal for `fetch` to cancel.
+	const bounds = [AbortSignal.timeout(JEV_REQUEST_TIMEOUT_MS), ...(signal ? [signal] : [])];
+	return fetch(url, { method: "POST", headers, body, signal: AbortSignal.any(bounds) }).then(async (response) => ({
 		status: response.status,
 		text: await response.text(),
 	}));
@@ -214,7 +270,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 		return results;
 	}
 
-	async function send(key: string, questions: JevQuestion[], state: unknown): Promise<{ answers: Record<string, WireAnswer>; usage: JevUsage; model: string }> {
+	async function send(key: string, questions: JevQuestion[], state: unknown, signal?: AbortSignal): Promise<{ answers: Record<string, WireAnswer>; usage: JevUsage; model: string }> {
 		const body = applyPrivacy(
 			mode,
 			{
@@ -228,7 +284,12 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			url: endpoint,
 			headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
 			body: serializeBody(body),
+			...(signal ? { signal } : {}),
 		});
+		// A budget that expired while the transport was in flight owns the outcome
+		// now: throw before touching any module state, so a slow response cannot
+		// write `reachable`, `modelVersion` or a decision row after the fact.
+		if (signal?.aborted) throw new Error(JEV_BUDGET_EXCEEDED_REASON);
 		reachable = response.status >= 200 && response.status < 300;
 		if (!reachable) {
 			// The status alone is not actionable; the body is redacted through the
@@ -248,8 +309,9 @@ export function createJevClient(options: JevClientOptions): JevClient {
 	}
 
 	return {
-		async ask(siteId, questions, state) {
+		async ask(siteId, questions, state, options = {}) {
 			const site = getSite(siteId);
+			const signal = options.signal;
 			// The declared set is a *template*: a site with per-candidate questions
 			// (skill relevance, retention) asks a batch whose size varies. What must
 			// hold is that no undeclared answer kind is ever accepted.
@@ -263,13 +325,18 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			if (mode === "disabled") return resolveByFallback(site, questions, state, "privacy-mode-disabled");
 			const credential = currentCredential();
 			if (!credential.key) return resolveByFallback(site, questions, state, "no-credential");
+			if (signal?.aborted) return resolveByFallback(site, questions, state, JEV_BUDGET_EXCEEDED_REASON);
 
 			let response: { answers: Record<string, WireAnswer>; usage: JevUsage; model: string };
 			try {
-				response = await send(credential.key, questions, state);
+				// A transport that ignores `signal` must not hold the turn: the race
+				// resolves the site's fallback the moment the budget aborts, and the
+				// `send` continuation is told to drop its result via `signal.aborted`.
+				response = await raceBudget(send(credential.key, questions, state, signal), signal);
 			} catch (error) {
 				return resolveByFallback(site, questions, state, error instanceof Error ? error.message : "transport-error");
 			}
+			if (signal?.aborted) return resolveByFallback(site, questions, state, JEV_BUDGET_EXCEEDED_REASON);
 
 			let results: JevResult[];
 			try {

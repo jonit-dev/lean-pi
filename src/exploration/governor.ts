@@ -72,6 +72,8 @@ export interface ExploreDeps {
 	jevEnabled?: boolean;
 	config?: LeanPiConfig | null;
 	budget?: Partial<ExploreBudget>;
+	/** The per-turn compile budget, so a hung site ask cannot outlive it. */
+	signal?: AbortSignal;
 	settings?: Partial<ExplorationSettings>;
 	/**
 	 * Symbol queries backed by PRD-018's LSP navigation, used only when the scout
@@ -293,7 +295,7 @@ export async function explore(request: ExploreRequest, deps: ExploreDeps): Promi
 		const before = deps.jev.fallbackCount?.() ?? 0;
 		let results: JevResult[];
 		try {
-			results = await deps.jev.ask(siteId, questions, state);
+			results = await deps.jev.ask(siteId, questions, state, deps.signal ? { signal: deps.signal } : undefined);
 		} catch {
 			return fallbackFor("ask-failed");
 		}

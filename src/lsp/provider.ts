@@ -75,17 +75,22 @@ function configuredTypecheck(config: LeanPiConfig | undefined): string | undefin
 /** The real `lsp.usefulness` caller: one Choice question through the session's client. */
 export function createJevAsker(client: Pick<JevClient, "ask" | "fallbackCount"> & Partial<Pick<JevClient, "lastUsage">>): LspUsefulnessAsker {
 	return {
-		async choose(context) {
+		async choose(context, signal) {
 			registerLspSite();
 			const before = client.fallbackCount();
 			let results: JevResult[];
 			try {
-				results = await client.ask(LSP_SITE_ID, lspUsefulnessQuestions(context.candidates), {
-					taskSummary: context.taskSummary,
-					taskType: context.taskType,
-					changedLanguages: context.changedLanguages,
-					candidates: context.candidates,
-				});
+				results = await client.ask(
+					LSP_SITE_ID,
+					lspUsefulnessQuestions(context.candidates),
+					{
+						taskSummary: context.taskSummary,
+						taskType: context.taskType,
+						changedLanguages: context.changedLanguages,
+						candidates: context.candidates,
+					},
+					{ signal },
+				);
 			} catch {
 				return null;
 			}
@@ -117,7 +122,7 @@ export interface LspProviderOptions {
 export function createLspProvider(options: LspProviderOptions = {}): CapabilityProvider {
 	return {
 		kind: "lsp",
-		async supply(draft, packet) {
+		async supply(draft, packet, supplyOptions) {
 			const context = getCompilerContext();
 			const config = options.config ?? context?.config;
 			const root = options.root ?? context?.cwd ?? process.cwd();
@@ -133,6 +138,7 @@ export function createLspProvider(options: LspProviderOptions = {}): CapabilityP
 				...(targetedCheck ? { targetedCheck } : {}),
 				taskSummary: draft.task.user_request,
 				...(asker ? { asker } : {}),
+				...(supplyOptions?.signal ? { signal: supplyOptions.signal } : {}),
 			});
 
 			// FR-094: the contract marks the verifier kind; PRD-009 owns the command.

@@ -95,15 +95,17 @@ export interface GateInput {
 	request: string;
 	packet: TaskPacket;
 	config: LeanPiConfig;
+	/** The per-turn budget's signal, threaded into the site's `ask`. */
+	options?: { signal?: AbortSignal };
 }
 
-export async function runGate({ client, request, packet, config }: GateInput): Promise<GateOutcome> {
+export async function runGate({ client, request, packet, config, options }: GateInput): Promise<GateOutcome> {
 	registerGateSite();
 	const threshold = config.thresholds.gate_prd_required;
 	let results: JevResult[];
 	const before = client.fallbackCount();
 	try {
-		results = await client.ask(GATE_SITE_ID, GATE_QUESTIONS, { request, packet });
+		results = await client.ask(GATE_SITE_ID, GATE_QUESTIONS, { request, packet }, options);
 	} catch {
 		return heuristicGate(request, packet);
 	}

@@ -594,13 +594,15 @@ describe("the status line reaches the footer", () => {
 		);
 		clearLanes();
 
-		const [entry] = statuses;
-		expect(entry?.[0]).toBe("leanpi");
-		expect(entry?.[1]).toMatch(/^Auto: /);
-		expect(entry?.[1]).toMatch(/complexity/);
+		// PRD-029 added a progress status before JEV runs, so the footer is no
+		// longer the first status the handler sets: find the `Auto: ` footer and
+		// assert the model it names is the one Pi will dial.
+		const footer = statuses.find((entry) => entry[1]?.startsWith("Auto: "));
+		expect(footer?.[0]).toBe("leanpi");
+		expect(footer?.[1]).toMatch(/complexity/);
 		// Never the class's model when Pi was not given it: with JEV disabled the
 		// fallback route is what runs, and the line has to name what Pi will dial.
-		expect(entry?.[1]).not.toContain("opus");
+		expect(footer?.[1]).not.toContain("opus");
 	});
 });
 

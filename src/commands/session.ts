@@ -51,6 +51,8 @@ export interface TurnContext {
 	prd?: PrdManager;
 	/** PRD-003's packet, kept so the exploration hook seeds from it (PRD-023). */
 	packet?: TaskPacket;
+	/** The turn's per-turn compile budget, set by `runLanes`; read by the compiler lane. */
+	budget?: AbortSignal;
 	/** PRD-023's selection: the files and excerpts that enter the executor's context. */
 	exploration?: ContextSelection;
 	/** The session's todo list (PRD-025); the prompt carries it when it has items. */
@@ -201,27 +203,41 @@ export function isTurnInFlight(): boolean {
  * VOLATILE block (working state, active todo list) last, which is the §22 layout
  * the provider cache depends on.
  */
+export const COMPILE_BUDGET_MS = 5_000;
+
 export async function runLanes(turn: TurnInput, context: TurnContext): Promise<TurnContext> {
-	for (const lane of lanes) await lane.run(turn, context);
-	// PRD-005's disclosure reaches the request through the contract slot the
-	// provider filled; the lane that compiled the contract does not restate it.
-	// A compiled slot wins over the native lane's own selection: both run the
-	// same pipeline, and the contract's is the one the executor was routed on.
-	if (context.contract && context.contract.capabilities.skills.length > 0) context.skills = context.contract.capabilities.skills;
-	if (context.prefix.length === 0) {
-		const assembled = assemble({
-			config: context.config,
-			skills: context.skills,
-			...(context.contract ? { contract: context.contract } : {}),
-			workingState: buildWorkingState(context.workingStateSources ?? stubSources(), { filesTouched: [] }),
-		});
-		// PRD-025's block is the last thing a prompt carries, and only when the
-		// list has something to say.
-		const items = context.todo ? itemsOf(context.todo) : [];
-		context.prefix = items.length === 0 ? assembled.text : withTodo(assembled, items).text;
+	// One budget per invocation, created here so every entry point — the native
+	// `before_agent_start` path, the owned `input` path and the library `runTurn`
+	// — bounds the same compile. It is never a module global: two turns in one
+	// process cannot share it. Aborting it resolves each JEV site through the
+	// fallback it declares; the lanes themselves still run to completion.
+	const budget = new AbortController();
+	const budgetTimer = setTimeout(() => budget.abort(), COMPILE_BUDGET_MS);
+	context.budget = budget.signal;
+	try {
+		for (const lane of lanes) await lane.run(turn, context);
+		// PRD-005's disclosure reaches the request through the contract slot the
+		// provider filled; the lane that compiled the contract does not restate it.
+		// A compiled slot wins over the native lane's own selection: both run the
+		// same pipeline, and the contract's is the one the executor was routed on.
+		if (context.contract && context.contract.capabilities.skills.length > 0) context.skills = context.contract.capabilities.skills;
+		if (context.prefix.length === 0) {
+			const assembled = assemble({
+				config: context.config,
+				skills: context.skills,
+				...(context.contract ? { contract: context.contract } : {}),
+				workingState: buildWorkingState(context.workingStateSources ?? stubSources(), { filesTouched: [] }),
+			});
+			// PRD-025's block is the last thing a prompt carries, and only when the
+			// list has something to say.
+			const items = context.todo ? itemsOf(context.todo) : [];
+			context.prefix = items.length === 0 ? assembled.text : withTodo(assembled, items).text;
+		}
+		setActivePrefix(context.prefix);
+		return context;
+	} finally {
+		clearTimeout(budgetTimer);
 	}
-	setActivePrefix(context.prefix);
-	return context;
 }
 
 /** Full turn: lanes, then the executor request through the resolved role's model. */

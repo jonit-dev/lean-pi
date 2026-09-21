@@ -68,7 +68,7 @@ export interface CapabilitySlots {
 export interface CapabilityProvider {
 	kind: "skills" | "mcps" | "lsp" | "rtk";
 	/** May be async: skill selection asks JEV before the contract is frozen. */
-	supply(draft: ExecutionContract, packet: TaskPacket): unknown | Promise<unknown>;
+	supply(draft: ExecutionContract, packet: TaskPacket, options?: { signal?: AbortSignal }): unknown | Promise<unknown>;
 }
 
 /** One acceptance criterion, as the executor packet and the reviewer packet both carry it. */

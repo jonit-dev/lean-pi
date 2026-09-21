@@ -4,6 +4,8 @@
  * One batched request per decision point, typed results in question order, and
  * a JEV client the executor cannot reach.
  */
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	clearSites,
@@ -89,6 +91,74 @@ describe("PRD-002 Phase 1 — typed batched client", () => {
 		// An unregistered id never reaches the wire.
 		await expect(client.ask("nope.not.registered", QUESTIONS, {})).rejects.toBeInstanceOf(UnknownSiteError);
 		expect(stub.requests).toHaveLength(1);
+	});
+
+	it("a caller budget abort closes the default fetch and resolves the fallback, with no leaked socket", async () => {
+		registerSite({
+			id: "fixture.budget",
+			questions: QUESTIONS,
+			returnType: ["Choice", "Score", "Noul"],
+			consequence: "normal",
+			telemetryTag: "fixture.budget",
+			fallback: ({ questions: asked }) =>
+				asked.map((question): JevResult => {
+					if (question.kind === "Choice") return { kind: "Choice", questionId: question.id, choice: "quick", probabilities: {}, confidence: 1 };
+					if (question.kind === "Score") return { kind: "Score", questionId: question.id, score: 0, legend: {}, confidence: 1 };
+					return { kind: "Noul", questionId: question.id, value: 0, confidence: 1 };
+				}),
+		});
+
+		// A real HTTP server that accepts the request and never answers: the exact
+		// case `defaultTransport`'s caller budget exists for. No custom transport.
+		// The abort fires only once the request has actually arrived, so the test
+		// proves an *outstanding* request is closed rather than aborting pre-connect.
+		let openSockets = 0;
+		let receivedRequest: (() => void) | undefined;
+		const requestReceived = new Promise<void>((resolve) => {
+			receivedRequest = resolve;
+		});
+		let requestSocket: import("node:net").Socket | undefined;
+		const server: Server = createServer((req) => {
+			requestSocket = req.socket;
+			receivedRequest?.();
+			req.on("data", () => {});
+			req.on("end", () => {});
+		});
+		server.on("connection", (socket) => {
+			openSockets += 1;
+			socket.on("close", () => {
+				openSockets -= 1;
+			});
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const { port } = server.address() as AddressInfo;
+
+		try {
+			const client = createJevClient({ config: jevConfig(cwd, `http://127.0.0.1:${port}/v1/systemone`), cwd });
+			const controller = new AbortController();
+			const ask = client.ask("fixture.budget", QUESTIONS, { task: "budget" }, { signal: controller.signal });
+			await requestReceived;
+			controller.abort();
+			const results = await ask;
+
+			// The fallback answered, and the site recorded the budget reason.
+			expect(results.map((result) => result.questionId)).toEqual(["route", "burden", "needs_review"]);
+			expect(client.fallbackCount()).toBe(1);
+			const rows = readDecisions(cwd);
+			expect(rows[0]!.fallbackUsed).toBe(true);
+			expect(rows[0]!.reason).toBe("compile-budget-exceeded");
+
+			// The aborted fetch closed the exact socket carrying that request:
+			// nothing is left holding the turn.
+			for (let i = 0; i < 100 && !(requestSocket?.destroyed ?? false); i += 1) {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+			}
+			expect(requestSocket).toBeDefined();
+			expect(requestSocket!.destroyed).toBe(true);
+			expect(openSockets).toBe(0);
+		} finally {
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		}
 	});
 
 	it("AC-2: JEV is unreachable from the executor", async () => {

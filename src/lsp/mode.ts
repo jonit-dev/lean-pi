@@ -72,7 +72,7 @@ export interface LspTokenUsage {
 
 /** The `lsp.usefulness` seam: one candidate, or `null` when JEV is off/unconfident. */
 export interface LspUsefulnessAsker {
-	choose(context: LspUsefulnessContext): Promise<{ mode: LspMode; confidence: number; tokens?: LspTokenUsage } | null>;
+	choose(context: LspUsefulnessContext, signal?: AbortSignal): Promise<{ mode: LspMode; confidence: number; tokens?: LspTokenUsage } | null>;
 }
 
 export interface LspModeInput {
@@ -85,6 +85,8 @@ export interface LspModeInput {
 	targetedCheck?: TargetedCheck;
 	taskSummary?: string;
 	asker?: LspUsefulnessAsker;
+	/** The per-turn compile budget, so a hung `lsp.usefulness` ask cannot outlive it. */
+	signal?: AbortSignal;
 }
 
 export interface LspSelection {
@@ -206,7 +208,7 @@ export async function selectLspMode(input: LspModeInput): Promise<LspSelection> 
 		changedLanguages: [...input.changedLanguages],
 		candidates: tied,
 	};
-	const answer = input.asker ? await input.asker.choose(context) : null;
+	const answer = input.asker ? await input.asker.choose(context, input.signal) : null;
 	if (answer && tied.includes(answer.mode)) {
 		return {
 			mode: answer.mode,

@@ -496,13 +496,14 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// the tool-output boundary below, where tool output actually exists.
 	registerCapabilityProvider({
 		kind: "skills",
-		supply: async (draft) => {
+		supply: async (draft, _packet, options) => {
 			const selection = await selectSkills({
 				records: scan(),
 				control: skillControl,
 				request: draft.task.user_request,
 				config,
 				client: jev,
+				...(options?.signal ? { signal: options.signal } : {}),
 				// A body belongs in the one-shot executor prompt the compiled path
 				// builds. With Pi's own loop as the executor the disclosed block sits
 				// in the cacheable prefix of every provider call, and three bodies
@@ -698,6 +699,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 					...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
 				});
 			}
+		} catch (error) {
+			// A failed turn must not leave the progress status up.
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
+			throw error;
 		} finally {
 			setLaneCollector(undefined);
 		}
@@ -712,92 +717,108 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// session object, so the verdict is read off the executor's own outcome.
 	pi.on("before_agent_start", async (event, ctx) => {
 		if (isTurnInFlight()) return;
+		// PRD-029: the native path compiles before Pi's loop runs, and until this
+		// status existed the pause was silent. It is set before any JEV work — the
+		// four compiler sites plus skill disclosure — and replaced by the footer or
+		// cleared in the `catch`, so a compile/routing failure leaves no stale
+		// status behind. `ui.setStatus` never enters the model context.
+		const progress = (phase: string): void => ctx.ui.setStatus(LEANPI_STATUS_KEY, `LeanPi: ${phase}`);
+		progress("compiling the task");
 		// PRD-015's accumulator is created before the lanes run, not after: the
 		// executor lane's backend calls are what the record has to carry, and they
 		// are spent while the lane runs.
 		const collector = createRunCollector({ taskId: event.prompt.slice(0, 64), sessionId: manager.getSessionId() });
 		setLaneCollector(collector);
-		const context = await runLanes(
-			{ text: event.prompt },
-			{
-				turn: { text: event.prompt },
-				role: "balanced",
-				cwd,
-				config,
-				modelRef: resolveRole(config, "balanced"),
-				skills: [],
-				todo: todoCarrier,
-				workingStateSources,
-				prefix: "",
-			},
-		);
-		observeTurn(context);
-		// The compiled route is this turn's spend decision here too, and here Pi's
-		// own loop is the executor: the session's model and thinking level are the
-		// only things the classification can change. `setModel` is skipped when Pi
-		// has no authenticated model for the class (an external-harness role), and
-		// the level is clamped to the model's own capabilities by the host.
-		const owns = ownsExecutionLoop(config);
-		// What Pi will actually run this turn, when Pi is the one running it.
-		let installed: string | undefined;
-		// The level the session ends the handler at, which is what the footer must
-		// name: the compiled effort only when it was applied.
-		let effort: ThinkingLevel | undefined;
-		if (context.contract && !owns) {
-			const ref = resolveRole(config, context.contract.routing.executor_class);
-			const model = ctx.modelRegistry.find(ref.backend, ref.model);
-			// `setModel` answers whether it took the model. Ignoring that answer
-			// let the footer name a model the session had refused.
-			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
-			// The operator's ceiling applies on every path (`thinkingLevelFor`), not
-			// only the programmatic one: `backends.<name>.thinkingLevel: off` is the
-			// one spending switch there is, and this handler used to raise straight
-			// past it to whatever the classifier compiled.
-			effort = thinkingLevelFor(config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
-			if (effort !== undefined) pi.setThinkingLevel(effort);
-		}
-		// "Tell me your goal, I figure out the rest" is only trustworthy if the
-		// figuring is visible: the footer carries what this turn routed to, how
-		// hard it was told to think, and what it was classified as.
-		//
-		// `installed` is the model Pi was *given*, which is not always the one the
-		// contract asked for: an `external_harness` class has no entry in Pi's
-		// registry, or `setModel` refused it, and Pi keeps running the session
-		// model. Naming the contract's choice there would report a route that did
-		// not happen — the one failure this line exists to prevent. The session's
-		// *actual* model is `ctx.model`; `sessionModelFor(config)` was a second
-		// guess at it from the config, and disagreed whenever the user had
-		// switched models by hand.
-		if (context.contract) {
-			const running = owns || installed !== undefined ? undefined : ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "pi's own model";
-			ctx.ui.setStatus(
-				LEANPI_STATUS_KEY,
-				statusLine({
+		try {
+			const context = await runLanes(
+				{ text: event.prompt },
+				{
+					turn: { text: event.prompt },
+					role: "balanced",
+					cwd,
 					config,
-					contract: context.contract,
-					lane: owns ? "executor" : "pi_loop",
-					...(running === undefined ? {} : { model: running }),
-					...(effort === undefined ? {} : { effort }),
-					prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
-				}),
+					modelRef: resolveRole(config, "balanced"),
+					skills: [],
+					todo: todoCarrier,
+					workingStateSources,
+					prefix: "",
+					onProgress: progress,
+				},
 			);
-		}
-		// Pi's blanket catalog, for any entry that still assembles one: the
-		// `leanpi` launcher passes `--no-skills` and `createLeanPiSession` sets
-		// `skillsOverride`, but a user running `pi --extension` by hand gets Pi's
-		// discovery, and that is 82,343 bytes of the system prompt of every
-		// request (~20.6k tokens) duplicating disclosure LeanPi already did.
-		const systemPrompt = withoutSkillCatalog(event.systemPrompt);
-		if (context.contract) {
-			// The record is written at `agent_end`, not here: with Pi's own loop as
-			// the executor this handler returns *before* the loop spends anything, so
-			// emitting now would write a zeroed row for every native turn. The holder
-			// keeps the run open until the loop reports what it used.
-			pendingRun = { collector, context };
-		} else {
+			observeTurn(context);
+			// The compiled route is this turn's spend decision here too, and here Pi's
+			// own loop is the executor: the session's model and thinking level are the
+			// only things the classification can change. `setModel` is skipped when Pi
+			// has no authenticated model for the class (an external-harness role), and
+			// the level is clamped to the model's own capabilities by the host.
+			const owns = ownsExecutionLoop(config);
+			// What Pi will actually run this turn, when Pi is the one running it.
+			let installed: string | undefined;
+			// The level the session ends the handler at, which is what the footer must
+			// name: the compiled effort only when it was applied.
+			let effort: ThinkingLevel | undefined;
+			if (context.contract && !owns) {
+				const ref = resolveRole(config, context.contract.routing.executor_class);
+				const model = ctx.modelRegistry.find(ref.backend, ref.model);
+				// `setModel` answers whether it took the model. Ignoring that answer
+				// let the footer name a model the session had refused.
+				if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
+				// The operator's ceiling applies on every path (`thinkingLevelFor`), not
+				// only the programmatic one: `backends.<name>.thinkingLevel: off` is the
+				// one spending switch there is, and this handler used to raise straight
+				// past it to whatever the classifier compiled.
+				effort = thinkingLevelFor(config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
+				if (effort !== undefined) pi.setThinkingLevel(effort);
+			}
+			// "Tell me your goal, I figure out the rest" is only trustworthy if the
+			// figuring is visible: the footer carries what this turn routed to, how
+			// hard it was told to think, and what it was classified as.
+			//
+			// `installed` is the model Pi was *given*, which is not always the one the
+			// contract asked for: an `external_harness` class has no entry in Pi's
+			// registry, or `setModel` refused it, and Pi keeps running the session
+			// model. Naming the contract's choice there would report a route that did
+			// not happen — the one failure this line exists to prevent. The session's
+			// *actual* model is `ctx.model`; `sessionModelFor(config)` was a second
+			// guess at it from the config, and disagreed whenever the user had
+			// switched models by hand.
+			if (context.contract) {
+				const running = owns || installed !== undefined ? undefined : ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "pi's own model";
+				ctx.ui.setStatus(
+					LEANPI_STATUS_KEY,
+					statusLine({
+						config,
+						contract: context.contract,
+						lane: owns ? "executor" : "pi_loop",
+						...(running === undefined ? {} : { model: running }),
+						...(effort === undefined ? {} : { effort }),
+						prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
+					}),
+				);
+			}
+			// Pi's blanket catalog, for any entry that still assembles one: the
+			// `leanpi` launcher passes `--no-skills` and `createLeanPiSession` sets
+			// `skillsOverride`, but a user running `pi --extension` by hand gets Pi's
+			// discovery, and that is 82,343 bytes of the system prompt of every
+			// request (~20.6k tokens) duplicating disclosure LeanPi already did.
+			const systemPrompt = withoutSkillCatalog(event.systemPrompt);
+			if (context.contract) {
+				// The record is written at `agent_end`, not here: with Pi's own loop as
+				// the executor this handler returns *before* the loop spends anything, so
+				// emitting now would write a zeroed row for every native turn. The holder
+				// keeps the run open until the loop reports what it used.
+				pendingRun = { collector, context };
+			} else {
+				setLaneCollector(undefined);
+			}
+			return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
+		} catch (error) {
+			// A compile or routing failure must not leave the progress status up:
+			// clear it and let the error reach Pi.
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
 			setLaneCollector(undefined);
+			throw error;
 		}
-		return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
 	});
 
 	// PRD-015's sink for the path Pi itself drives: one call per assistant message

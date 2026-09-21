@@ -206,13 +206,22 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			"--",
 			prompt,
 		],
-		parse: (stdout) =>
-			parseEnvelope(stdout, {
+		parse: (stdout) => {
+			const envelope = parseEnvelope(stdout, {
 				session: ["session_id", "sessionId"],
 				text: ["result", "summary"],
 				structured: ["structured_output", "structuredOutput", "structured"],
 				error: ["error", "error_message"],
-			}),
+			});
+			// A failed request is `{ is_error: true, result: "<actual message>" }`.
+			// That message is the real diagnostic; the `unrecognized_model` line on
+			// stderr is a non-fatal warning and must not stand in for it.
+			const single = parseObject(stdout.trim());
+			if (envelope.error === undefined && single?.is_error === true) {
+				envelope.error = firstString(single, ["result", "error"]);
+			}
+			return envelope;
+		},
 		limitSignal: (_exitCode, stderr, stdout) => matchLimit(`${stderr}\n${stdout}`, LIMIT_PATTERN),
 	},
 	codex: {

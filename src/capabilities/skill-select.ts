@@ -38,6 +38,8 @@ export interface SelectSkillsInput {
 	 * passes one to assert what was read.
 	 */
 	loadBody?: (record: SkillRecord) => string;
+	/** The per-turn budget's signal, threaded into the site's `ask`. */
+	signal?: AbortSignal;
 }
 
 export interface SelectSkillsResult {
@@ -121,6 +123,7 @@ function fitQuestions(records: SkillRecord[]): JevQuestion[] {
 export async function selectSkills(input: SelectSkillsInput): Promise<SelectSkillsResult> {
 	registerSkillSite();
 	const { records, control, request, config, client } = input;
+	const options = { signal: input.signal };
 	const maxLoaded = input.topK ?? config.skills.maxLoaded;
 	const loadBody = input.loadBody ?? loadSkillBody;
 
@@ -157,10 +160,15 @@ export async function selectSkills(input: SelectSkillsInput): Promise<SelectSkil
 		const before = client.fallbackCount();
 		let results: JevResult[] | undefined;
 		try {
-			results = await client.ask(SKILL_SITE_ID, relevanceQuestions(candidates), {
-				request,
-				registry: candidates.map((record) => `${record.name}: ${record.description.slice(0, 120)}`),
-			});
+			results = await client.ask(
+				SKILL_SITE_ID,
+				relevanceQuestions(candidates),
+				{
+					request,
+					registry: candidates.map((record) => `${record.name}: ${record.description.slice(0, 120)}`),
+				},
+				options,
+			);
 		} catch {
 			results = undefined;
 		}
@@ -186,7 +194,7 @@ export async function selectSkills(input: SelectSkillsInput): Promise<SelectSkil
 			const beforeFit = client.fallbackCount();
 			let fit: JevResult[] | undefined;
 			try {
-				fit = await client.ask(SKILL_SITE_ID, fitQuestions(topK), { request });
+				fit = await client.ask(SKILL_SITE_ID, fitQuestions(topK), { request }, options);
 			} catch {
 				fit = undefined;
 			}

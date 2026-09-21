@@ -7,11 +7,12 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as ChildProcessModule from "node:child_process";
-import { lspProcessStats, lspSelectionOf, lspTelemetryOf, lspToolsForTurn } from "../../src/lsp/index.js";
-import type { ExecutionContract } from "../../src/index.js";
+import { createJevAsker, lspProcessStats, lspSelectionOf, lspTelemetryOf, lspToolsForTurn, selectLspMode } from "../../src/lsp/index.js";
+import { createJevClient, loadConfig, type ExecutionContract, type LeanPiConfig } from "../../src/index.js";
 import { verifyTask } from "../../src/verify/index.js";
+import { tempDir } from "../helpers/fixtures.js";
 import { typedAnswers, type StubJevResponder } from "../helpers/stub-jev.js";
-import { harness, lintOnlyRepo, onSystemPath, taskPacket, tsRepo, type LspHarness } from "./harness.js";
+import { harness, lintOnlyRepo, onSystemPath, STUB_MODEL, taskPacket, tsRepo, type LspHarness } from "./harness.js";
 
 /** Every process this file's code tried to start, so "zero spawns" is measured. */
 const spawnCalls: string[] = [];
@@ -197,5 +198,46 @@ describe("PRD-018 Phase 1 — deterministic mode selection", () => {
 			{ site_id: "lsp.usefulness", answer: "LSP_OFF", confidence: 0, fallback_used: true, tokens: { inputTokens: 0, outputTokens: 0 } },
 		]);
 		expect(fallenBack.capabilities.lsp).toBe(false);
+	});
+});
+
+describe("the lsp.usefulness ask is bounded by the caller's compile budget (PRD-029)", () => {
+	it("aborting the budget resolves the site's fallback instead of waiting on a hanging transport", async () => {
+		const cwd = tempDir("leanpi-lsp-budget-");
+		const config = loadConfig(cwd, {
+			configPath: null,
+			backends: { local: { type: "native", baseUrl: "http://127.0.0.1:1/v1" } },
+			models: { balanced: { backend: "local", model: STUB_MODEL } },
+			jev: { endpoint: "http://127.0.0.1:1/v1/systemone", apiKey: "test-key", model: "jev-latest", mode: "enabled" },
+		} as Partial<LeanPiConfig>);
+		const client = createJevClient({ config, cwd, transport: () => new Promise(() => {}) });
+		const controller = new AbortController();
+		const pending = createJevAsker(client).choose(
+			{ taskType: "task", taskSummary: "x", changedLanguages: ["typescript"], candidates: ["LSP_OFF", "LSP_DIAGNOSTICS", "LSP_NAVIGATION"] },
+			controller.signal,
+		);
+		controller.abort();
+		expect(await pending).toBeNull();
+	});
+
+	it("selectLspMode forwards the signal to the asker", async () => {
+		const controller = new AbortController();
+		let seen: AbortSignal | undefined;
+		const selection = await selectLspMode({
+			configMode: "auto",
+			changedLanguages: ["typescript"],
+			availableServers: ["typescript"],
+			taskType: "task",
+			signal: controller.signal,
+			asker: {
+				choose: async (_context, signal) => {
+					seen = signal;
+					return null;
+				},
+			},
+		});
+		expect(seen).toBe(controller.signal);
+		expect(selection.mode).toBe("LSP_OFF");
+		expect(selection.fallbackUsed).toBe(true);
 	});
 });

@@ -137,24 +137,37 @@ function dispatchFor(prdRequired: boolean): "prd_lane" | "executor_lane" {
 
 export type NextStage = ReturnType<typeof dispatchFor>;
 
+/** The compile's one wall-clock budget, threaded into every site's `ask`. */
+export interface CompileOptions {
+	/** The turn's per-turn budget; aborting it resolves each site to its fallback. */
+	signal?: AbortSignal;
+}
+
 export async function compileTask(
 	request: string,
 	packet: TaskPacket,
 	deviations: DeviationInput[] = [],
+	options: CompileOptions = {},
 ): Promise<ExecutionContract> {
 	const active = context;
 	const client = active?.client ?? unavailable;
 	const config = active?.config ?? fallbackConfig();
 	const state = createTaskState();
+	const ask = { signal: options.signal };
 
-	const gate = await runGate({ client, request, packet, config });
+	// Sites run in dependency order and strictly one at a time. The client's
+	// `fallbackCount` and `lastUsage` are shared per-client state: overlapping asks
+	// let one site's fallback flip a sibling to heuristics and attribute another
+	// site's tokens to it, so concurrency would change the contract. The per-turn
+	// budget threads through the options; it does not make the sites parallel.
+	const gate = await runGate({ client, request, packet, config, options: ask });
 	// PRD-016's session pins decide the gate outcome and the two classes; the
 	// classifier and the §14 matrix stay the source of every unpinned value.
 	const pins = routePins();
 	const decision = pinnedDecision(gate.decision, pins);
-	const complexity = await classifyExecution({ client, request, packet, config });
-	const capability = await deriveRequiredCapability({ client, request, packet, config, band: complexity.band });
-	const risk = await classifyReviewRisk({ client, request, packet, elevateReview: gate.elevateReview });
+	const complexity = await classifyExecution({ client, request, packet, config, options: ask });
+	const capability = await deriveRequiredCapability({ client, request, packet, config, band: complexity.band, options: ask });
+	const risk = await classifyReviewRisk({ client, request, packet, elevateReview: gate.elevateReview, options: ask });
 
 	const defaults = matrixDefault(decision === "PRD_REQUIRED", complexity.complexity, risk.review_risk);
 	const { routing: classified, deviation } = applyDeviations(defaults, deviations);
@@ -217,8 +230,9 @@ export async function compileTask(
 	};
 
 	// Providers fill the declared slots; with none registered the defaults stand.
+	// They run one at a time for the same shared-state reason as the sites above.
 	for (const provider of providers) {
-		const value = await provider.supply(contract, packet);
+		const value = await provider.supply(contract, packet, { signal: options.signal });
 		if (value === undefined) continue;
 		contract.capabilities = { ...contract.capabilities, [provider.kind]: value } as CapabilitySlots;
 	}

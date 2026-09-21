@@ -83,7 +83,8 @@ export function compilerLane(deps: TurnLaneDeps): Lane {
 			// rather than discovered by spending an attempt on it. Detection is two
 			// file questions per backend, so it costs nothing on the turn that routes.
 			const deviations = subscriptionDeviations(deps.config, detectSubscriptions(deps.config, deps.env ? { env: deps.env } : {}));
-			context.contract = await compileTask(turn.text, packet, deviations);
+			const signal = context.budget;
+			context.contract = await compileTask(turn.text, packet, deviations, signal ? { signal } : {});
 		},
 	};
 }
@@ -144,7 +145,7 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 			if (!contract || deps.execute === false) return;
 			// PRD-023's pre-generation hook: the governor picks the files that enter
 			// the executor's context, and the excerpts travel on the packet below.
-			context.exploration = await exploreContext(deps, turn.text, context.packet);
+			context.exploration = await exploreContext(deps, turn.text, context.packet, context.budget);
 			// PRD-012's dispatch: the compiler's `next_stage` is the decision, and the
 			// lane is opened only when it says `prd_lane` — `openPrdLane` reads the
 			// record before its dynamic import, so the quick path never loads the PRD
@@ -262,7 +263,7 @@ export function executorLane(deps: TurnLaneDeps): Lane {
  * governor needs a packet to seed from and PRD-014's store to reference dropped
  * content, and the compiler lane only runs before the executor.
  */
-async function exploreContext(deps: TurnLaneDeps, objective: string, packet: TurnContext["packet"]): Promise<ContextSelection | undefined> {
+async function exploreContext(deps: TurnLaneDeps, objective: string, packet: TurnContext["packet"], signal?: AbortSignal): Promise<ContextSelection | undefined> {
 	if (!packet || !deps.artifacts) return undefined;
 	const result = await explore(
 		{ objective, packet },
@@ -271,6 +272,7 @@ async function exploreContext(deps: TurnLaneDeps, objective: string, packet: Tur
 			artifacts: deps.artifacts,
 			config: deps.config,
 			...(deps.jev ? { jev: deps.jev } : {}),
+			...(signal ? { signal } : {}),
 		},
 	);
 	return { files: result.files, snippets: result.snippets, bytes: result.bytes };
