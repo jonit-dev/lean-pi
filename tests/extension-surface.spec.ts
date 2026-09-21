@@ -29,17 +29,20 @@ function fakePi(): {
 	handlers: Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>;
 	notices: string[];
 	statuses: Array<string | undefined>;
+	newSessions: unknown[];
 	ctx: Record<string, unknown>;
 } {
 	const commands = new Map<string, Registered>();
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
 	const notices: string[] = [];
 	const statuses: Array<string | undefined> = [];
+	const newSessions: unknown[] = [];
 	return {
 		commands,
 		handlers,
 		notices,
 		statuses,
+		newSessions,
 		pi: {
 			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, handler),
 			registerTool: () => {},
@@ -54,6 +57,10 @@ function fakePi(): {
 			sessionManager: { getSessionId: () => "pi-session" },
 			getContextUsage: () => ({ tokens: 1234, contextWindow: 200_000, percent: 1 }),
 			modelRegistry: { find: () => undefined },
+			newSession: async (options?: unknown) => {
+				newSessions.push(options);
+				return { cancelled: false };
+			},
 			ui: {
 				notify: (message: string) => notices.push(message),
 				setStatus: (_key: string, text: string | undefined) => statuses.push(text),
@@ -127,6 +134,22 @@ describe("LeanPi's commands reach Pi", () => {
 		// would delete Pi's LLM compaction. LeanPi's is a different operation.
 		expect(commands.has("compact")).toBe(false);
 		expect(commands.has("compact-refs")).toBe(true);
+		clearLanes();
+	});
+
+	it("'/clear' runs Pi's own new-session action, the same one '/new' runs", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, commands, newSessions, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+
+		// The alias is a Pi session action, not a LeanPi registry command: it
+		// must not appear in LeanPi's `/help` (it delegates to `ctx.newSession()`
+		// instead of re-implementing the reset), and it must not shadow a Pi
+		// built-in. `/clear` is free, so Pi's own `/new` keeps working.
+		expect(commands.has("clear")).toBe(true);
+		await commands.get("clear")?.handler("", ctx);
+		expect(newSessions).toHaveLength(1);
 		clearLanes();
 	});
 });

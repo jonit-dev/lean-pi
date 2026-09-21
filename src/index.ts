@@ -379,6 +379,25 @@ function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string
 	}
 }
 
+/**
+ * `/clear` is the word users reach for when they mean `/new`. Pi ships the
+ * session replacement under `/new` but not the alias, so this calls Pi's own
+ * `ctx.newSession()` — the same runtime call `/new` makes — rather than a
+ * weaker re-implementation. It is registered straight onto Pi and stays out of
+ * LeanPi's registry on purpose: `/help` lists LeanPi's surface, this is Pi's
+ * session action.
+ */
+function registerClearAlias(pi: ExtensionAPI): void {
+	pi.registerCommand("clear", {
+		description: "Start a new session (same as /new)",
+		handler: async (_args, ctx) => {
+			// Terminal: after replacement the old `ctx` is stale, so the handler
+			// must not touch it again (Pi's session-replacement footgun).
+			await ctx.newSession();
+		},
+	});
+}
+
 export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanPiActivation {
 	// Pi's extension API has no cwd at load time, so the loader-driven path
 	// resolves it from the process. `LEANPI_CWD` is the documented override for
@@ -877,6 +896,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// message would enter the LLM context and every later request in the session
 	// would carry the output of every command the user ran.
 	bridgeCommands(pi, commands, cwd);
+	registerClearAlias(pi);
 
 	return {
 		name: LEANPI_EXTENSION_NAME,
