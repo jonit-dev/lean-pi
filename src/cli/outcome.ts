@@ -9,6 +9,7 @@
  * ran, and it is deliberately the *claim plus its evidence*: the decision, the
  * verifiers that produced it, and what remains unproved.
  */
+import type { VerifyAndGateResult } from "../commands/verify.js";
 import type { TurnContext } from "../commands/session.js";
 import { aggregate } from "../verify/aggregate.js";
 
@@ -59,5 +60,25 @@ export function renderTurnOutcome(context: TurnContext): string {
 	for (const criterion of unproved) lines.push(`unproved ${criterion.id}: ${criterion.decision} — ${criterion.reasons.join("; ")}`);
 
 	if (context.goal?.decision === "stop") lines.push(`goal: ${context.goal.stop} — ${context.goal.reason}`);
+	return lines.join("\n");
+}
+
+/**
+ * The same report for the turn Pi's own loop ran.
+ *
+ * There is no executor outcome on that path — the loop *is* the executor — so
+ * the claim is the gate's decision and the evidence is what the verifiers wrote.
+ * Rendered only for a turn that changed the workspace, which is the only kind
+ * that runs them.
+ */
+export function renderProofOutcome(gated: VerifyAndGateResult): string {
+	const { verification, proof } = gated;
+	const lines = [`LeanPi: ${proof.decision === "PASS" ? "changes proved" : `changes unproved — proof ${proof.decision}`}`];
+	lines.push(
+		`verification: ${verification.status}${verification.commands.length > 0 ? ` — ${verification.commands.join(" · ")}` : " — no verifier matched this task"}`,
+	);
+	for (const criterion of proof.criteria.filter((entry) => entry.decision !== "PASS")) {
+		lines.push(`unproved ${criterion.id}: ${criterion.decision} — ${criterion.reasons.join("; ")}`);
+	}
 	return lines.join("\n");
 }

@@ -40,6 +40,11 @@ export function setLaneCollector(collector: RunCollector | undefined): void {
 	currentCollector = collector;
 }
 
+/** The run in flight, for the session-scoped sinks that bill it — PRD-002's ledger among them. */
+export function laneCollector(): RunCollector | undefined {
+	return currentCollector;
+}
+
 export interface TurnLaneDeps {
 	cwd: string;
 	config: LeanPiConfig;
@@ -235,26 +240,40 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 						}
 					: {}),
 			});
-			// PRD-013's boundary, after the executor's work: a session with no active
-			// goal pays nothing, and one with a goal gets the stop condition decided
-			// from the evidence this turn actually produced.
-			const goals = createGoalStore(deps.cwd);
-			const goal = goals.load();
-			if (goal?.active && context.executor) {
-				context.goal = await evaluateGoal(goal, {
-					workspaceHash: workspaceHash(deps.cwd, context.executor.changedFiles),
-					records: context.executor.evidence,
-					config: deps.config,
-					cwd: deps.cwd,
-					...(deps.jev ? { jev: deps.jev } : {}),
-					...(deps.sessionId ? { sessionId: deps.sessionId } : {}),
-					...(deps.todos ? { todos: { remainingWork: () => remainingWork(itemsOf(deps.todos!)) } } : {}),
-					prd: prdGoalSource(() => readPrdState(deps.cwd)),
-					goals,
-				});
-			}
+			// PRD-013's boundary, after the executor's work.
+			await settleGoal(context, deps);
 		},
 	};
+}
+
+/**
+ * PRD-013's boundary for one finished turn: a session with no active goal pays
+ * nothing, and one with a goal gets the stop condition decided from the evidence
+ * the turn actually produced.
+ *
+ * Both executors call it. It used to live inside the executor lane's body, which
+ * a native configuration never registers — so on that path `turns_used` stayed 0
+ * for the life of the session and `max_turns` could not trip, no matter how many
+ * turns the loop took. The goal's caps are the only thing bounding an unattended
+ * session; a cap that cannot be reached is not a cap.
+ */
+export async function settleGoal(context: TurnContext, deps: TurnLaneDeps): Promise<void> {
+	const goals = createGoalStore(deps.cwd);
+	const goal = goals.load();
+	if (!goal?.active) return;
+	context.goal = await evaluateGoal(goal, {
+		// Pi's loop reports no changed-file list of its own, so the hash covers
+		// git's dirty set alone — which is what the loop's edits land in anyway.
+		workspaceHash: workspaceHash(deps.cwd, context.executor?.changedFiles ?? []),
+		records: context.executor?.evidence ?? [],
+		config: deps.config,
+		cwd: deps.cwd,
+		...(deps.jev ? { jev: deps.jev } : {}),
+		...(deps.sessionId ? { sessionId: deps.sessionId } : {}),
+		...(deps.todos ? { todos: { remainingWork: () => remainingWork(itemsOf(deps.todos!)) } } : {}),
+		prd: prdGoalSource(() => readPrdState(deps.cwd)),
+		goals,
+	});
 }
 
 /**

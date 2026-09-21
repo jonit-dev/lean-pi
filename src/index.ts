@@ -36,9 +36,10 @@ import { registerCostCommand } from "./telemetry/index.js";
 import { registerMcpCommand, registerMcpDisclosure } from "./mcp/index.js";
 import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS } from "./commands/index.js";
 import { registerRuntimeVerifiers } from "./runtime/index.js";
-import { ownsExecutionLoop, registerTurnLanesIfOwned, setLaneCollector } from "./commands/turn-lanes.js";
+import { laneCollector, ownsExecutionLoop, registerTurnLanesIfOwned, setLaneCollector, settleGoal, type TurnLaneDeps } from "./commands/turn-lanes.js";
 import type { ExecutionContract } from "./compiler/contract.js";
 import {
+	billingDecisionLog,
 	callsFromMessages,
 	createRunCollector,
 	emitRunTelemetry,
@@ -65,10 +66,11 @@ import { defaultSkillRoots, scanSkills, createSkillControl, withoutSkillCatalog,
 import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
-import { registerVerifyCommand } from "./commands/verify.js";
+import { registerVerifyCommand, verifyAndGate } from "./commands/verify.js";
+import { workspaceHash } from "./verify/hash.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
-import { renderTurnOutcome } from "./cli/outcome.js";
+import { renderProofOutcome, renderTurnOutcome } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
@@ -253,11 +255,17 @@ function installToolOutputPipeline(
 function verdictOf(context: TurnContext): RunVerdict {
 	const executor = context.executor;
 	const review = executor?.review;
+	// A native turn has no executor outcome — Pi's loop is the executor — so its
+	// evidence is whatever the turn verified for itself, and "completed" is the
+	// gate having run at all. A turn that changed nothing verifies nothing and is
+	// no one's verified success; saying otherwise is the claim this record exists
+	// to refuse.
+	const records = executor?.evidence ?? context.verification;
 	return {
-		verification: executor ? aggregate(executor.evidence) : "not_run",
+		verification: records ? aggregate(records) : "not_run",
 		proof_gate: context.proof?.decision ?? "not_run",
 		reviewer: review === undefined || review.skipped ? "not_run" : (review.verdict?.decision ?? "not_run"),
-		success: executor?.status === "completed" && (context.proof === undefined || context.proof.decision === "PASS"),
+		success: (executor ? executor.status === "completed" : context.proof !== undefined) && context.proof?.decision === "PASS",
 	};
 }
 
@@ -437,7 +445,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	const jev = createJevClient({
 		config,
 		cwd,
-		log: createDecisionLog(decisionLogPath(cwd)),
+		// PRD-002's ledger, wired to PRD-015's record: every site's row is the
+		// control plane's own spend, and until this the record beside it reported
+		// `jev_tokens: 0` while the ledger held every token.
+		log: billingDecisionLog(createDecisionLog(decisionLogPath(cwd)), laneCollector),
 		env,
 		...(options.jevTransport ? { transport: options.jevTransport } : {}),
 	});
@@ -558,7 +569,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// The run that is still open: a compiled turn's collector and context, held from
 	// `before_agent_start` until `agent_end` reports what the loop spent.
-	let pendingRun: { collector: RunCollector; context: TurnContext } | undefined;
+	let pendingRun: { collector: RunCollector; context: TurnContext; hashBefore: string } | undefined;
 
 	// The per-turn fan-in: lanes write the turn's compiled state onto the context,
 	// the entry points hand it back here, and the command surfaces, the working
@@ -583,7 +594,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// The compiler → executor chain (PRD-004 → PRD-007): the compiler lane puts a
 	// contract on the turn context and the executor lane is its only consumer.
-	registerTurnLanesIfOwned({
+	const laneDeps: TurnLaneDeps = {
 		cwd,
 		config,
 		jev,
@@ -592,7 +603,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		sessionId: manager.getSessionId(),
 		skills: { records: scan, control: skillControl },
 		env,
-	});
+	};
+	registerTurnLanesIfOwned(laneDeps);
 
 	const declinedFor = credentialsPath(env);
 	registerJevCommands(commands, {
@@ -793,7 +805,12 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			// the executor this handler returns *before* the loop spends anything, so
 			// emitting now would write a zeroed row for every native turn. The holder
 			// keeps the run open until the loop reports what it used.
-			pendingRun = { collector, context };
+			// The workspace as the loop found it. Comparing it with the workspace the
+			// loop leaves behind is what decides whether this turn owes evidence:
+			// `workspaceHash` is git's dirty set plus a hash of those files, so the
+			// check costs one `git status` and answers exactly the question the
+			// `/verify` command used to put to the user.
+			pendingRun = { collector, context, hashBefore: workspaceHash(cwd) };
 		} else {
 			setLaneCollector(undefined);
 		}
@@ -802,19 +819,40 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// PRD-015's sink for the path Pi itself drives: one call per assistant message
 	// the loop produced, plus the tool calls it made, then exactly one record.
-	pi.on("agent_end", (event) => {
+	pi.on("agent_end", async (event, ctx) => {
 		const run = pendingRun;
 		pendingRun = undefined;
-		setLaneCollector(undefined);
-		if (!run) return;
+		if (!run) {
+			setLaneCollector(undefined);
+			return;
+		}
 		const spend = callsFromMessages(event.messages, run.context.modelRef);
 		for (const call of spend.calls) run.collector.add(call);
 		run.collector.noteToolCall(spend.toolCalls);
+		// PRD-009's verification and PRD-010's gate, for the path that never ran
+		// them. "Did this turn change the workspace" is the whole condition: a turn
+		// that answered a question owes no evidence and spends no test command, and
+		// a turn that edited a file is held to the same gate the executor lane's
+		// turns are held to — without the user having to know there was a choice.
+		if (run.context.contract && workspaceHash(cwd) !== run.hashBefore) {
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, "LeanPi: verifying what this turn changed");
+			const gated = await verifyAndGate(run.context.contract, { cwd, config, artifacts, jev });
+			run.context.verification = gated.verification.records;
+			run.context.proof = gated.proof;
+			observeTurn(run.context);
+			// The gate's own words, not a badge: an unproved criterion says which one
+			// and why, because that is what the next turn has to act on.
+			ctx.ui.notify(renderProofOutcome(gated), gated.proof.decision === "PASS" ? "info" : "error");
+		}
 		emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdictOf(run.context), {
 			cwd,
 			cost: resolveCostConfig(config),
 			...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
 		});
+		setLaneCollector(undefined);
+		// PRD-013's boundary closes the native turn too: Pi's loop is the executor
+		// here, so its turn is the one `max_turns` has to count.
+		await settleGoal(run.context, laneDeps);
 	});
 
 	// The bridge PRD-016 was missing. Every command above registered into
@@ -1103,7 +1141,7 @@ export {
 	withoutSkillCatalog,
 } from "./capabilities/skills.js";
 export type { ScanOptions, ScanStats, SkillControl, SkillRecord, SkillRoot, SkillStateEntry, SourceClass } from "./capabilities/skills.js";
-export { lexicalSelect, registerSkillSite, selectSkills, SKILL_SITE_ID, DEFAULT_TOP_K } from "./capabilities/skill-select.js";
+export { lexicalSelect, registerSkillSite, selectSkills, SKILL_RANK_LIMIT, SKILL_SITE_ID, DEFAULT_TOP_K } from "./capabilities/skill-select.js";
 export type { SelectSkillsInput, SelectSkillsResult, SkillDisclosureDecision } from "./capabilities/skill-select.js";
 export { registerSkillsCommands } from "./commands/skills.js";
 export { bundledRoot, BundledIntegrityError, clearPackCache, isBundledPath, packEntries, packLock, packVersion, verifyBundledFile, type PackEntry, type PackFile, type PackLock } from "./skills/pack.js";

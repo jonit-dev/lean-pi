@@ -5,10 +5,14 @@
  * On a native backend Pi's own loop is the executor (§23), so LeanPi's executor
  * lane — and with it PRD-009's verification and PRD-010's gate — never runs.
  * Every claim of done on that path was therefore the model's word, which is the
- * one thing this harness exists not to ship. Running the gate automatically
- * after each native turn would spend the project's test command on every
- * "explain this function", so it is a command: the user asks for evidence when
- * a claim matters, and the footer says when a turn has none.
+ * one thing this harness exists not to ship.
+ *
+ * `verifyAndGate` is what the native turn now runs by itself, and the choice
+ * that used to make this a command is made from the workspace instead of from
+ * the user: a turn that edited nothing has nothing to prove and pays nothing, a
+ * turn that changed a file is verified without being asked. The command stays
+ * for the other direction — proving the workspace on demand, mid-session, when
+ * no turn just changed it.
  *
  * It regenerates nothing. It runs the contract's verifiers, gates their records
  * and reports — so a `PASS` here is the same decision the executor lane's turns
@@ -33,10 +37,13 @@ export interface VerifyCommandDeps {
 	jev?: Pick<JevClient, "ask" | "fallbackCount">;
 }
 
-export async function runVerifyCommand(deps: VerifyCommandDeps): Promise<CommandResult> {
-	const contract = deps.contract();
-	if (!contract) return { ok: false, text: "nothing to verify: no task has been compiled in this session yet" };
+export interface VerifyAndGateResult {
+	verification: Awaited<ReturnType<typeof verifyTask>>;
+	proof: Awaited<ReturnType<typeof evaluateProofGate>>;
+}
 
+/** The contract's verifiers, then PRD-010's gate over exactly the records they wrote. */
+export async function verifyAndGate(contract: ExecutionContract, deps: Omit<VerifyCommandDeps, "contract">): Promise<VerifyAndGateResult> {
 	const store = new EvidenceStore();
 	const verification = await verifyTask(contract, deps.cwd, {
 		store,
@@ -61,6 +68,14 @@ export async function runVerifyCommand(deps: VerifyCommandDeps): Promise<Command
 			...(deps.jev ? { jev: deps.jev } : {}),
 		},
 	);
+
+	return { verification, proof };
+}
+
+export async function runVerifyCommand(deps: VerifyCommandDeps): Promise<CommandResult> {
+	const contract = deps.contract();
+	if (!contract) return { ok: false, text: "nothing to verify: no task has been compiled in this session yet" };
+	const { verification, proof } = await verifyAndGate(contract, deps);
 
 	// Verdict first: the caller renders a non-`PASS` result as an error, and a
 	// line that opened with `verification: pass` read as a contradiction.
