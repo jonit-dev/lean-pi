@@ -10,10 +10,11 @@
  *    failing with "no model roles configured".
  * 2. **Is the control plane there?** LeanPi's whole thesis is that a cheap
  *    semantic layer decides what a task needs (ROADMAP §4). Without a JEV
- *    credential every site falls back to a heuristic, which is a different
- *    product — one this repository has measured and does not silently ship. So
- *    a missing key stops the run and says how to fix it, and `--no-jev` is the
- *    explicit way to ask for the degraded harness anyway.
+ *    credential every site falls back to a deterministic heuristic — the
+ *    harness still runs, it just routes worse and spends more tokens per task.
+ *    So a missing key is a warning, not a refusal: the operator gets a working
+ *    session and is told what it is. `--no-jev` and `jev.mode: disabled` are
+ *    deliberate opt-outs and earn no warning at all.
  */
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -283,13 +284,6 @@ export async function autoConfigure(
 	};
 }
 
-export class MissingJevKeyError extends Error {
-	constructor(readonly detail: string) {
-		super(detail);
-		this.name = "MissingJevKeyError";
-	}
-}
-
 export interface JevCheck {
 	/** How the key was found, for the startup line. */
 	source: string;
@@ -297,13 +291,14 @@ export interface JevCheck {
 }
 
 /**
- * Refuse to start without the control plane, unless asked to.
+ * Resolve the control plane without demanding it.
  *
  * A LeanPi with no JEV key still runs — every site has a deterministic fallback
  * — but it is not the product the numbers describe: the classification, the
- * disclosure ranking and the proof sufficiency are all heuristics then. Starting
- * it silently is how a harness ends up measured for months with its control
- * plane switched off, which is exactly what happened in this repository.
+ * disclosure ranking and the proof sufficiency are all heuristics then. That is
+ * worth saying, not worth refusing, so a missing key reports `not configured`
+ * and the startup path warns. `--no-jev` and `jev.mode: disabled` are deliberate
+ * opt-outs: the operator already answered the question, so neither warns.
  */
 export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boolean; setKey?: string } = {}): JevCheck {
 	const { cwd, env, home } = environment(options);
@@ -323,20 +318,24 @@ export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boo
 	const credential = resolveCredential(config, { ...env, HOME: home }, cwd);
 	if (credential.key !== null) return { source: describeCredential(credential) };
 	if (options.allowMissing === true) return { source: "not configured (--no-jev)" };
-	throw new MissingJevKeyError(
-		[
-			"LeanPi needs a JEV key: its task compiler, skill disclosure and proof gate are JEV decisions,",
-			"and without one every site falls back to a heuristic — a different harness than the measured one.",
-			"",
-			"Configure it in any of these ways:",
-			`  leanpi --jev-key <key>      store it for this machine (${join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "leanpi", "credentials.json")}, mode 0600)`,
-			"  export JEV_API_KEY=<key>    for this shell",
-			"  echo 'JEV_API_KEY=<key>' >> .env    for this project (read, never exported)",
-			"",
-			"Or run the degraded harness deliberately:",
-			"  leanpi --no-jev",
-		].join("\n"),
-	);
+	return { source: "not configured" };
+}
+
+/**
+ * What to say when JEV is missing and the operator did not opt out.
+ *
+ * One copy of the text, read by both `bin/leanpi.js` (printed under the banner)
+ * and the extension's `session_start` (a warning notification), so the two
+ * surfaces cannot drift. `null` means "say nothing": a resolved key, `--no-jev`
+ * or `jev.mode: disabled` are all answers, and only an unanswered question warns.
+ */
+export function jevWarning(source: string): string[] | null {
+	if (!source.startsWith("not configured") || source.includes("--no-jev")) return null;
+	return [
+		"JEV not configured — LeanPi routes on heuristics and spends more tokens per task.",
+		"  Get a key: https://typesafe.ai",
+		"  Set it:    leanpi --jev-key <key>   |   export JEV_API_KEY=<key>   |   /jev key set <key>",
+	];
 }
 
 /**

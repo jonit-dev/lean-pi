@@ -17,7 +17,7 @@ if (major < 22 || (major === 22 && minor < 19)) {
 	process.stderr.write(`leanpi needs Node >= 22.19 (running ${process.version}). With nvm: nvm use 22\n`);
 	process.exit(1);
 }
-import { autoConfigure, jevClientFor, unusableBackendKeys, MissingJevKeyError, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
+import { autoConfigure, jevClientFor, jevWarning, unusableBackendKeys, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
 import { loadConfig } from "../dist/core/config.js";
 import { isInformational, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 import { ensureGitIgnored } from "../dist/runtime/ignore.js";
@@ -33,6 +33,9 @@ try {
 }
 
 let plan;
+// Whether this process told the user JEV is unconfigured. The extension inside
+// the child must not repeat it, so the fact travels in the child's environment.
+let jevWarned = false;
 try {
 	// `--help`/`--version` print and exit: they start no session, so they neither
 	// need a control plane nor deserve a refusal.
@@ -66,6 +69,14 @@ try {
 	const config = loadConfig(process.cwd());
 	const sessionModel = sessionModelFor(config);
 	process.stderr.write(`${startupBanner(config, jev, sessionModel, { color: process.stderr.isTTY === true })}\n`);
+	// The key is optional; the cost of running without one is not. Yellow on a
+	// TTY like the banner, plain when the stream is redirected.
+	const warning = jevWarning(jev.source);
+	if (warning) {
+		const yellow = process.stderr.isTTY === true;
+		process.stderr.write(`${yellow ? "\u001b[33m" : ""}${warning.join("\n")}${yellow ? "\u001b[0m" : ""}\n`);
+		jevWarned = true;
+	}
 	// A named credential the shell does not hold *and* Pi cannot cover from its
 	// own store: the provider would answer `401 Invalid API key` and the user
 	// would read it as a verdict on the key they just configured. When `pi auth`
@@ -76,10 +87,6 @@ try {
 	plan = launchPlan(flags.rest, undefined, sessionModel, flags.ui);
 	}
 } catch (error) {
-	if (error instanceof MissingJevKeyError) {
-		process.stderr.write(`${error.message}\n`);
-		process.exit(2);
-	}
 	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
 	process.exit(1);
 }
@@ -93,6 +100,7 @@ const child = spawn(process.execPath, [plan.cli, ...plan.args], {
 	env: {
 		...process.env,
 		...(flags.allowMissingJev ? { LEANPI_NO_JEV: "1" } : {}),
+		...(jevWarned ? { LEANPI_JEV_WARNED: "1" } : {}),
 		...(flags.safety === undefined ? {} : { LEANPI_SAFETY: flags.safety }),
 	},
 });

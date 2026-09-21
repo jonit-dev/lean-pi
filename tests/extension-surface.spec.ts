@@ -28,6 +28,7 @@ function fakePi(): {
 	commands: Map<string, Registered>;
 	handlers: Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>;
 	notices: string[];
+	inputs: string[];
 	statuses: Array<string | undefined>;
 	newSessions: unknown[];
 	ctx: Record<string, unknown>;
@@ -35,12 +36,14 @@ function fakePi(): {
 	const commands = new Map<string, Registered>();
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
 	const notices: string[] = [];
+	const inputs: string[] = [];
 	const statuses: Array<string | undefined> = [];
 	const newSessions: unknown[] = [];
 	return {
 		commands,
 		handlers,
 		notices,
+		inputs,
 		statuses,
 		newSessions,
 		pi: {
@@ -64,7 +67,10 @@ function fakePi(): {
 			ui: {
 				notify: (message: string) => notices.push(message),
 				setStatus: (_key: string, text: string | undefined) => statuses.push(text),
-				input: async () => undefined,
+				input: async (prompt: string) => {
+					inputs.push(prompt);
+					return undefined;
+				},
 			},
 		},
 	};
@@ -198,6 +204,37 @@ describe("--no-jev", () => {
 		// The flag used to only tolerate a missing key: with one present every
 		// site still called the control plane and the flag bought nothing.
 		expect(activation.jev.getMode()).toBe("disabled");
+		clearLanes();
+	});
+});
+
+describe("the JEV warning at session start", () => {
+	const ENABLED = NATIVE.replace("  mode: disabled", "  mode: enabled");
+
+	it("warns once with no blocking prompt when no key is configured", async () => {
+		const { cwd, env } = project(ENABLED);
+		const { pi, handlers, notices, inputs, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+
+		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+
+		// The old first-run prompt blocked the session on a credential the
+		// harness can run without; the warning replaces it.
+		expect(inputs).toHaveLength(0);
+		expect(notices.filter((notice) => notice.includes("typesafe.ai"))).toHaveLength(1);
+		clearLanes();
+	});
+
+	it("stays silent when leanpi already warned in this run", async () => {
+		const { cwd, env } = project(ENABLED);
+		const { pi, handlers, notices, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, LEANPI_JEV_WARNED: "1" } });
+
+		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+
+		expect(notices.filter((notice) => notice.includes("typesafe.ai"))).toHaveLength(0);
 		clearLanes();
 	});
 });

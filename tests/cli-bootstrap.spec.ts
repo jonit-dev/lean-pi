@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { autoConfigure, missingBackendKeys, MissingJevKeyError, requireJev, sessionModelFor, startupBanner, unusableBackendKeys } from "../src/cli/bootstrap.js";
+import { autoConfigure, jevWarning, missingBackendKeys, requireJev, sessionModelFor, startupBanner, unusableBackendKeys } from "../src/cli/bootstrap.js";
 import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
 import { MODEL_ROLES } from "../src/core/types.js";
 import type { JevResult } from "../src/jev/types.js";
@@ -148,23 +148,32 @@ describe("first run", () => {
 	});
 });
 
-describe("the control plane is not optional", () => {
-	it("refuses to start with no JEV key, and names every way to set one", () => {
+describe("the control plane is optional, and says so", () => {
+	it("starts with no JEV key and reports it as not configured", () => {
 		const { cwd, home, env } = machine({ vendors: ["codex"] });
 
-		let thrown: unknown;
-		try {
-			requireJev({ cwd, home, env });
-		} catch (error) {
-			thrown = error;
-		}
+		expect(requireJev({ cwd, home, env }).source).toBe("not configured");
+	});
 
-		expect(thrown).toBeInstanceOf(MissingJevKeyError);
-		const message = (thrown as Error).message;
-		expect(message).toContain("--jev-key");
-		expect(message).toContain("JEV_API_KEY");
-		expect(message).toContain(".env");
-		expect(message).toContain("--no-jev");
+	it("warns with the cost and every way to set a key when none is configured", () => {
+		const warning = jevWarning("not configured");
+
+		expect(warning).not.toBeNull();
+		const text = warning?.join("\n") ?? "";
+		expect(text).toContain("spends more tokens");
+		expect(text).toContain("typesafe.ai");
+		expect(text).toContain("--jev-key");
+		expect(text).toContain("JEV_API_KEY");
+		expect(text).toContain("/jev key set");
+	});
+
+	it("stays silent when a key is resolved", () => {
+		expect(jevWarning("configured (source: credential store)")).toBeNull();
+	});
+
+	it("stays silent for the deliberate opt-outs", () => {
+		expect(jevWarning("not configured (--no-jev)")).toBeNull();
+		expect(jevWarning("disabled (jev.mode)")).toBeNull();
 	});
 
 	it("accepts the key the user configured in leanpi.config.yaml", () => {

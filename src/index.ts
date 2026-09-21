@@ -78,7 +78,8 @@ import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
 import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
 import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
-import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
+import { jevWarning } from "./cli/bootstrap.js";
+import { resolveCredential } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
@@ -664,20 +665,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		env,
 	});
 
-	const declinedFor = credentialsPath(env);
-	registerJevCommands(commands, {
-		client: jev,
-		env,
-		onDeclined: () => declined.add(declinedFor),
-		wasDeclined: () => declined.has(declinedFor),
-	});
+	registerJevCommands(commands, { client: jev, env });
 
-	// First run without a resolved key prompts exactly once; declining is a
-	// first-class path that leaves the harness working on deterministic fallback.
-	// A session that starts on a session Pi switched to (`/new`, `/resume`,
-	// `/fork`) keeps the extension but not the previous session's pins: the
-	// route overrides and the recorded contract belonged to the conversation
-	// that just went away.
+	// First run without a resolved key warns exactly once; the harness keeps
+	// running on deterministic fallback. A session that starts on a session Pi
+	// switched to (`/new`, `/resume`, `/fork`) keeps the extension but not the
+	// previous session's pins: the route overrides and the recorded contract
+	// belonged to the conversation that just went away.
 	pi.on("session_start", async (event, ctx) => {
 		if (event.reason !== "startup") {
 			surface.resetSessionState();
@@ -685,24 +679,14 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		}
 		if (!ctx.hasUI) return;
 		// Asking for a credential the session is configured never to use is the
-		// prompt equivalent of the `--no-jev` bug above.
+		// warning equivalent of the `--no-jev` bug above.
 		if (jev.getMode() === "disabled") return;
 		if (resolveCredential(config, env, cwd).key !== null) return;
-		if (declined.has(declinedFor)) return;
-		const key = await ctx.ui.input("LeanPi needs a JEV API key (leave empty to use deterministic fallback):");
-		if (!key) {
-			declined.add(declinedFor);
-			ctx.ui.notify("LeanPi: JEV left unconfigured — routing falls back to deterministic heuristics.", "warning");
-			return;
-		}
-		const validation = await jev.validateKey(key);
-		if (!validation.ok) {
-			declined.add(declinedFor);
-			ctx.ui.notify(`LeanPi: JEV key rejected (${validation.error}). Continuing on deterministic fallback.`, "error");
-			return;
-		}
-		writeStoredKey(key, env);
-		ctx.ui.notify(`LeanPi: JEV configured (model ${validation.modelVersion}).`, "info");
+		// A run launched through `leanpi` already printed these lines under the
+		// banner; the flag keeps the user from reading them twice.
+		if (env.LEANPI_JEV_WARNED === "1") return;
+		const warning = jevWarning("not configured");
+		if (warning) ctx.ui.notify(warning.join("\n"), "warning");
 	});
 
 	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
@@ -929,9 +913,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 }
 
 export default activate;
-
-/** Credential paths the user has declined this process; they are not prompted again. */
-const declined = new Set<string>();
 
 export interface CreateLeanPiSessionOptions {
 	cwd?: string;

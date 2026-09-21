@@ -66,16 +66,17 @@ LeanPi's commands are ordinary Pi slash commands: `/help` lists them, and
 `/skills`, `/mcp`, `/permissions`, `/jev`, `/todo`, `/goal`, `/review`,
 `/verify` and `/prd` are all typed into the same prompt as a task.
 
-**The JEV key is required.** The task compiler, the skill disclosure and the
-proof gate are JEV decisions; without a key every one of them falls back to a
-heuristic, which is a different harness than the measured one, so `leanpi`
-refuses to start and says how to configure it:
+**The JEV key is optional, and it pays for itself.** The task compiler, the
+skill disclosure and the proof gate are JEV decisions; with a key they route on
+what a task actually needs. Without one, every site falls back to a
+deterministic heuristic — LeanPi still runs, it just routes worse and spends
+more tokens per task, and says so on startup:
 
 ```sh
 leanpi --jev-key <key>          # stored at ~/.config/leanpi/credentials.json (0600)
 export JEV_API_KEY=<key>        # or this shell
 echo 'JEV_API_KEY=<key>' >> .env  # or this project — read, never exported
-leanpi --no-jev                 # or run the degraded harness deliberately
+leanpi --no-jev                 # or skip the control plane deliberately
 ```
 
 Tool authorization is per scope (`read`, `edit`, `shell`, `network`, `mcp`,
