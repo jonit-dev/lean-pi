@@ -22,6 +22,37 @@ export interface LaunchPlan {
 	args: string[];
 	/** The built extension the launcher attaches. */
 	extension: string;
+	/** Bundled third-party Pi extensions that were found and attached. */
+	bundled: string[];
+}
+
+/**
+ * Third-party Pi extensions LeanPi ships and attaches.
+ *
+ * Only what LeanPi does not already own, and only what Pi will actually accept.
+ * `pi-lsp`, `pi-output-limits`, `pi-mcp-adapter`, `pi-context-view` and
+ * `rpiv-todo` are deliberately absent: PRD-018's LSP tools, PRD-019's output
+ * reduction, PRD-006's MCP disclosure, `/context` and PRD-025's todo list
+ * already cover them, and a second implementation competes with the gate or the
+ * budget the first one answers to. `pi-lean-edit` is absent for a harder reason
+ * — it registers `read`, `edit` and `write`, which LeanPi already owns and puts
+ * PRD-017's permission guard in front of, so Pi refuses all three registrations
+ * and the extension loads contributing nothing.
+ *
+ * Each ships TypeScript, which Pi's loader compiles; the path is the package's
+ * own entry, not a build of ours. A package that is not installed is skipped
+ * rather than fatal — the launcher's job is to start a session.
+ */
+const BUNDLED_EXTENSIONS: readonly string[] = [
+	// Quota, balance and spend per provider — the per-session cost on the status
+	// line says what this run spent; this says what is left to spend it from.
+	// Registers no tools, so it costs nothing in the prompt.
+	join("@hk_net", "pi-usage-bars", "extensions", "usage-bars", "index.ts"),
+];
+
+/** The bundled extensions present in this installation, as absolute paths. */
+export function bundledExtensions(root: string = packageRoot()): string[] {
+	return BUNDLED_EXTENSIONS.map((entry) => join(root, "node_modules", entry)).filter((path) => existsSync(path));
 }
 
 /** This package's root, from the module's own location (`dist/cli/launch.js`). */
@@ -153,5 +184,15 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	const theme = argv.some((argument) => argument === "--theme" || argument === "--use-theme" || argument === "--no-themes")
 		? []
 		: ["--theme", join(root, "themes", "leanpi.json"), "--use-theme", "leanpi"];
-	return { cli: resolvePiCli(root), extension, args: ["--extension", extension, ...skills, ...theme, ...model, ...argv] };
+	// LeanPi's own extension first: it registers the baseline tools and the
+	// permission guard, and a bundled extension that replaces a tool name must
+	// take it from a surface that already exists.
+	const bundled = bundledExtensions(root);
+	const bundledArgs = bundled.flatMap((path) => ["--extension", path]);
+	return {
+		cli: resolvePiCli(root),
+		extension,
+		bundled,
+		args: ["--extension", extension, ...bundledArgs, ...skills, ...theme, ...model, ...argv],
+	};
 }

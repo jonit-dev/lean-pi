@@ -145,8 +145,10 @@ describe("who runs the turn", () => {
 		// `handled` is what stops Pi's own loop from answering the same prompt
 		// with a second model after LeanPi's executor already ran it.
 		expect(result).toEqual({ action: "handled" });
-		// And the user is shown LeanPi's own result rather than nothing.
-		expect(notices.some((notice) => notice.startsWith("LeanPi:"))).toBe(true);
+		// And the user is shown LeanPi's own result rather than nothing. The report
+		// leads with a verdict glyph, not the harness's own name: the user knows
+		// which harness they launched, and the line has to say how the turn went.
+		expect(notices.some((notice) => /^(✅|⚠️|❌) /.test(notice))).toBe(true);
 		clearLanes();
 	}, 30_000);
 

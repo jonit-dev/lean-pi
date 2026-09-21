@@ -372,26 +372,49 @@ export function jevClientFor(options: Partial<BootstrapEnv> = {}): JevClient {
  * the control plane is live. One screen line each, on stderr, so a piped
  * `--print` run still yields clean stdout.
  */
+/** `JEV on · credential store`, or why it is not deciding anything. */
+function jevLine(source: string): string {
+	if (source.startsWith("disabled") || source.startsWith("not configured")) {
+		return `JEV ${source} — decisions take their built-in defaults`;
+	}
+	// "configured (source: credential store)" → "credential store".
+	const inner = /\(source:\s*([^)]+)\)/.exec(source);
+	return `JEV on · ${inner ? inner[1] : source}`;
+}
+
 export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?: string): string {
 	const label = (role: ModelRole): string => {
 		const entry = config.models[role];
 		if (entry === undefined) return "—";
 		return entry.model === VENDOR_DEFAULT ? entry.backend : `${entry.backend} ${entry.model}`;
 	};
-	const roles = [`quick ${label("quick")}`, `balanced ${label("balanced")}`, `strong ${label("strong")}`];
+	// A config that points every role at one model — which is what a single-provider
+	// setup looks like — printed that model's full id six times across three lines.
+	// The repetition was the banner's whole bulk, and it said nothing: three lines
+	// of identical vendor strings read as noise scrolling past on launch.
+	const roleNames: ModelRole[] = ["quick", "balanced", "strong"];
+	const roles = roleNames.map(label);
+	const oneModel = roles.every((name) => name === roles[0]);
+	const reviewers = `${label("review_quick")} → ${label("review_strong")}`;
 	return [
 		"leanpi — tell me your goal, I figure out the rest.",
-		`  models   ${roles.join("  ·  ")}`,
-		`  review   ${label("review_quick")} → ${label("review_strong")}`,
-		`  control  JEV ${jev.source}`,
+		oneModel
+			? `  models   ${roles[0]} for every role`
+			: `  models   ${roleNames.map((role, index) => `${role} ${roles[index]}`).join("  ·  ")}`,
+		...(reviewers === `${roles[0]} → ${roles[0]}` && oneModel ? [] : [`  review   ${reviewers}`]),
+		// "control  JEV <source>" named an internal plane and left the user to guess
+		// whether the thing was on. Say what it does and whether it is doing it.
+		// `describeCredential` already parenthesises its source, so wrapping it
+		// again produced `JEV on (configured (source: credential store))`.
+		`  routing  ${jevLine(jev.source)}`,
 		// Who answers the prompt. Pi's own loop cannot dial a vendor CLI, so on a
 		// subscription-only config it runs on whatever provider Pi has — and the
 		// roles above describe the workers LeanPi spawns *inside* the turn, not
 		// the loop. Saying so is the difference between a surprising `429` from an
 		// endpoint the user never configured and an expected one.
 		sessionModel === undefined
-			? "  loop     pi's own model — the roles above are vendor CLIs LeanPi runs inside the turn (`pi auth login` gives the loop its own)"
-			: `  loop     pi runs ${sessionModel}`,
+			? "  running  pi's own model — the roles above are vendor CLIs LeanPi runs inside the turn (`pi auth login` gives the loop its own)"
+			: `  running  pi runs ${sessionModel}`,
 	].join("\n");
 }
 

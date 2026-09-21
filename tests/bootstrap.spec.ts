@@ -15,7 +15,17 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ARTIFACT_TOOL_NAME, LEANPI_VERSION, LSP_TOOL_NAMES, PACKAGE_ROOT, clearLanes, listLanes, registerLane, writeUserDefault } from "../src/index.js";
+import {
+	ARTIFACT_TOOL_NAME,
+	LEANPI_VERSION,
+	LSP_TOOL_NAMES,
+	PACKAGE_ROOT,
+	TODO_ADD_TOOL_NAME,
+	clearLanes,
+	listLanes,
+	registerLane,
+	writeUserDefault,
+} from "../src/index.js";
 import { boundedCommand, COMMAND_TIMEOUT_SECONDS_DEFAULT } from "../src/core/tools.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
@@ -98,11 +108,12 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 			expect(loaded.extensions).toHaveLength(1);
 			expect(loaded.extensions[0]!.resolvedPath).toBe(entry);
 			// Registered is not active: PRD-018's seven LSP tools are in the registry
-			// so a turn's mode can expose its group, and the session boots with the
-			// five baseline names active (asserted through `activation.tools` above
-			// and by the AC-2 turn below).
+			// so a turn's mode can expose its group, and PRD-025's `todo_add` is
+			// registered once but admits a call only when the turn's `todo.needed`
+			// answer warrants a list. The session boots with the five baseline names
+			// active (asserted through `activation.tools` above and by AC-2 below).
 			expect([...loaded.extensions[0]!.tools.keys()].sort()).toEqual(
-				["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME, ...LSP_TOOL_NAMES].sort(),
+				["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME, TODO_ADD_TOOL_NAME, ...LSP_TOOL_NAMES].sort(),
 			);
 		} finally {
 			delete process.env.LEANPI_CWD;

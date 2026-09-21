@@ -50,8 +50,18 @@ import {
 import { createArtifactStore, type ArtifactStore } from "./context/artifacts.js";
 import type { WorkingStateSources } from "./context/working-state.js";
 import { reduceToolOutput } from "./rtk/index.js";
-import { gateFromProofResult, itemsOf, registerTodoCommands, type TodoCarrier, type TodoGate } from "./todo/index.js";
-import { createGoalStore, goalTextSource, registerGoalCommands } from "./goal/index.js";
+import {
+	decideTodoNeeded,
+	gateFromProofResult,
+	itemsOf,
+	registerTodoCommands,
+	registerTodoSites,
+	registerTodoTool,
+	type TodoCarrier,
+	type TodoGate,
+	type TodoNeededDecision,
+} from "./todo/index.js";
+import { createGoalStore, goalTextSource, isRunningHere, registerGoalCommands, sessionCost } from "./goal/index.js";
 import { registerReviewCommand, type ReviewCommandDeps } from "./review/index.js";
 import { createLspProvider } from "./lsp/index.js";
 import { LSP_TOOL_NAMES, registerLspTools } from "./lsp/tools.js";
@@ -68,7 +78,7 @@ import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
-import { renderTurnOutcome } from "./cli/outcome.js";
+import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
@@ -268,11 +278,17 @@ function verdictOf(context: TurnContext): RunVerdict {
  * field reads live state, so a `/goal`, `/todo` or `/prd` between two turns
  * changes the next prompt without anything being copied at activation time.
  */
-function workingStateSourcesFor(state: { cwd: string; todo: TodoCarrier; lastContext: () => TurnContext | undefined }): WorkingStateSources {
+function workingStateSourcesFor(state: {
+	cwd: string;
+	todo: TodoCarrier;
+	lastContext: () => TurnContext | undefined;
+	/** Only this session's goal steers this session's turns. */
+	sessionId?: string;
+}): WorkingStateSources {
 	const goalStore = createGoalStore(state.cwd);
 	const evidence = (): readonly EvidenceRecord[] => state.lastContext()?.executor?.evidence ?? [];
 	return {
-		goal: goalTextSource(goalStore),
+		goal: goalTextSource(goalStore, state.sessionId),
 		acceptance: () => readPrdState(state.cwd)?.criteria.map((criterion) => `${criterion.id}: ${criterion.text}`) ?? [],
 		filesTouched: () => state.lastContext()?.executor?.changedFiles ?? [],
 		failingEvidence: () => {
@@ -528,6 +544,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// rather than a snapshot of activation time.
 	const todoCarrier: TodoCarrier = {};
 	let todoGate: TodoGate | undefined;
+	// `todo.needed` for the turn in flight. Cleared when a turn starts so a tool
+	// call can never be admitted by the previous turn's answer.
+	let todoDecision: TodoNeededDecision | undefined;
 	const reviewDeps: ReviewCommandDeps = { cwd, config, artifacts };
 	// The same replace-not-stack rule the owned twelve follow: a second activation
 	// in one process supersedes these handlers instead of colliding with them.
@@ -539,6 +558,15 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		prd: () => readPrdState(cwd),
 	});
 	registerGoalCommands(commands, { cwd, config, prd: () => readPrdState(cwd), sessionId: manager.getSessionId() });
+	// PRD-025's `todo.needed` site and the executor-facing `todo_add`. The tool is
+	// registered once; whether a call is admitted is the turn's own answer, so a
+	// single-step task still pays nothing for the list existing.
+	registerTodoSites();
+	registerTodoTool(pi, {
+		state: todoCarrier,
+		gate: () => todoGate,
+		decision: () => todoDecision,
+	});
 	registerReviewCommand(commands, reviewDeps);
 	// The evidence path for the native loop (§23): Pi's own loop is the executor
 	// there, so nothing verifies its work and nothing gates it. This is how the
@@ -564,7 +592,19 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// the entry points hand it back here, and the command surfaces, the working
 	// state and the todo gate read it. Nothing else stores per-turn state here.
 	let lastContext: TurnContext | undefined;
-	const workingStateSources = workingStateSourcesFor({ cwd, todo: todoCarrier, lastContext: () => lastContext });
+	const workingStateSources = workingStateSourcesFor({ cwd, todo: todoCarrier, lastContext: () => lastContext, sessionId: manager.getSessionId() });
+
+	// The two facts the status line carries that no contract holds: what the
+	// session has spent so far, and whether a goal is running. Both are read at
+	// render time — a goal set or stopped between turns must change the next line.
+	const statusGoalStore = createGoalStore(cwd);
+	const statusExtras = (): { cost: number; goal?: string } => {
+		const goal = statusGoalStore.load();
+		return {
+			cost: sessionCost(cwd, manager.getSessionId(), resolveCostConfig(config)),
+			...(isRunningHere(goal, manager.getSessionId()) ? { goal: (goal as { text: string }).text } : {}),
+		};
+	};
 	const observeTurn = (context: TurnContext): void => {
 		lastContext = context;
 		// `/route`, `/status` and `/models` read the contract off the surface, and
@@ -659,6 +699,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// is the only progress surface Pi gives an extension that is not itself
 		// streaming, so the lanes report their phase into it.
 		const progress = (phase: string): void => ctx.ui.setStatus(LEANPI_STATUS_KEY, `LeanPi: ${phase}`);
+		// Counters are cumulative for the session; the turn's share is the delta.
+		const jevBefore = { answered: jev.answeredCount(), fellBack: jev.fallbackCount() };
+		const turnJev = (): TurnJev => ({
+			answered: jev.answeredCount() - jevBefore.answered,
+			fellBack: jev.fallbackCount() - jevBefore.fellBack,
+			enabled: jev.getMode() !== "disabled",
+		});
 		progress("compiling the task");
 		try {
 			const context = await runLanes(
@@ -677,6 +724,20 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 				},
 			);
 			observeTurn(context);
+			// PRD-025: does this task warrant a todo list? Asked once per turn, after
+			// the contract exists and before the model can call `todo_add`. JEV answers
+			// it; without JEV the deterministic rule (an active PRD, or MEDIUM/HIGH
+			// complexity) decides, which is what keeps a one-line task free of a list.
+			todoDecision = context.contract
+				? await decideTodoNeeded(
+							{
+									request: event.text,
+									complexity: context.contract.task.execution_complexity,
+									prdActive: context.prd !== undefined,
+							},
+							jev,
+						)
+				: undefined;
 			if (context.contract) {
 				ctx.ui.setStatus(
 					LEANPI_STATUS_KEY,
@@ -684,13 +745,14 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 						config,
 						contract: context.contract,
 						lane: "executor",
+						...statusExtras(),
 						prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
 					}),
 				);
 			} else {
 				ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
 			}
-			ctx.ui.notify(renderTurnOutcome(context), context.executor?.status === "blocked" ? "error" : "info");
+			ctx.ui.notify(renderTurnOutcome(context, turnJev()), outcomeLevel(context));
 			if (context.contract) {
 				emitRunTelemetry(collector, context.contract, verdictOf(context), {
 					cwd,
@@ -732,6 +794,20 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			},
 		);
 		observeTurn(context);
+		// PRD-025: does this task warrant a todo list? Asked once per turn, after
+		// the contract exists and before the model can call `todo_add`. JEV answers
+		// it; without JEV the deterministic rule (an active PRD, or MEDIUM/HIGH
+		// complexity) decides, which is what keeps a one-line task free of a list.
+		todoDecision = context.contract
+			? await decideTodoNeeded(
+					{
+						request: event.prompt,
+						complexity: context.contract.task.execution_complexity,
+						prdActive: context.prd !== undefined,
+					},
+					jev,
+				)
+			: undefined;
 		// The compiled route is this turn's spend decision here too, and here Pi's
 		// own loop is the executor: the session's model and thinking level are the
 		// only things the classification can change. `setModel` is skipped when Pi
@@ -776,6 +852,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 					config,
 					contract: context.contract,
 					lane: owns ? "executor" : "pi_loop",
+					...statusExtras(),
 					...(running === undefined ? {} : { model: running }),
 					...(effort === undefined ? {} : { effort }),
 					prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,

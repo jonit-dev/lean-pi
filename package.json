@@ -39,6 +39,7 @@
 		"@earendil-works/pi-agent-core": "^0.85.1",
 		"@earendil-works/pi-ai": "^0.85.1",
 		"@earendil-works/pi-coding-agent": "^0.85.1",
+		"@hk_net/pi-usage-bars": "^0.6.0",
 		"typebox": "^1.0.0",
 		"yaml": "^2.8.1"
 	},

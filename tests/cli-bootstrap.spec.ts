@@ -402,8 +402,10 @@ describe("the status line", () => {
 
 		const line = statusLine({ config, contract, lane: "executor" });
 
-		// The vendor's bracket alias is not a model name a human reads.
-		expect(line).toBe("Auto: opus (1m) (Medium) — MEDIUM complexity — Executor lane");
+		// The vendor's bracket alias is not a model name a human reads, and the
+		// line names no internal lane: "Executor lane" is a word the operator
+		// cannot act on. The lane's one visible consequence is the /verify chip.
+		expect(line).toBe("opus (1m)  ·  thinking: medium  ·  normal task");
 	});
 
 	it("names the role when the config has no model for it, instead of throwing mid-turn", () => {
@@ -596,8 +598,8 @@ describe("the status line reaches the footer", () => {
 
 		const [entry] = statuses;
 		expect(entry?.[0]).toBe("leanpi");
-		expect(entry?.[1]).toMatch(/^Auto: /);
-		expect(entry?.[1]).toMatch(/complexity/);
+		expect(entry?.[1]).toMatch(/thinking: /);
+		expect(entry?.[1]).toMatch(/ task/);
 		// Never the class's model when Pi was not given it: with JEV disabled the
 		// fallback route is what runs, and the line has to name what Pi will dial.
 		expect(entry?.[1]).not.toContain("opus");

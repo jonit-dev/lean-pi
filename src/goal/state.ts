@@ -15,7 +15,17 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import type { LeanPiConfig } from "../core/types.js";
 
-/** ROADMAP §42's record plus `turns_used`; exactly these six keys, in this order. */
+/**
+ * ROADMAP §42's record plus `turns_used`, and the session that set it.
+ *
+ * `session_id` is what stops a goal outliving the conversation that asked for
+ * it. The record is a file on disk, so before this field an `active` goal from
+ * last week was still injected into the working state of every later session —
+ * a user who typed "hi" in a fresh conversation got a harness pursuing a goal
+ * they had forgotten setting, with nothing on screen saying why. It is optional
+ * because records written before this field exist; a record without one is read
+ * as belonging to no live session, which is the safe reading.
+ */
 export interface GoalState {
 	text: string;
 	active: boolean;
@@ -23,6 +33,7 @@ export interface GoalState {
 	max_cost: number;
 	started_at: string;
 	turns_used: number;
+	session_id?: string;
 }
 
 export const GOAL_STATE_PATH_DEFAULT = ".leanpi/goal.json";
@@ -70,6 +81,7 @@ function toGoalState(raw: unknown): GoalState | null {
 		max_cost: record.max_cost,
 		started_at: record.started_at,
 		turns_used: record.turns_used,
+		...(typeof record.session_id === "string" ? { session_id: record.session_id } : {}),
 	};
 }
 
@@ -160,7 +172,12 @@ export function parseGoalArgs(args: string): GoalArgs {
 	return parsed;
 }
 
-export function newGoalState(text: string, limits: { max_turns: number; max_cost: number }, startedAt: string): GoalState {
+export function newGoalState(
+	text: string,
+	limits: { max_turns: number; max_cost: number },
+	startedAt: string,
+	sessionId?: string,
+): GoalState {
 	return {
 		text,
 		active: true,
@@ -168,16 +185,32 @@ export function newGoalState(text: string, limits: { max_turns: number; max_cost
 		max_cost: limits.max_cost,
 		started_at: startedAt,
 		turns_used: 0,
+		...(sessionId === undefined ? {} : { session_id: sessionId }),
 	};
 }
 
 /**
- * PRD-014's `WorkingStateSources.goal()` slot: the active goal's text, and an
- * empty string when no goal is running.
+ * Whether this record is the goal of the session asking. A goal set in another
+ * session — or by a build that did not record one — is history, not an
+ * instruction: it is shown when asked for and never injected into a turn.
  */
-export function goalTextSource(store: GoalStore): () => string {
+export function isRunningHere(state: GoalState | null, sessionId?: string): boolean {
+	if (state === null || !state.active) return false;
+	// Plain equality, `undefined` included: a caller with no session (a test, an
+	// SDK embedding) matches a record with no session, while a real session never
+	// matches a record written before this field existed — which is the stale
+	// goal this check exists to keep out of the prompt.
+	return state.session_id === sessionId;
+}
+
+/**
+ * PRD-014's `WorkingStateSources.goal()` slot: the active goal's text, and an
+ * empty string when no goal is running *in this session*. This is the one place
+ * a goal reaches a prompt, so it is the one place the session check has to hold.
+ */
+export function goalTextSource(store: GoalStore, sessionId?: string): () => string {
 	return () => {
 		const state = store.load();
-		return state !== null && state.active ? state.text : "";
+		return isRunningHere(state, sessionId) ? (state as GoalState).text : "";
 	};
 }

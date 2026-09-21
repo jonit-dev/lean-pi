@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/commands/registry.js";
-import { createGoalStore, goalStatePath, registerGoalCommands } from "../../src/goal/index.js";
+import { createGoalStore, goalStatePath, goalTextSource, newGoalState, registerGoalCommands } from "../../src/goal/index.js";
 import { fixtureCwd, goalConfig } from "./helpers.js";
 
 describe("PRD-013 Phase 1 — the persisted goal record", () => {
@@ -112,5 +112,28 @@ describe("PRD-013 Phase 1 — the persisted goal record", () => {
 		expect(record!.active).toBe(false);
 		expect(record!.text).toBe("ship the parser fix");
 		expect(record!.turns_used).toBe(0);
+	});
+
+	it("a goal set in another session never reaches this session's prompt", async () => {
+		const cwd = fixtureCwd();
+		const store = createGoalStore(cwd);
+		// The reported failure: an `active` record outlives the conversation that
+		// set it, so a user opening a fresh session and typing "hi" got a harness
+		// pursuing a goal they had forgotten, with nothing on screen saying why.
+		store.save(newGoalState("ship the parser fix", { max_turns: 5, max_cost: 2 }, new Date().toISOString(), "session-a"));
+
+		expect(goalTextSource(store, "session-a")()).toBe("ship the parser fix");
+		expect(goalTextSource(store, "session-b")()).toBe("");
+		// A record written before goals carried a session is stale to every real
+		// session, never "everyone's goal".
+		store.save({ text: "an old goal", active: true, max_turns: 5, max_cost: 2, started_at: new Date().toISOString(), turns_used: 0 });
+		expect(goalTextSource(store, "session-b")()).toBe("");
+
+		// It is reported rather than silently dropped: disappearing would read as data loss.
+		const registry = createCommandRegistry();
+		registerGoalCommands(registry, { cwd, config: goalConfig(cwd), costSoFar: () => 0, sessionId: "session-b" });
+		const shown = await registry.dispatch("/goal", { cwd });
+		expect(shown.text).toContain("an old goal");
+		expect(shown.text).toContain("earlier session");
 	});
 });

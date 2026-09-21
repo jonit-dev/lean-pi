@@ -4,6 +4,8 @@
 export { createTodoHandler, registerTodoCommands, renderListing } from "./commands.js";
 export type { TodoCommandDeps } from "./commands.js";
 export { gateFromProofResult, syncFromPrd } from "./derive.js";
+export { registerTodoTool, todoToolDefinition } from "./tool.js";
+export type { TodoToolDeps } from "./tool.js";
 export type { SyncInput } from "./derive.js";
 export {
 	boundaryTodoInput,

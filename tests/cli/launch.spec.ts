@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
-import { isInformational, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli } from "../../src/cli/launch.js";
+import { bundledExtensions, isInformational, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli } from "../../src/cli/launch.js";
 import { tempDir } from "../helpers/fixtures.js";
 
 describe("the leanpi launcher", () => {
@@ -22,7 +22,9 @@ describe("the leanpi launcher", () => {
 		// Pi's discovery loads every installed skill — 190 on the machine this was
 		// written on, and 82,343 bytes of the system prompt of every request.
 		const theme = ["--theme", join(PACKAGE_ROOT, "themes", "leanpi.json"), "--use-theme", "leanpi"];
-		expect(plan.args).toEqual(["--extension", plan.extension, "--no-skills", ...theme, "--print", "do the thing"]);
+		// The bundled extensions ride between LeanPi's own and the switches.
+		const bundled = bundledExtensions(PACKAGE_ROOT).flatMap((path) => ["--extension", path]);
+		expect(plan.args).toEqual(["--extension", plan.extension, ...bundled, "--no-skills", ...theme, "--print", "do the thing"]);
 		// Pi's CLI comes from the dependency, not from PATH: the version LeanPi is
 		// built against is the one it should run under.
 		expect(plan.cli).toBe(join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"));
@@ -33,7 +35,8 @@ describe("the leanpi launcher", () => {
 		const plan = launchPlan(["--extension", "/tmp/mine.js"], PACKAGE_ROOT);
 		// Pi takes the flag more than once; dropping the caller's would be the
 		// launcher deciding something it was not asked to decide.
-		expect(plan.args.slice(0, 3)).toEqual(["--extension", plan.extension, "--no-skills"]);
+		expect(plan.args.slice(0, 2)).toEqual(["--extension", plan.extension]);
+		expect(plan.args).toContain("--no-skills");
 		expect(plan.args.slice(-2)).toEqual(["--extension", "/tmp/mine.js"]);
 	});
 
@@ -91,5 +94,21 @@ describe("the leanpi launcher", () => {
 		expect(parseLeanPiFlags(["--print", "go"]).safety).toBeUndefined();
 		expect(() => parseLeanPiFlags(["--safety", "paranoid"])).toThrow(/low \| medium \| high/);
 		expect(() => parseLeanPiFlags(["--safety"])).toThrow(/low \| medium \| high/);
+	});
+
+	it("attaches the bundled extensions after LeanPi's own, and none that duplicate a LeanPi subsystem", () => {
+		const plan = launchPlan([]);
+		const attached = plan.args.filter((argument, index) => plan.args[index - 1] === "--extension");
+		// LeanPi first: it registers the baseline tools and PRD-017's guard, and a
+		// bundled extension that replaces a tool name needs that surface to exist.
+		expect(attached[0]).toBe(plan.extension);
+		expect(attached.slice(1)).toEqual(bundledExtensions());
+		// Every bundled path is a real file, so Pi is never handed a missing one.
+		for (const path of bundledExtensions()) expect(existsSync(path)).toBe(true);
+		// Nothing LeanPi already owns: PRD-018 (LSP), PRD-019 (output reduction),
+		// PRD-006 (MCP disclosure), `/context` and PRD-025 (todo) are not replaced
+		// by a second implementation answering to no gate of ours.
+		const owned = ["pi-lsp", "pi-output-limits", "pi-mcp-adapter", "pi-context-view", "rpiv-todo"];
+		for (const name of owned) expect(plan.args.join(" ")).not.toContain(name);
 	});
 });
