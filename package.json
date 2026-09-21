@@ -44,6 +44,7 @@
 	],
 	"scripts": {
 		"build": "tsc -p tsconfig.json",
+		"prepack": "tsc -p tsconfig.json",
 		"leanpi": "tsc -p tsconfig.json && node ./bin/leanpi.js",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",

@@ -6,8 +6,8 @@
  * knowing it, and without a globally installed `pi`.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { compactUiAttached } from "../../src/core/tools.js";
@@ -39,9 +39,37 @@ describe("the leanpi launcher", () => {
 			"do the thing",
 		]);
 		// Pi's CLI comes from the dependency, not from PATH: the version LeanPi is
-		// built against is the one it should run under.
-		expect(plan.cli).toBe(join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"));
+		// built against is the one it should run under. Resolved through the pnpm
+		// store link, which is why the path is realpath'd.
+		expect(plan.cli).toBe(realpathSync(join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")));
 		expect(existsSync(plan.cli)).toBe(true);
+	});
+
+	it("finds dependencies hoisted above the package, as npm and npx install them", () => {
+		// npm and npx hoist to the consumer's top-level node_modules, so an
+		// installed leanpi has no node_modules/leanpi/node_modules at all. The
+		// upward walk is what reaches the level above it.
+		const consumer = tempDir("leanpi-hoisted-");
+		const root = join(consumer, "node_modules", "leanpi");
+		for (const entry of [
+			join("@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"),
+			join("@hk_net", "pi-usage-bars", "extensions", "usage-bars", "index.ts"),
+			join("pi-claude-code-ui", "extensions", "index.ts"),
+			join("pi-claude-code-ui", "extensions", "spinner.ts"),
+		]) {
+			const path = join(consumer, "node_modules", entry);
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, "export {};\n");
+		}
+		mkdirSync(join(root, "dist"), { recursive: true });
+		writeFileSync(join(root, "dist", "leanpi.js"), "export {};\n");
+		expect(existsSync(join(root, "node_modules"))).toBe(false);
+		expect(resolvePiCli(root)).toBe(realpathSync(join(consumer, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")));
+		// The hoisted extensions are found and every path handed to Pi exists.
+		const compactUi = realpathSync(join(consumer, "node_modules", "pi-claude-code-ui", "extensions", "index.ts"));
+		const plan = launchPlan([], root);
+		expect(plan.bundled).toContain(compactUi);
+		for (const path of plan.bundled) expect(existsSync(path)).toBe(true);
 	});
 
 	it("keeps an extension the caller asked for as well as its own", () => {

@@ -82,18 +82,42 @@ export function spinnerExtension(root: string = packageRoot()): string {
 }
 
 /**
- * The bundled extensions present in this installation, as absolute paths.
+ * Where `entry` lives under `node_modules`, searched upward the way Node's own
+ * resolver does: this package's `node_modules`, then each ancestor's.
+ *
+ * A fixed `packageRoot()/node_modules` join only holds in the pnpm dev checkout,
+ * where `node_modules/` sits beside the source. npm and `npx` **hoist**
+ * dependencies to the consumer's top-level `node_modules/`, so an installed
+ * `leanpi` has no `node_modules/leanpi/node_modules/` at all. The walk covers
+ * both layouts identically.
  *
  * Resolved through the symlink: Pi's loader requires an extension's own
  * dependencies from the directory it was handed, and pnpm's `node_modules/<pkg>`
  * is a link into the store — so the link path made `pi-claude-code-ui` fail with
  * `Cannot find module 'diff'`, while its real location has the store's siblings.
+ *
+ * `entry` is a path under `node_modules` (a package, or a file inside one);
+ * `undefined` means it is absent at every level, which callers treat as
+ * skip-not-fatal.
+ */
+export function dependencyDir(entry: string, from: string): string | undefined {
+	let dir = from;
+	for (;;) {
+		const candidate = join(dir, "node_modules", entry);
+		if (existsSync(candidate)) return realpathSync(candidate);
+		const parent = dirname(dir);
+		if (parent === dir) return undefined;
+		dir = parent;
+	}
+}
+
+/**
+ * The bundled extensions present in this installation, as absolute paths.
  */
 export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "compact"): string[] {
 	return [...BUNDLED_EXTENSIONS, ...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])]
-		.map((entry) => join(root, "node_modules", entry))
-		.filter((path) => existsSync(path))
-		.map((path) => realpathSync(path));
+		.map((entry) => dependencyDir(entry, root))
+		.filter((path): path is string => path !== undefined);
 }
 
 /** This package's root, from the module's own location (`dist/cli/launch.js`). */
@@ -111,9 +135,11 @@ export function packageRoot(fromUrl: string = import.meta.url): string {
 export function resolvePiCli(root: string = packageRoot()): string {
 	// The package manager's `.bin/pi` is a shell shim on this platform, so the
 	// launcher runs the bundle it points at: `node <cli>` has to be a JS entry.
-	const bundled = join(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js");
-	if (existsSync(bundled)) return bundled;
-	throw new Error(`Pi's CLI was not found at ${bundled}. Run \`npm install\` in ${root}.`);
+	const bundled = dependencyDir(join("@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"), root);
+	if (bundled !== undefined) return bundled;
+	throw new Error(
+		`Pi's CLI was not found: @earendil-works/pi-coding-agent is missing from this installation of leanpi. Reinstall it with \`npm install leanpi\`.`,
+	);
 }
 
 /** Pi's own informational flags: they print and exit, and configure nothing. */

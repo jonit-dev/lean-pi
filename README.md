@@ -26,9 +26,14 @@ the PRD index with per-PRD status is [`docs/PRDs/v1/INDEX.md`](docs/PRDs/v1/INDE
 
 ## Run it
 
-Requires `git`; developed and tested on Node 22 (`engines.node >=22.19.0`). The
-published 2026-09-19 benchmark used Node 20; the 2026-09-19 audit smoke-tested the
-documented path on Node 22.
+Requires Node 22+ (`engines.node >=22.19.0`); developed and tested on Node 22.
+
+```sh
+npx leanpi        # run it anywhere, nothing to install
+```
+
+**From a checkout (contributors).** Requires `git` too. The published 2026-09-19
+benchmark used Node 20; the 2026-09-19 audit smoke-tested this path on Node 22.
 
 ```sh
 npm install
