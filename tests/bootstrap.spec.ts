@@ -109,8 +109,8 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 			expect(loaded.extensions[0]!.resolvedPath).toBe(entry);
 			// Registered is not active: PRD-018's seven LSP tools are in the registry
 			// so a turn's mode can expose its group, and PRD-025's `todo_add` is
-			// registered once but admits a call only when the turn's `todo.needed`
-			// answer warrants a list. The session boots with the five baseline names
+			// registered for the session while the list it appends to costs bytes
+			// only once it has items. The session boots with the five baseline names
 			// active (asserted through `activation.tools` above and by AC-2 below).
 			expect([...loaded.extensions[0]!.tools.keys()].sort()).toEqual(
 				["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME, TODO_ADD_TOOL_NAME, ...LSP_TOOL_NAMES].sort(),

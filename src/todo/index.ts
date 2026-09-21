@@ -9,17 +9,10 @@ export type { TodoToolDeps } from "./tool.js";
 export type { SyncInput } from "./derive.js";
 export {
 	boundaryTodoInput,
-	decideTodoNeeded,
-	registerTodoSites,
 	remainingWork,
-	todoNeededFallback,
-	TODO_NEEDED_QUESTION,
-	TODO_NEEDED_QUESTION_ID,
-	TODO_NEEDED_SITE_ID,
 } from "./goal.js";
-export type { BoundaryTodoInput, RemainingWork, TodoNeededDecision, TodoNeededInput } from "./goal.js";
+export type { BoundaryTodoInput, RemainingWork } from "./goal.js";
 export {
-	admitTodoAdd,
 	invokeTodoAdd,
 	renderTodo,
 	TODO_ADD_TOOL,
@@ -28,7 +21,7 @@ export {
 	todoPromptBudgetBytes,
 	withTodo,
 } from "./render.js";
-export type { TodoAddAdmission, TodoAddCall, TodoAddRefusal, TodoAddTool } from "./render.js";
+export type { TodoAddCall, TodoAddTool } from "./render.js";
 export {
 	activeItem,
 	addItem,

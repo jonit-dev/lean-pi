@@ -1,9 +1,26 @@
 {
 	"name": "leanpi",
 	"version": "0.1.0",
-	"private": true,
 	"description": "Cost-aware task compiler and coding runtime built on Pi",
+	"license": "MIT",
+	"author": "Joao Paulo Furtado <admin@coldstartlabs.ca>",
+	"homepage": "https://github.com/jonit-dev/lean-pi#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/jonit-dev/lean-pi.git"
+	},
+	"bugs": {
+		"url": "https://github.com/jonit-dev/lean-pi/issues"
+	},
+	"keywords": [
+		"coding-agent",
+		"cost-optimization",
+		"llm",
+		"pi",
+		"task-compiler"
+	],
 	"type": "module",
+	"packageManager": "pnpm@11.25.0",
 	"engines": {
 		"node": ">=22.19.0"
 	},
@@ -39,7 +56,9 @@
 		"@earendil-works/pi-agent-core": "^0.86.1",
 		"@earendil-works/pi-ai": "^0.86.1",
 		"@earendil-works/pi-coding-agent": "^0.86.1",
+		"@earendil-works/pi-tui": "^0.86.1",
 		"@hk_net/pi-usage-bars": "^0.6.0",
+		"pi-claude-code-ui": "^1.0.83",
 		"typebox": "^1.0.0",
 		"yaml": "^2.8.1"
 	},

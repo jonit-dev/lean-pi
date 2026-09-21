@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose a capability or a change in behavior
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        What you are trying to do and where LeanPi gets in the way. A concrete
+        task beats a category.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you want it to do
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: Your workaround, and any other approach you considered.
+    validations:
+      required: false
+  - type: checkboxes
+    id: fit
+    attributes:
+      label: Fit
+      options:
+        - label: This can be decided without a model judgement (a configuration or deterministic rule)
+        - label: This needs a verifiable completion signal, not a model's word for it
+        - label: I read the non-goals in docs/PRDs/v1/INDEX.md (§58)
+          required: true

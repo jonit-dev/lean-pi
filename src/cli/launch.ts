@@ -10,7 +10,7 @@
  * package's built extension already attached, so `leanpi` is the command and
  * every Pi flag still works behind it.
  */
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SAFETY_LEVELS, isSafetyLevel, type SafetyLevel } from "../permissions/rules.js";
@@ -50,9 +50,36 @@ const BUNDLED_EXTENSIONS: readonly string[] = [
 	join("@hk_net", "pi-usage-bars", "extensions", "usage-bars", "index.ts"),
 ];
 
-/** The bundled extensions present in this installation, as absolute paths. */
-export function bundledExtensions(root: string = packageRoot()): string[] {
-	return BUNDLED_EXTENSIONS.map((entry) => join(root, "node_modules", entry)).filter((path) => existsSync(path));
+/**
+ * The compact tool rows (`--ui compact`, the default).
+ *
+ * Claude Code's one-line-per-call surface: the output goes behind Ctrl+O and
+ * every tool LeanPi registers gets a compact row, because the package patches
+ * Pi's tool component rather than rendering only what it registers. It does
+ * register `read`, `edit` and `write`, which is why `core/tools.ts` yields those
+ * three names when this is attached. `themeAdaptive` (its default) derives the
+ * palette from the active Pi theme, so LeanPi's own theme still decides the
+ * colours. How much it shows is the package's to answer: `/cc-tools` in a
+ * session, `.pi/settings.json` for a durable choice.
+ */
+const COMPACT_UI_EXTENSIONS: readonly string[] = [
+	join("pi-claude-code-ui", "extensions", "index.ts"),
+	join("pi-claude-code-ui", "extensions", "spinner.ts"),
+];
+
+/**
+ * The bundled extensions present in this installation, as absolute paths.
+ *
+ * Resolved through the symlink: Pi's loader requires an extension's own
+ * dependencies from the directory it was handed, and pnpm's `node_modules/<pkg>`
+ * is a link into the store — so the link path made `pi-claude-code-ui` fail with
+ * `Cannot find module 'diff'`, while its real location has the store's siblings.
+ */
+export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "compact"): string[] {
+	return [...BUNDLED_EXTENSIONS, ...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])]
+		.map((entry) => join(root, "node_modules", entry))
+		.filter((path) => existsSync(path))
+		.map((path) => realpathSync(path));
 }
 
 /** This package's root, from the module's own location (`dist/cli/launch.js`). */
@@ -80,6 +107,20 @@ export function isInformational(argv: readonly string[]): boolean {
 	return argv.some((argument) => argument === "--help" || argument === "-h" || argument === "--version" || argument === "-v");
 }
 
+/** `--ui`: the tool-row surface. `plain` is Pi's own rendering. */
+export const UI_MODES = ["compact", "plain"] as const;
+export type UiMode = (typeof UI_MODES)[number];
+export function isUiMode(value: string): value is UiMode {
+	return (UI_MODES as readonly string[]).includes(value);
+}
+
+export class UnknownUiModeError extends Error {
+	constructor(value: string) {
+		super(`leanpi: --ui expects one of ${UI_MODES.join(" | ")}, got "${value}"`);
+		this.name = "UnknownUiModeError";
+	}
+}
+
 export interface LeanPiFlags {
 	/** `--no-jev`: start the degraded harness deliberately. */
 	allowMissingJev: boolean;
@@ -87,6 +128,8 @@ export interface LeanPiFlags {
 	jevKey?: string;
 	/** `--safety <low|medium|high>`: one named permission policy for this session. */
 	safety?: SafetyLevel;
+	/** `--ui <compact|plain>`: the tool-row surface. Compact unless asked otherwise. */
+	ui: UiMode;
 	/** Everything else, in order, for Pi. */
 	rest: string[];
 }
@@ -112,6 +155,7 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
 	let allowMissingJev = false;
 	let jevKey: string | undefined;
 	let safety: SafetyLevel | undefined;
+	let ui: UiMode = "compact";
 	for (let index = 0; index < argv.length; index += 1) {
 		const argument = argv[index] as string;
 		if (argument === "--no-jev") {
@@ -140,9 +184,16 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
 			if (!argument.startsWith("--safety=")) index += 1;
 			continue;
 		}
+		if (argument === "--ui" || argument.startsWith("--ui=")) {
+			const value = argument.startsWith("--ui=") ? argument.slice("--ui=".length) : argv[index + 1];
+			if (value === undefined || !isUiMode(value)) throw new UnknownUiModeError(value ?? "");
+			ui = value;
+			if (!argument.startsWith("--ui=")) index += 1;
+			continue;
+		}
 		rest.push(argument);
 	}
-	return { allowMissingJev, ...(jevKey === undefined ? {} : { jevKey }), ...(safety === undefined ? {} : { safety }), rest };
+	return { allowMissingJev, ...(jevKey === undefined ? {} : { jevKey }), ...(safety === undefined ? {} : { safety }), ui, rest };
 }
 
 /**
@@ -152,7 +203,7 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
  * accepts the flag more than once, and silently dropping a user's extension
  * would be the launcher deciding something it was not asked to decide.
  */
-export function launchPlan(argv: readonly string[], root: string = packageRoot(), sessionModel?: string): LaunchPlan {
+export function launchPlan(argv: readonly string[], root: string = packageRoot(), sessionModel?: string, ui: UiMode = "compact"): LaunchPlan {
 	// `dist/leanpi.js`, not `dist/index.js`: Pi names an extension after its
 	// file and the banner is the user's first screen (`[Extensions] leanpi`).
 	const extension = join(root, "dist", "leanpi.js");
@@ -187,7 +238,7 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// LeanPi's own extension first: it registers the baseline tools and the
 	// permission guard, and a bundled extension that replaces a tool name must
 	// take it from a surface that already exists.
-	const bundled = bundledExtensions(root);
+	const bundled = bundledExtensions(root, ui);
 	const bundledArgs = bundled.flatMap((path) => ["--extension", path]);
 	return {
 		cli: resolvePiCli(root),

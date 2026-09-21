@@ -11,7 +11,6 @@
  * defeat the prefix caching §22 buys.
  */
 import type { AssembledPrompt } from "../context/prompt.js";
-import { todoNeededFallback, type TodoNeededInput } from "./goal.js";
 import type { TodoItem, TodoList } from "./state.js";
 
 export const TODO_PROMPT_BUDGET_BYTES = 2048;
@@ -108,45 +107,14 @@ export const TODO_ADD_TOOL: TodoAddTool = {
 	},
 };
 
-export interface TodoAddRefusal {
-	code: "not_warranted";
-	message: string;
-}
-
-export interface TodoAddAdmission {
-	admitted: boolean;
-	/** The executor's todo tool set: empty unless the task warrants a list. */
-	tools: TodoAddTool[];
-	refusal: TodoAddRefusal | null;
-}
-
-/**
- * The deterministic admission rule for `todo_add`, so a single-step task pays
- * nothing: no tool schema in context, no list, no block in the prompt. The
- * capability router owns the tool set; this owns the rule it admits by.
- */
-export function admitTodoAdd(input: TodoNeededInput): TodoAddAdmission {
-	if (todoNeededFallback(input)) return { admitted: true, tools: [TODO_ADD_TOOL], refusal: null };
-	return {
-		admitted: false,
-		tools: [],
-		refusal: {
-			code: "not_warranted",
-			message: `todo_add is not admitted for a ${input.complexity} task with no active PRD; the list is not part of this task`,
-		},
-	};
-}
-
 export interface TodoAddCall {
-	admission: TodoAddAdmission;
 	list: TodoList;
 	text: string;
 	phase?: string;
 }
 
-/** One appended item. A call that was not admitted is refused, never turned into a list. */
+/** One appended item. Whether the task warrants a list is the executor's call, not a gate's. */
 export function invokeTodoAdd(call: TodoAddCall): { ok: boolean; text: string } {
-	if (!call.admission.admitted) return { ok: false, text: call.admission.refusal?.message ?? "todo_add is not admitted for this task" };
 	const text = call.text.trim();
 	if (text.length === 0) return { ok: false, text: "todo_add needs text" };
 	const item = call.list.add(text, call.phase === undefined ? {} : { phase: call.phase });

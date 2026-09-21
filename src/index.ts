@@ -51,15 +51,12 @@ import { createArtifactStore, type ArtifactStore } from "./context/artifacts.js"
 import type { WorkingStateSources } from "./context/working-state.js";
 import { reduceToolOutput } from "./rtk/index.js";
 import {
-	decideTodoNeeded,
 	gateFromProofResult,
 	itemsOf,
 	registerTodoCommands,
-	registerTodoSites,
 	registerTodoTool,
 	type TodoCarrier,
 	type TodoGate,
-	type TodoNeededDecision,
 } from "./todo/index.js";
 import { createGoalStore, goalTextSource, isRunningHere, registerGoalCommands, sessionCost } from "./goal/index.js";
 import { registerReviewCommand, type ReviewCommandDeps } from "./review/index.js";
@@ -79,7 +76,8 @@ import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
 import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
-import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
+import { installSpinnerFrames } from "./cli/spinner.js";
+import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
@@ -371,6 +369,12 @@ function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string
 					},
 				});
 				ctx.ui.notify(result.text, result.ok ? "info" : "error");
+				// A command that starts work sends its own prompt. Without this
+				// `/goal <task>` only wrote the goal file and the session sat idle
+				// until the user typed again.
+				if (result.start) {
+					pi.sendUserMessage(result.start, ctx.isIdle() ? {} : { deliverAs: "followUp" });
+				}
 			},
 		});
 	}
@@ -395,7 +399,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	const commands = options.commands ?? commandRegistry;
 	const config = options.config ?? loadConfig(cwd, {}, env);
 	registerBackends(pi, config, env);
-	const tools = registerBaselineTools(pi, cwd);
+	const tools = registerBaselineTools(pi, cwd, compactUiAttached() ? YIELDED_TOOL_NAMES : []);
 	// PRD-018: the seven LSP tools are registered once and stay inactive until a
 	// turn's compiled mode exposes its group (§15: never on by default). The mode
 	// is applied per turn in `runTurn`.
@@ -544,9 +548,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// rather than a snapshot of activation time.
 	const todoCarrier: TodoCarrier = {};
 	let todoGate: TodoGate | undefined;
-	// `todo.needed` for the turn in flight. Cleared when a turn starts so a tool
-	// call can never be admitted by the previous turn's answer.
-	let todoDecision: TodoNeededDecision | undefined;
 	const reviewDeps: ReviewCommandDeps = { cwd, config, artifacts };
 	// The same replace-not-stack rule the owned twelve follow: a second activation
 	// in one process supersedes these handlers instead of colliding with them.
@@ -558,14 +559,12 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		prd: () => readPrdState(cwd),
 	});
 	registerGoalCommands(commands, { cwd, config, prd: () => readPrdState(cwd), sessionId: manager.getSessionId() });
-	// PRD-025's `todo.needed` site and the executor-facing `todo_add`. The tool is
-	// registered once; whether a call is admitted is the turn's own answer, so a
-	// single-step task still pays nothing for the list existing.
-	registerTodoSites();
+	// PRD-025's executor-facing `todo_add`. Whether a call appends is the
+	// executor's own call: the tool is on the surface, and the list only costs
+	// bytes once it has items.
 	registerTodoTool(pi, {
 		state: todoCarrier,
 		gate: () => todoGate,
-		decision: () => todoDecision,
 	});
 	registerReviewCommand(commands, reviewDeps);
 	// The evidence path for the native loop (§23): Pi's own loop is the executor
@@ -649,6 +648,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// route overrides and the recorded contract belonged to the conversation
 	// that just went away.
 	pi.on("session_start", async (event, ctx) => {
+		// After every extension is loaded, so LeanPi's frames sit on top of the
+		// compact UI's own loader patch rather than under it.
+		installSpinnerFrames();
 		if (event.reason !== "startup") {
 			surface.resetSessionState();
 			clearRoutePins();
@@ -724,20 +726,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 				},
 			);
 			observeTurn(context);
-			// PRD-025: does this task warrant a todo list? Asked once per turn, after
-			// the contract exists and before the model can call `todo_add`. JEV answers
-			// it; without JEV the deterministic rule (an active PRD, or MEDIUM/HIGH
-			// complexity) decides, which is what keeps a one-line task free of a list.
-			todoDecision = context.contract
-				? await decideTodoNeeded(
-							{
-									request: event.text,
-									complexity: context.contract.task.execution_complexity,
-									prdActive: context.prd !== undefined,
-							},
-							jev,
-						)
-				: undefined;
 			if (context.contract) {
 				ctx.ui.setStatus(
 					LEANPI_STATUS_KEY,
@@ -795,20 +783,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			},
 		);
 		observeTurn(context);
-		// PRD-025: does this task warrant a todo list? Asked once per turn, after
-		// the contract exists and before the model can call `todo_add`. JEV answers
-		// it; without JEV the deterministic rule (an active PRD, or MEDIUM/HIGH
-		// complexity) decides, which is what keeps a one-line task free of a list.
-		todoDecision = context.contract
-			? await decideTodoNeeded(
-					{
-						request: event.prompt,
-						complexity: context.contract.task.execution_complexity,
-						prdActive: context.prd !== undefined,
-					},
-					jev,
-				)
-			: undefined;
 		// The compiled route is this turn's spend decision here too, and here Pi's
 		// own loop is the executor: the session's model and thinking level are the
 		// only things the classification can change. `setModel` is skipped when Pi
@@ -1078,7 +1052,7 @@ export {
 } from "./core/instructions/prefix.js";
 export { ConfigError, CONFIG_FILENAME, configPathFor, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 export { resolveRole, ROLE_FALLBACK_CHAINS, UnresolvedRoleError } from "./core/roles.js";
-export { BASELINE_TOOL_NAMES, baselineToolDefinitions, registerBaselineTools } from "./core/tools.js";
+export { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, baselineToolDefinitions, compactUiAttached, registerBaselineTools } from "./core/tools.js";
 export {
 	clearLanes,
 	getActivePrefix,

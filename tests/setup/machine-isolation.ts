@@ -12,9 +12,9 @@
  *
  * Only `$XDG_CONFIG_HOME` moves, to an empty directory: it is what config
  * discovery, the credential store and the permission defaults fall back to.
- * `HOME` stays real, because two specs deliberately assert against the
- * machine's own skill roots (`~/.claude`, `~/.agents/skills`) — that is their
- * subject, not an accident.
+ * `HOME` stays real, because the specs that do assert against the machine's own
+ * skill roots (`~/.claude`, `~/.agents/skills`) are opt-in — `LEANPI_REAL_SKILLS`
+ * and `LEANPI_PRD_REAL_SKILLS` — and need the real one when they are asked for.
  */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

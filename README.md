@@ -97,6 +97,25 @@ A level is the whole policy — your stored scopes and every capability rule are
 ignored while it is in force, since a level a forgotten `/permissions set` could
 undercut would not be a level.
 
+Tool calls render as Claude Code's compact rows — one line per call, the output
+behind `ctrl+o` (`ctrl+shift+o` for the long form), in whatever theme is active.
+How much shows is a session-level choice, and a durable one:
+
+```sh
+/cc-tools status            # what every switch is set to right now
+/cc-tools detail on         # the long form by default, without the keystroke
+/cc-tools thinking full     # keep finished thinking expanded, not just live
+/cc-tools group off         # one row per call instead of grouped runs
+leanpi --ui plain           # Pi's own rendering, for a session or for good
+```
+
+`/cc-tools` writes `.pi/settings.json`, so the choice survives the session;
+`readOutputMode`, `previewLines`, `bashCollapsedLines` and the rest can be set
+there directly. Colours, borders and diff tints follow `themes/leanpi.json` on
+their own (`/cc-theme status` shows what they resolved to); the one thing a
+theme cannot reach is the syntax highlighting inside a diff, so the first run
+seeds `diffTheme` in `~/.pi/settings.json` — and never touches a key you set.
+
 Two other entry points, one code path:
 
 ```sh
@@ -224,10 +243,48 @@ been proven fail-before/pass-after on this machine. Adapters: `leanpi`,
 | `docs/reports/` | the cost investigation and the wiring audit behind the numbers |
 | `bench/out/` | every recorded run: ledger, §52 telemetry, report, patches |
 | `skills/` | the bundled skill pack |
-| `tests/` | the suite: every PRD's acceptance criteria, run with `npm test` |
+| `tests/` | the suite: every PRD's acceptance criteria, run with `pnpm test` |
 
 ```sh
-npm test        # acceptance criteria, end to end (548 tests, 7 skipped)
-npm run lint
-npm run typecheck
+pnpm test        # acceptance criteria, end to end
+pnpm run lint
+pnpm run typecheck
 ```
+
+The suite needs no credential, no subscription and no network: it boots stub
+backends and points `$XDG_CONFIG_HOME` at a temporary directory, so it never
+reads your own `~/.config/leanpi/`. Three specs assert against the machine's own
+`$HOME` — a signed-in vendor CLI, the installed skill library — instead of a
+fixture, and are skipped unless asked for (`LEANPI_REAL_HOME=1`,
+`LEANPI_REAL_SKILLS=1`, `LEANPI_PRD_REAL_SKILLS=1`); CI runs without them.
+
+---
+
+## Development
+
+Node `>=22.19.0` (`.nvmrc` pins 22) and `git`. The lockfile is pnpm's; npm works
+too.
+
+```sh
+git clone https://github.com/jonit-dev/lean-pi.git
+cd lean-pi
+pnpm install
+pnpm build
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the gates a pull request has to
+pass and what the review looks for. [`AGENTS.md`](AGENTS.md) is the same rules
+in the form an agent reads.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). Third-party content vendored into this
+repository (the bundled skill pack and the static instruction prefix, both MIT)
+is listed with its copyright holders in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+## Security
+
+Report vulnerabilities privately, not in the issue tracker — see
+[`SECURITY.md`](SECURITY.md) for the reporting channels and the boundaries that
+are in scope.

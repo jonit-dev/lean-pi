@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
+import { compactUiAttached } from "../../src/core/tools.js";
 import { bundledExtensions, isInformational, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli } from "../../src/cli/launch.js";
 import { tempDir } from "../helpers/fixtures.js";
 
@@ -87,13 +88,29 @@ describe("the leanpi launcher", () => {
 	});
 
 	it("takes --safety out of Pi's argv, and refuses a level that is not one of the three", () => {
-		expect(parseLeanPiFlags(["--safety", "high", "--print", "go"])).toEqual({ allowMissingJev: false, safety: "high", rest: ["--print", "go"] });
+		expect(parseLeanPiFlags(["--safety", "high", "--print", "go"])).toEqual({ allowMissingJev: false, safety: "high", ui: "compact", rest: ["--print", "go"] });
 		expect(parseLeanPiFlags(["--safety=low"]).safety).toBe("low");
 		// Absent is the default, and absent must stay absent: the permission state
 		// only overrides itself when the variable the launcher forwards is set.
 		expect(parseLeanPiFlags(["--print", "go"]).safety).toBeUndefined();
 		expect(() => parseLeanPiFlags(["--safety", "paranoid"])).toThrow(/low \| medium \| high/);
 		expect(() => parseLeanPiFlags(["--safety"])).toThrow(/low \| medium \| high/);
+	});
+
+	it("keeps the compact tool rows unless --ui plain asks for Pi's own", () => {
+		// The compact renderer registers `read`, `edit` and `write` itself, so the
+		// two halves have to agree: `--ui plain` drops the extension, and
+		// `compactUiAttached` reads the same argv Pi is handed.
+		expect(parseLeanPiFlags(["--print", "go"]).ui).toBe("compact");
+		expect(parseLeanPiFlags(["--ui", "plain"]).ui).toBe("plain");
+		expect(parseLeanPiFlags(["--ui=plain"]).rest).toEqual([]);
+		expect(() => parseLeanPiFlags(["--ui", "tiny"])).toThrow(/compact \| plain/);
+		const compact = launchPlan([], undefined, undefined, "compact");
+		const plain = launchPlan([], undefined, undefined, "plain");
+		expect(compact.bundled.some((path) => path.includes("pi-claude-code-ui"))).toBe(true);
+		expect(plain.bundled.some((path) => path.includes("pi-claude-code-ui"))).toBe(false);
+		expect(compactUiAttached(compact.args)).toBe(true);
+		expect(compactUiAttached(plain.args)).toBe(false);
 	});
 
 	it("attaches the bundled extensions after LeanPi's own, and none that duplicate a LeanPi subsystem", () => {

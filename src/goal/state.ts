@@ -7,9 +7,11 @@
  * existing `.leanpi/` directory — no new store, no schema, no migration logic
  * for a format that has never shipped.
  *
- * `--max-turns` / `--max-cost` are optional *flags*, never optional limits: an
- * absent flag takes `goal.default_max_turns` / `goal.default_max_cost` at goal
- * creation, so an auto-continuing loop is always bounded on both axes.
+ * `--max-turns` / `--max-cost` are optional flags over optional limits: an
+ * absent flag takes `goal.default_max_turns` / `goal.default_max_cost`, and
+ * with neither the goal runs uncapped. A cap the user did not ask for stopped
+ * real work mid-task, so the bound is opt-in — `0` on either axis means "no
+ * cap" everywhere it is read.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -38,9 +40,9 @@ export interface GoalState {
 
 export const GOAL_STATE_PATH_DEFAULT = ".leanpi/goal.json";
 
-/** The concrete, non-zero limits a flagless `/goal` takes when config says nothing. */
-export const DEFAULT_MAX_TURNS = 5;
-export const DEFAULT_MAX_COST = 2;
+/** No cap unless asked for: `0` on either axis disables that limit. */
+export const DEFAULT_MAX_TURNS = 0;
+export const DEFAULT_MAX_COST = 0;
 
 export const GOAL_USAGE = "usage: /goal <text> [--max-turns <n>] [--max-cost <usd>] | /goal | /goal stop";
 
@@ -55,8 +57,7 @@ function positive(value: unknown, fallback: number): number {
 /**
  * The `goal:` config block, read structurally: PRD-001's loader passes unknown
  * keys through `overrides` untouched and this PRD owns the defaults rather than
- * the key declaration. An absent or unusable value takes the documented default
- * — a flagless goal is never unbounded.
+ * the key declaration. An absent or unusable value means no cap on that axis.
  */
 export function defaultGoalLimits(config?: LeanPiConfig): { max_turns: number; max_cost: number } {
 	const goal = (config as { goal?: { default_max_turns?: unknown; default_max_cost?: unknown } } | undefined)?.goal;

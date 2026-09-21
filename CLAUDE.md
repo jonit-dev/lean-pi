@@ -9,3 +9,5 @@
 **Verify.** Turn the task into a check before coding: "fix the bug" → failing test first. State multi-step plans as `step → verify`. Run `pnpm test`, `pnpm typecheck`, `pnpm lint`.
 
 **PRDs.** Plan with the `prd-creator` skill, not freehand. Ask `prd-manager` where PRDs stand instead of reading them. Finished PRD → `git mv` into `docs/PRDs/v1/done/` in the same commit that finishes it; never left in flight.
+
+**Docs**: Use mermaid if relevant.

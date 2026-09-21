@@ -37,6 +37,12 @@ export interface CommandContext {
 export interface CommandResult {
 	ok: boolean;
 	text: string;
+	/**
+	 * A prompt the bridge should send as a user message once the command's echo
+	 * is shown. `/goal <text>` sets *and* starts: without this the session sat
+	 * idle after the echo and only moved when the user typed again.
+	 */
+	start?: string;
 }
 
 export type CommandHandler = (args: string, context: CommandContext) => Promise<CommandResult> | CommandResult;

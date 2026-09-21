@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/commands/registry.js";
-import { createGoalStore, goalStatePath, goalTextSource, newGoalState, registerGoalCommands } from "../../src/goal/index.js";
+import { checkBudget, createGoalStore, goalStatePath, goalTextSource, newGoalState, registerGoalCommands } from "../../src/goal/index.js";
 import { fixtureCwd, goalConfig } from "./helpers.js";
 
 describe("PRD-013 Phase 1 — the persisted goal record", () => {
@@ -59,6 +59,22 @@ describe("PRD-013 Phase 1 — the persisted goal record", () => {
 		const second = createGoalStore(cwd).load();
 		expect(second!.max_turns).toBe(10);
 		expect(second!.max_cost).toBe(1.25);
+	});
+
+	it("a flagless goal with no configured defaults is uncapped, and starts its own turn", async () => {
+		const cwd = fixtureCwd();
+		const registry = createCommandRegistry();
+		registerGoalCommands(registry, { cwd, config: goalConfig(cwd), costSoFar: () => 0 });
+
+		const set = await registry.dispatch("/goal execute docs/PRDs/xyz.md", { cwd });
+		// The command is the start signal, not just a write: without `start` the
+		// session sat idle after the echo until the user typed again.
+		expect(set.start).toBe("execute docs/PRDs/xyz.md");
+
+		const record = createGoalStore(cwd).load();
+		expect(record!.max_turns).toBe(0);
+		expect(record!.max_cost).toBe(0);
+		expect(checkBudget({ ...record!, turns_used: 99 }, 1000).exceeded).toBe(false);
 	});
 
 	it("AC-1: bare /goal with nothing to derive from refuses instead of creating an inert goal", async () => {

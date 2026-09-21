@@ -72,7 +72,7 @@ describe("PRD-002 Phase 2 — registry and decision log", () => {
 		const sites = session.jev.sites();
 		// Every registered site is enumerable and carries a fallback — that is the
 		// invariant, not the count: LeanPi registers its own sites at activation
-		// (PRD-025's `todo.needed`) alongside whatever a fixture adds.
+		// alongside whatever a fixture adds.
 		expect(sites.every((entry) => typeof entry.fallback === "function")).toBe(true);
 		const site = sites.find((entry) => entry.id === "fixture.gate")!;
 		expect(site.id).toBe("fixture.gate");

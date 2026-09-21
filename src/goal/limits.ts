@@ -9,7 +9,7 @@
 import { resolveCostConfig, type CostConfig } from "../telemetry/pricing.js";
 import { readRuns } from "../telemetry/store.js";
 import type { LeanPiConfig } from "../core/types.js";
-import { DEFAULT_MAX_COST, DEFAULT_MAX_TURNS, type GoalState } from "./state.js";
+import type { GoalState } from "./state.js";
 
 /** The five stop conditions of ROADMAP §42 (FR-136). */
 export type GoalStop = "GOAL_MET" | "GOAL_IMPOSSIBLE" | "BLOCKED" | "BUDGET_EXCEEDED" | "USER_STOPPED";
@@ -36,20 +36,25 @@ export interface BudgetCheck {
 	reason: string;
 }
 
+/** An axis is capped only by a positive finite number; anything else means no cap. */
+function cap(value: number): number | null {
+	return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 /** `turns_used` is already incremented for this boundary, so the cap is `>=`. */
 export function checkBudget(state: GoalState, costSoFar: number): BudgetCheck {
-	const maxTurns = state.max_turns > 0 && Number.isFinite(state.max_turns) ? state.max_turns : DEFAULT_MAX_TURNS;
-	const maxCost = state.max_cost > 0 && Number.isFinite(state.max_cost) ? state.max_cost : DEFAULT_MAX_COST;
-	// A counter that is not a finite number is a corrupt record, and the safe
-	// reading of one is "this goal has had its turns": never an unbounded loop.
-	const used = Number.isFinite(state.turns_used) ? state.turns_used : maxTurns;
-	if (used >= maxTurns) {
+	const maxTurns = cap(state.max_turns);
+	const maxCost = cap(state.max_cost);
+	// A counter that is not a finite number is a corrupt record; with no turn cap
+	// there is nothing to compare it against, so it reads as zero.
+	const used = Number.isFinite(state.turns_used) ? state.turns_used : (maxTurns ?? 0);
+	if (maxTurns !== null && used >= maxTurns) {
 		return { exceeded: true, reason: `turns ${used}/${maxTurns}` };
 	}
-	if (costSoFar >= maxCost) {
+	if (maxCost !== null && costSoFar >= maxCost) {
 		return { exceeded: true, reason: `cost ${money(costSoFar)}/${money(maxCost)}` };
 	}
-	return { exceeded: false, reason: `turns ${used}/${maxTurns}, cost ${money(costSoFar)}/${money(maxCost)}` };
+	return { exceeded: false, reason: `turns ${used}${maxTurns === null ? "" : `/${maxTurns}`}, cost ${money(costSoFar)}${maxCost === null ? "" : `/${money(maxCost)}`}` };
 }
 
 /** PRD-015's accumulated cost for the session, summed from the stored records. */
@@ -64,8 +69,12 @@ export function costReader(cwd: string, sessionId?: string, config?: LeanPiConfi
 	return () => sessionCost(cwd, sessionId, cost);
 }
 
-/** The active goal as `/goal` echoes it: text plus both axes of the budget. */
+/** The active goal as `/goal` echoes it: text plus whichever axes are capped. */
 export function formatGoal(state: GoalState, costSoFar: number): string {
 	const verb = state.active ? "active" : "stopped";
-	return `goal "${state.text}" is ${verb} (turns ${state.turns_used}/${state.max_turns}, cost ${money(costSoFar)}/${money(state.max_cost)})`;
+	const maxTurns = cap(state.max_turns);
+	const maxCost = cap(state.max_cost);
+	const turns = `turns ${state.turns_used}${maxTurns === null ? "" : `/${maxTurns}`}`;
+	const cost = `cost ${money(costSoFar)}${maxCost === null ? "" : `/${money(maxCost)}`}`;
+	return `goal "${state.text}" is ${verb} (${turns}, ${cost})`;
 }

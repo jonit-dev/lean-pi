@@ -66,12 +66,17 @@ export function createGoalHandler(deps: GoalCommandDeps): CommandHandler {
 				deps.sessionId,
 			);
 			store.save(goal);
-			// Setting a goal does not run one: LeanPi evaluates it at the boundary of
-			// turns the user starts. Saying "goal set" alone read as "goal started",
-			// and the silence that followed looked like a harness doing nothing.
+			// Setting a goal starts it. `/goal execute PRD-021` is a task, not a
+			// setting: the echo used to say "send a task to begin" and the session
+			// then sat idle until the user typed again, which read as a hang.
+			const caps = [
+				goal.max_turns > 0 ? `${goal.max_turns} turns` : null,
+				goal.max_cost > 0 ? money(goal.max_cost) : null,
+			].filter((cap) => cap !== null);
 			return {
 				ok: true,
-				text: `✅ goal set — "${goal.text}"\n   it steers the turns you start from here, up to ${goal.max_turns} turns or ${money(goal.max_cost)}\n   send a task to begin · /goal to check it · /goal stop to drop it`,
+				text: `✅ goal set — "${goal.text}"\n   starting now${caps.length > 0 ? `, up to ${caps.join(" or ")}` : " — no turn or cost cap"}\n   /goal to check it · /goal stop to drop it`,
+				start: goal.text,
 			};
 		}
 
