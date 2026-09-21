@@ -249,4 +249,31 @@ describe("PRD-008 Phase 3 — external harness workers", () => {
 		expect(persisted.length).toBeGreaterThan(0);
 		for (const path of persisted) expect(readFileSync(path, "utf8")).not.toContain("sk-secret-LEANPI-7f3a");
 	});
+
+	it("AC-12: a non-fatal vendor warning does not mask the real structured failure", async () => {
+		const cli = installStubCli();
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, configFor(cli, "claude"));
+		const backend = new BackendRegistry(loadConfig(cwd)).byName("claude")!;
+
+		// Claude emits a non-fatal warning on stderr while the structured stdout
+		// result carries the actual failure.
+		const stderr = '[claude-code:unrecognized_model] {"model":"opus[1m]","query_source":"sdk"}\n';
+		const stdout = JSON.stringify({
+			type: "result",
+			subtype: "success",
+			is_error: true,
+			num_turns: 1,
+			api_error_status: 404,
+			result: "There's an issue with the selected model (opus[1m]). It may not exist or you may not have access to it.",
+		});
+		const outcome = await runHarness(backend, { objective: OBJECTIVE, role: "strong", files: [] }, {
+			cwd,
+			spawn: async () => ({ code: 1, signal: null, stdout, stderr, error: null, timedOut: false }),
+		});
+
+		expect(outcome.status).toBe("failed");
+		expect(outcome.status === "failed" && outcome.reason).toContain("may not exist or you may not have access");
+		expect(outcome.status === "failed" && outcome.reason).not.toContain("unrecognized_model");
+	});
 });

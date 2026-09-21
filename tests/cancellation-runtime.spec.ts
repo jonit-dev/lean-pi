@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLeanPiSession, loadConfig, type LeanPiSession } from "../src/index.js";
 import { startStubBackend, type StubBackend } from "./helpers/stub-backend.js";
-import type { JevTransport, JevTransportRequest } from "../src/jev/client.js";
+import type { JevTransport } from "../src/jev/client.js";
 
 function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
 	let resolve!: (value: T) => void;

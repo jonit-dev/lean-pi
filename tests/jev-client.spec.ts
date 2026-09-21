@@ -110,8 +110,17 @@ describe("PRD-002 Phase 1 — typed batched client", () => {
 
 		// A real HTTP server that accepts the request and never answers: the exact
 		// case `defaultTransport`'s caller budget exists for. No custom transport.
+		// The abort fires only once the request has actually arrived, so the test
+		// proves an *outstanding* request is closed rather than aborting pre-connect.
 		let openSockets = 0;
+		let receivedRequest: (() => void) | undefined;
+		const requestReceived = new Promise<void>((resolve) => {
+			receivedRequest = resolve;
+		});
+		let requestSocket: import("node:net").Socket | undefined;
 		const server: Server = createServer((req) => {
+			requestSocket = req.socket;
+			receivedRequest?.();
 			req.on("data", () => {});
 			req.on("end", () => {});
 		});
@@ -127,9 +136,10 @@ describe("PRD-002 Phase 1 — typed batched client", () => {
 		try {
 			const client = createJevClient({ config: jevConfig(cwd, `http://127.0.0.1:${port}/v1/systemone`), cwd });
 			const controller = new AbortController();
-			const timer = setTimeout(() => controller.abort(), 50);
-			const results = await client.ask("fixture.budget", QUESTIONS, { task: "budget" }, { signal: controller.signal });
-			clearTimeout(timer);
+			const ask = client.ask("fixture.budget", QUESTIONS, { task: "budget" }, { signal: controller.signal });
+			await requestReceived;
+			controller.abort();
+			const results = await ask;
 
 			// The fallback answered, and the site recorded the budget reason.
 			expect(results.map((result) => result.questionId)).toEqual(["route", "burden", "needs_review"]);
@@ -138,8 +148,13 @@ describe("PRD-002 Phase 1 — typed batched client", () => {
 			expect(rows[0]!.fallbackUsed).toBe(true);
 			expect(rows[0]!.reason).toBe("compile-budget-exceeded");
 
-			// The aborted fetch closed its socket: nothing is left holding the turn.
-			for (let i = 0; i < 100 && openSockets > 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+			// The aborted fetch closed the exact socket carrying that request:
+			// nothing is left holding the turn.
+			for (let i = 0; i < 100 && !(requestSocket?.destroyed ?? false); i += 1) {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+			}
+			expect(requestSocket).toBeDefined();
+			expect(requestSocket!.destroyed).toBe(true);
 			expect(openSockets).toBe(0);
 		} finally {
 			await new Promise<void>((resolve) => server.close(() => resolve()));
