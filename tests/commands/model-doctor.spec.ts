@@ -65,7 +65,7 @@ describe("/models and /doctor (PRD-016 Phase 2)", () => {
 
 		const models = await fixture.dispatch("/models");
 		expect(models.ok).toBe(true);
-		expect(models.text).toContain("ranking revision 1");
+		expect(models.text).toContain("ranking revision 2");
 		expect(models.text).toMatch(/oldest record \d{4}-\d{2}-\d{2} \(\d+ days old/);
 		// A ranked model carries its score, price, role-fill and evidence kind.
 		expect(models.text).toMatch(

@@ -329,8 +329,10 @@ export async function selectRoute(request: RouteRequest): Promise<RouteDecision>
 					route_cost: entry.prediction.route_cost,
 					reason: `${entry.candidate.backend}/${entry.candidate.model}: predicted route cost $${entry.prediction.route_cost.toFixed(6)}, coding score ${entry.candidate.coding_score}`,
 				})),
+				// The full inventory travels in the question; the band above is the enum.
+				inventory: clearing.inventory,
 			}),
-			state: { candidates: finalists.map((entry) => ({ id: entry.candidate.id, backend: entry.candidate.backend, reason: `$${entry.prediction.route_cost.toFixed(6)}` })), stage: "route" },
+			state: { candidates: finalists.map((entry) => ({ id: entry.candidate.id, backend: entry.candidate.backend, reason: `$${entry.prediction.route_cost.toFixed(6)}` })), inventory: clearing.inventory, stage: "route" },
 			fallback: winner.candidate.id,
 		});
 		// An answer outside the band is ignored; the deterministic winner stands.

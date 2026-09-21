@@ -16,11 +16,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { VENDOR_MODEL_DEFAULT, type HarnessVendor } from "../backends/harness.js";
+import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
 import type { JevClient } from "../jev/client.js";
 import { accept } from "../jev/confidence.js";
 import { ensureSite } from "../jev/registry.js";
 import type { JevQuestion, JevResult } from "../jev/types.js";
-import { MODEL_ROLES, type ModelRole } from "../core/types.js";
+import { MODEL_ROLES, type BackendType, type ModelRole } from "../core/types.js";
 
 export interface ModelCandidate {
 	vendor: HarnessVendor;
@@ -30,6 +31,32 @@ export interface ModelCandidate {
 	model: string;
 	/** How the id was obtained, for the line the bootstrap prints. */
 	source: string;
+}
+
+/** Whether this machine can run a discovered model right now. */
+export type ModelAvailability = "ready" | "signed-out" | "not-installed";
+
+/**
+ * What the machine and the ranking say about one discovered model. These are the
+ * facts JEV needs to judge a model and the ones `/models` prints; a null score or
+ * price is *unknown*, never zero, and is kept distinct from an unusable vendor.
+ */
+export interface ModelFacts {
+	/** How LeanPi would reach it: a vendor CLI (`external_harness`) or a Pi provider (`native`). */
+	execution: BackendType;
+	/** `not-installed`/`signed-out` are exclusions the ballot must state, not errors to hide. */
+	availability: ModelAvailability;
+	/** The vendor's own evidence line, so the exclusion can be acted on. */
+	evidence: string;
+	/** Coding score from the bundled ranking; null is *unknown*. */
+	coding_score: number | null;
+	/** Blended price from the bundled ranking; null is *unknown*. */
+	price_blended_per_mtok: number | null;
+}
+
+/** A discovered model with the facts the role ballot and the JEV prompt carry. */
+export interface DiscoveredModel extends ModelCandidate {
+	facts: ModelFacts;
 }
 
 /**
@@ -64,6 +91,72 @@ function readJsonField(path: string, field: string): string | undefined {
 	}
 }
 
+/**
+ * The documented `claude --model` selectors. They name the vendor's current
+ * model in each tier, so discovery lists them alongside the configured exact id:
+ * a subscription exposes more than the one model its settings file happened to
+ * save. `default` is appended only when the CLI names nothing at all.
+ */
+export const CLAUDE_MODEL_ALIASES = ["opus", "sonnet", "haiku"] as const;
+
+function dedupe(models: readonly { model: string; source: string }[]): { model: string; source: string }[] {
+	const seen = new Set<string>();
+	return models.filter((entry) => (seen.has(entry.model) ? false : (seen.add(entry.model), true)));
+}
+
+/**
+ * Claude's discoverable models: the configured exact id, then the documented
+ * aliases. There is no supported enumeration interface on the CLI, so discovery
+ * is explicitly incomplete here — the aliases plus the saved id, never a guessed
+ * full id.
+ */
+function claudeModels(home: string): { model: string; source: string }[] {
+	const configured = readJsonField(join(home, ".claude.json"), "model") ?? readJsonField(join(home, ".claude", "settings.json"), "model");
+	const found = configured ? [{ model: configured, source: "claude settings" }] : [];
+	for (const alias of CLAUDE_MODEL_ALIASES) found.push({ model: alias, source: "claude alias" });
+	return dedupe(found);
+}
+
+/**
+ * Codex's discoverable models, from the vendor's own local artifacts: the
+ * configured model, any `[profiles.*]` model override, and the catalog the CLI
+ * cached from its app-server `model/list`. No network, no invented flag.
+ * `ponytail:` the cache is the CLI's, so a machine that never ran Codex lists
+ * only its configured id — call it incomplete rather than probing a daemon.
+ */
+function codexModels(home: string): { model: string; source: string }[] {
+	const found: { model: string; source: string }[] = [];
+	const path = join(home, ".codex", "config.toml");
+	if (existsSync(path)) {
+		let section = "";
+		for (const line of readFileSync(path, "utf8").split("\n")) {
+			const header = /^\s*\[([^\]]+)\]\s*$/.exec(line);
+			if (header) {
+				section = header[1] ?? "";
+				continue;
+			}
+			const model = /^\s*model\s*=\s*"([^"]+)"/.exec(line)?.[1];
+			if (!model) continue;
+			if (section === "") found.push({ model, source: "codex config.toml" });
+			else if (section.startsWith("profiles.")) found.push({ model, source: `codex profile ${section.slice("profiles.".length)}` });
+		}
+	}
+	const cache = join(home, ".codex", "models_cache.json");
+	if (existsSync(cache)) {
+		try {
+			const parsed = JSON.parse(readFileSync(cache, "utf8")) as { models?: { slug?: unknown; visibility?: unknown }[] };
+			for (const model of parsed.models ?? []) {
+				if (typeof model.slug === "string" && model.slug.length > 0 && model.visibility !== "hidden") {
+					found.push({ model: model.slug, source: "codex model catalog" });
+				}
+			}
+		} catch {
+			// A cache mid-write is not a reason to lose the configured model.
+		}
+	}
+	return dedupe(found);
+}
+
 /** The models a vendor will actually run here, asked of the vendor itself. */
 export function detectModels(
 	vendor: HarnessVendor,
@@ -91,12 +184,34 @@ export function detectModels(
 		return [{ vendor, model: configured ?? VENDOR_DEFAULT, source: configured ? "opencode.json" : "vendor default" }];
 	}
 	if (vendor === "codex") {
-		const path = join(home, ".codex", "config.toml");
-		const match = existsSync(path) ? /^\s*model\s*=\s*"([^"]+)"/m.exec(readFileSync(path, "utf8")) : null;
-		return [{ vendor, model: match?.[1] ?? VENDOR_DEFAULT, source: match ? "codex config.toml" : "vendor default" }];
+		const found = codexModels(home);
+		return (found.length > 0 ? found : [{ model: VENDOR_DEFAULT, source: "vendor default" }]).map((entry) => ({ vendor, ...entry }));
 	}
-	const configured = readJsonField(join(home, ".claude.json"), "model") ?? readJsonField(join(home, ".claude", "settings.json"), "model");
-	return [{ vendor, model: configured ?? VENDOR_DEFAULT, source: configured ? "claude settings" : "vendor default" }];
+	return claudeModels(home).map((entry) => ({ vendor, ...entry }));
+}
+
+/**
+ * Every model this machine can see, across every vendor CLI, whether or not a
+ * role binds it and whether or not the vendor is signed in. This is the
+ * inventory JEV is asked to judge: a signed-out vendor's models stay in the data
+ * with their exclusion stated, rather than being dropped before the question.
+ */
+export function discoverInventory(
+	options: { env?: NodeJS.ProcessEnv; home?: string; run?: Runner; verify?: boolean; states?: readonly SubscriptionState[] } = {},
+): DiscoveredModel[] {
+	const states = options.states ?? detectVendors({ env: options.env, home: options.home, verify: options.verify, run: options.run });
+	return states.flatMap((state) =>
+		detectModels(state.vendor, { env: options.env, home: options.home, run: options.run }).map((candidate) => ({
+			...candidate,
+			facts: {
+				execution: "external_harness" as BackendType,
+				availability: !state.onPath ? "not-installed" : state.signedIn ? "ready" : "signed-out",
+				evidence: state.evidence,
+				coding_score: null,
+				price_blended_per_mtok: null,
+			},
+		})),
+	);
 }
 
 export const ALLOCATE_SITE_ID = "bootstrap.role_models";
@@ -104,6 +219,26 @@ export const ALLOCATE_SITE_ID = "bootstrap.role_models";
 /** `vendor:model`, the key JEV chooses by and the map this module answers with. */
 export function candidateKey(candidate: ModelCandidate): string {
 	return `${candidate.backend ?? candidate.vendor}:${candidate.model}`;
+}
+
+/** The one line that states a model's availability, score and price — unknown included. */
+export function modelFactsLine(facts: ModelFacts): string {
+	const score = facts.coding_score === null ? "coding_score unknown" : `coding_score ${facts.coding_score}`;
+	const price = facts.price_blended_per_mtok === null ? "price unknown" : `price $${facts.price_blended_per_mtok}/Mtok`;
+	return `${facts.execution}, ${facts.availability}, ${score}, ${price}`;
+}
+
+function candidateLabel(candidate: ModelCandidate & { facts?: ModelFacts }): string {
+	return candidate.facts ? `${candidate.vendor} ${candidate.model} (${modelFactsLine(candidate.facts)})` : `${candidate.vendor} ${candidate.model}`;
+}
+
+/**
+ * One line per discovered model, ineligible ones included. This is the decision
+ * data the JEV prompt carries: `state` is hashed in `metadata-only` mode, so
+ * anything JEV must reason about has to travel inside the question itself.
+ */
+export function inventoryLines(inventory: readonly (ModelCandidate & { facts?: ModelFacts })[]): string[] {
+	return inventory.map((candidate) => `${candidateKey(candidate)} (${candidate.facts ? modelFactsLine(candidate.facts) : "metadata unknown"})`);
 }
 
 const ROLE_QUESTION: Record<ModelRole, string> = {
@@ -115,17 +250,22 @@ const ROLE_QUESTION: Record<ModelRole, string> = {
 	review_strong: "which model should verify high-risk changes, where a missed defect is expensive?",
 };
 
-export function allocationQuestions(candidates: readonly ModelCandidate[]): JevQuestion[] {
+export function allocationQuestions(candidates: readonly ModelCandidate[], inventory: readonly (ModelCandidate & { facts?: ModelFacts })[] = candidates): JevQuestion[] {
+	// Only the usable candidates are options: JEV may pick a model, not a vendor
+	// this machine cannot run. The full inventory — signed-out vendors included —
+	// rides in the question text as decision data, so the exclusion is visible.
 	const options: Record<string, string> = {};
 	for (const candidate of candidates) {
-		options[candidateKey(candidate)] = `${candidate.vendor} ${candidate.model}`;
+		options[candidateKey(candidate)] = candidateLabel(candidate);
 	}
+	const data = inventoryLines(inventory).join("; ");
 	return MODEL_ROLES.map((role) => ({
 		id: role,
 		kind: "Choice" as const,
 		// The question names the criterion; the model ids are the options, so the
-		// capability/price knowledge JEV applies is about these exact models.
-		text: `Routing a coding harness across the subscriptions this machine has, ${ROLE_QUESTION[role]} Judge by published capability and price data for these models.`,
+		// capability/price knowledge JEV applies is about these exact models. The
+		// inventory line is the part `metadata-only` would otherwise hash away.
+		text: `Models discovered on this machine: ${data}. Routing a coding harness across the subscriptions this machine has, ${ROLE_QUESTION[role]} Judge by published capability and price data for these models; unknown metadata is not evidence against a model.`,
 		options,
 	}));
 }
@@ -166,9 +306,10 @@ export interface Allocation {
 export async function allocateRoles(
 	client: Pick<JevClient, "ask" | "fallbackCount">,
 	candidates: readonly ModelCandidate[],
+	inventory: readonly (ModelCandidate & { facts?: ModelFacts })[] = candidates,
 ): Promise<Allocation> {
 	if (candidates.length === 0) throw new Error("no model candidates to allocate");
-	const questions = allocationQuestions(candidates);
+	const questions = allocationQuestions(candidates, inventory);
 	const fallback = ladderAllocation(candidates);
 	ensureSite({
 		id: ALLOCATE_SITE_ID,

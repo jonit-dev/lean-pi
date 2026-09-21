@@ -13,7 +13,7 @@
  * would only shadow Pi's command with a weaker one.
  */
 import { MODEL_ROLES, type BackendRef, type ModelRole } from "../core/types.js";
-import { capabilityRows, loadRanking, roleResolutionsOf, type CapabilityRow } from "../capability/index.js";
+import { capabilityRows, loadRanking, roleResolutionsOf, type CapabilityGap, type CapabilityRow } from "../capability/index.js";
 import type { CommandRegistry, CommandResult } from "./registry.js";
 import { probeBackends, type CommandSurface } from "./surface.js";
 
@@ -26,7 +26,7 @@ function rowFor(rows: readonly CapabilityRow[], ref: BackendRef): CapabilityRow 
 	);
 }
 
-function renderModelRow(surface: CommandSurface, role: ModelRole, rows: readonly CapabilityRow[]): string {
+function renderModelRow(surface: CommandSurface, role: ModelRole, rows: readonly CapabilityRow[], gap?: CapabilityGap): string {
 	const configured = surface.config.models[role];
 	const override = surface.bindings.get(role);
 	const resolved = surface.bindingFor(role);
@@ -55,18 +55,23 @@ function renderModelRow(surface: CommandSurface, role: ModelRole, rows: readonly
 		!override && resolved.ref !== null && (resolved.ref.backend !== shown.backend || resolved.ref.model !== shown.model)
 			? `  resolved: ${resolved.ref.backend}/${resolved.ref.model}`
 			: "";
-	return `${role.padEnd(14)} ${`${shown.backend}/${shown.model}`.padEnd(28)} ${score}  ${price}  ${fills}  ${evidence}  ${availability}${session}${differs}`;
+	// The role floor is not met by the resolved model: named here rather than
+	// swallowed, so an unmeasured CLI model is visibly unmeasured.
+	const gapLine = gap ? `  capability_gap: ${gap.reason}` : "";
+	return `${role.padEnd(14)} ${`${shown.backend}/${shown.model}`.padEnd(28)} ${score}  ${price}  ${fills}  ${evidence}  ${availability}${session}${differs}${gapLine}`;
 }
 
 export async function renderModels(surface: CommandSurface): Promise<string> {
 	const ranking = loadRanking(surface.config);
-	const rows = capabilityRows(ranking, roleResolutionsOf(ranking, surface.config));
+	const resolutions = roleResolutionsOf(ranking, surface.config);
+	const rows = capabilityRows(ranking, resolutions);
+	const gaps = new Map(resolutions.map((selection) => [selection.role, selection.model_id === null ? undefined : selection.capability_gap]));
 	if (surface.probes.size === 0) await probeBackends(surface);
 
 	const lines = [
 		`ranking revision ${ranking.revision} — oldest record ${ranking.oldest_updated_at} (${ranking.age_days} days old${ranking.stale ? ", stale" : ""})`,
 		...MODEL_ROLES.filter((role) => surface.config.models[role] !== undefined || surface.bindings.has(role)).map((role) =>
-			renderModelRow(surface, role, rows),
+			renderModelRow(surface, role, rows, gaps.get(role)),
 		),
 	];
 	return lines.join("\n");

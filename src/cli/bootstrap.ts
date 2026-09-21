@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
-import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type Allocation, type ModelCandidate } from "./allocate.js";
+import { allocateRoles, candidateKey, discoverInventory, ladderAllocation, VENDOR_DEFAULT, type Allocation, type DiscoveredModel, type ModelCandidate } from "./allocate.js";
 import { CONFIG_FILENAME, configPathFor, loadConfig, userConfigPath } from "../core/config.js";
 import { resolvePiCli } from "./launch.js";
 import { MODEL_ROLES, type LeanPiConfig, type ModelRole } from "../core/types.js";
@@ -124,6 +124,12 @@ export interface AutoConfigResult {
 	 */
 	outcome: "existing" | "written" | "no-subscription";
 	usable: SubscriptionState[];
+	/**
+	 * Every model this machine can see, across every vendor CLI, whether or not a
+	 * role binds it and whether or not the vendor is signed in. The inventory JEV
+	 * is asked to judge and `/models` can list; empty when a config already exists.
+	 */
+	inventory: DiscoveredModel[];
 	/** One line a human can read: what was detected, and what was written. */
 	summary: string;
 }
@@ -229,19 +235,24 @@ export async function autoConfigure(
 	const { cwd, env, home } = environment(options);
 	const path = configPathFor(cwd, env);
 	if (existsSync(path)) {
-		return { path, created: false, outcome: "existing", usable: [], summary: `configuration: ${path}` };
+		return { path, created: false, outcome: "existing", usable: [], inventory: [], summary: `configuration: ${path}` };
 	}
 	// `verify: true`: a first run may spend a second asking three CLIs whether
 	// they are actually logged in, rather than writing a config against a vendor
 	// that only *looks* signed in from its credential file.
 	const detected = detectVendors({ env, home, verify: true });
 	const usable = detected.filter((state) => state.onPath && state.signedIn);
+	// Discovery covers every vendor the machine has, signed in or not: the
+	// inventory is JEV's decision data, and a signed-out vendor's models are an
+	// exclusion to state rather than a candidate to drop before the question.
+	const inventory = discoverInventory({ env, home, verify: true, states: detected });
 	if (usable.length === 0) {
 		return {
 			path,
 			created: false,
 			outcome: "no-subscription",
 			usable,
+			inventory,
 			// One readiness block, not one verdict. The old line said "no vendor
 			// CLI is both installed and signed in" and threw the probe results
 			// away, so a user with Claude installed and signed out was told the
@@ -257,17 +268,23 @@ export async function autoConfigure(
 	// CLI. Where both are available for the same subscription the provider wins,
 	// because that is the one Pi's own loop can run.
 	const nativeOpenCode = usable.some((state) => state.vendor === "opencode") && (options.piReady ?? piProviderReady)(OPENCODE_GO_PROVIDER);
-	const candidates = usable.flatMap((state) =>
-		detectModels(state.vendor, { env, home }).map((candidate) =>
-			nativeOpenCode && candidate.vendor === "opencode"
-				? { ...candidate, backend: OPENCODE_GO_PROVIDER, model: candidate.model.replace(`${OPENCODE_GO_PROVIDER}/`, "") }
-				: candidate,
-		),
-	);
+	// One remap, applied to the inventory and the ballot together so JEV judges
+	// the same execution route the config will dispatch.
+	const remap = (candidate: DiscoveredModel): DiscoveredModel =>
+		nativeOpenCode && candidate.vendor === "opencode"
+			? {
+					...candidate,
+					backend: OPENCODE_GO_PROVIDER,
+					model: candidate.model.replace(`${OPENCODE_GO_PROVIDER}/`, ""),
+					facts: { ...candidate.facts, execution: "native" },
+				}
+			: candidate;
+	const fullInventory = inventory.map(remap);
+	const candidates: DiscoveredModel[] = fullInventory.filter((candidate) => usable.some((state) => state.vendor === candidate.vendor));
 	const allocation =
 		options.client === undefined
 			? { roles: ladderAllocation(candidates), fallbackUsed: true, decided: [] }
-			: await allocateRoles(options.client, candidates);
+			: await allocateRoles(options.client, candidates, fullInventory);
 	// The same computation discovery uses, so the file written here is the file
 	// found on the next line.
 	const target = userConfigPath({ ...env, HOME: home }) ?? join(cwd, CONFIG_FILENAME);
@@ -278,6 +295,7 @@ export async function autoConfigure(
 		created: true,
 		outcome: "written",
 		usable,
+		inventory: fullInventory,
 		// One line, and the banner prints the resulting map immediately after, so
 		// this says where the file is and who decided — not the map twice.
 		summary: `no ${CONFIG_FILENAME} found — wrote ${target}; detected ${usable.map((state) => state.vendor).join(", ")}; roles by ${describeAllocation(allocation)}`,

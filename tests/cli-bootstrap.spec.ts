@@ -9,16 +9,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { autoConfigure, jevWarning, missingBackendKeys, requireJev, sessionModelFor, startupBanner, unusableBackendKeys } from "../src/cli/bootstrap.js";
-import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
-import { MODEL_ROLES } from "../src/core/types.js";
+import { allocateRoles, candidateKey, detectModels, discoverInventory, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
+import { MODEL_ROLES, type LeanPiConfig } from "../src/core/types.js";
+import { resolveRole } from "../src/core/roles.js";
 import type { JevResult } from "../src/jev/types.js";
+import { createJevClient } from "../src/jev/client.js";
 import { HARNESS_DESCRIPTORS, runHarness } from "../src/backends/harness.js";
+import { BackendRegistry, runWorkerTurn } from "../src/backends/index.js";
 import { launchPlan, parseLeanPiFlags } from "../src/cli/launch.js";
 import { statusLine } from "../src/cli/statusline.js";
-import { probeVendor } from "../src/backends/subscriptions.js";
+import { detectVendors, probeVendor } from "../src/backends/subscriptions.js";
 import { openPrdLane } from "../src/prd/dispatch.js";
 import { activate, clearLanes } from "../src/index.js";
 import { loadConfig } from "../src/core/config.js";
+import { startStubJev } from "./helpers/stub-jev.js";
 
 /** A machine with the vendor CLIs installed and logged in. */
 function machine(options: { vendors: readonly string[]; signedIn?: boolean }): { cwd: string; home: string; env: NodeJS.ProcessEnv } {
@@ -295,7 +299,12 @@ describe("model candidates", () => {
 		const { home, env } = machine({ vendors: ["claude", "codex", "opencode"] });
 
 		expect(detectModels("codex", { env, home })).toEqual([{ vendor: "codex", model: "gpt-6-astra", source: "codex config.toml" }]);
-		expect(detectModels("claude", { env, home })).toEqual([{ vendor: "claude", model: "opus", source: "claude settings" }]);
+		// Claude has no enumeration interface: the saved exact id plus the
+		// documented `--model` aliases are the whole discoverable set, and the
+		// aliases are what make more than one model visible at all.
+		const claude = detectModels("claude", { env, home });
+		expect(claude[0]).toEqual({ vendor: "claude", model: "opus", source: "claude settings" });
+		expect(claude.map((candidate) => candidate.model)).toEqual(["opus", "sonnet", "haiku"]);
 		// `opencode models` is the one vendor that lists, and the one LeanPi passes
 		// `--model` to.
 		const listed = detectModels("opencode", {
@@ -332,6 +341,125 @@ describe("model candidates", () => {
 		expect(candidateKey(ladder.quick)).toBe("opencode:flash");
 		expect(candidateKey(ladder.strong)).toBe("claude:opus");
 		expect(candidateKey(ladder.review_strong)).toBe("claude:opus");
+	});
+});
+
+describe("PRD-030 — discovery covers every provider and its models", () => {
+	/** A machine with a second Codex model in the CLI's own cached catalog. */
+	function catalogMachine(): { cwd: string; home: string; env: NodeJS.ProcessEnv } {
+		const machineEnv = machine({ vendors: ["claude", "codex", "opencode"] });
+		mkdirSync(join(machineEnv.home, ".codex"), { recursive: true });
+		writeFileSync(
+			join(machineEnv.home, ".codex", "models_cache.json"),
+			JSON.stringify({ models: [{ slug: "gpt-6-sol", visibility: "list" }, { slug: "gpt-6-hidden", visibility: "hidden" }] }),
+		);
+		return machineEnv;
+	}
+
+	it("AC-1: lists every provider's models with availability, execution type and explicit unknowns", () => {
+		const { home, env } = catalogMachine();
+
+		const inventory = discoverInventory({
+			env,
+			home,
+			run: (command, args) => (command === "opencode" && args[0] === "models" ? "opencode-go/deepseek-v4.1-flash\nopencode-go/muse-spark-1.3-contributor\n" : ""),
+		});
+
+		const byVendor = (vendor: string) => inventory.filter((model) => model.vendor === vendor);
+		expect(byVendor("claude").length).toBeGreaterThanOrEqual(2);
+		expect(byVendor("codex").length).toBeGreaterThanOrEqual(2);
+		expect(byVendor("opencode").length).toBeGreaterThanOrEqual(1);
+		// The vendor's own catalog is the source; a hidden entry is not offered.
+		expect(byVendor("codex").map((model) => model.model)).toEqual(expect.arrayContaining(["gpt-6-astra", "gpt-6-sol"]));
+		expect(byVendor("codex").map((model) => model.model)).not.toContain("gpt-6-hidden");
+		for (const model of inventory) {
+			expect(model.facts.execution).toBe("external_harness");
+			expect(model.facts.availability).toBe("ready");
+			// No invented metadata: an unmeasured model carries an explicit unknown.
+			expect(model.facts.coding_score).toBeNull();
+			expect(model.facts.price_blended_per_mtok).toBeNull();
+		}
+	});
+
+	it("AC-1: keeps a signed-out provider's models, marked, instead of dropping them before the question", () => {
+		const { home, env } = machine({ vendors: ["claude", "codex"], signedIn: false });
+
+		const inventory = discoverInventory({ env, home, states: detectVendors({ env, home, verify: true }) });
+
+		const codex = inventory.filter((model) => model.vendor === "codex");
+		expect(codex.length).toBeGreaterThanOrEqual(1);
+		expect(codex.every((model) => model.facts.availability === "signed-out")).toBe(true);
+		expect(inventory.some((model) => model.vendor === "claude")).toBe(true);
+	});
+});
+
+describe("PRD-030 — the inventory reaches JEV and the choice reaches the CLI", () => {
+	it("AC-2: carries every provider's models, binds a non-default Codex pick, and forwards it as --model", async () => {
+		const { cwd, home, env } = machine({ vendors: ["claude", "codex", "opencode"] });
+		mkdirSync(join(home, ".codex"), { recursive: true });
+		writeFileSync(join(home, ".codex", "models_cache.json"), JSON.stringify({ models: [{ slug: "gpt-6-sol", visibility: "list" }] }));
+
+		// The pick is a Codex model the configured `~/.codex/config.toml` does not
+		// name — the non-default candidate the old single-id ballot could not offer.
+		const chosen = "codex:gpt-6-sol";
+		const stub = await startStubJev([
+			(body) => {
+				const questions = (body.questions ?? {}) as Record<string, unknown>;
+				return {
+					answers: Object.fromEntries(
+						Object.keys(questions).map((id) => [id, { type: "choice", choice: chosen, probabilities: {}, confidence: 0.95 }]),
+					),
+				};
+			},
+		]);
+		try {
+			const jevConfig = { jev: { mode: "metadata-only", apiKey: "test-key", endpoint: stub.url, model: "jev-latest" } } as unknown as LeanPiConfig;
+			const client = createJevClient({ config: jevConfig, cwd, env, endpoint: stub.url });
+
+			const result = await autoConfigure({ cwd, home, env, client, piReady: () => false });
+			expect(result.created).toBe(true);
+
+			// The request actually sent: the enum is the eligible candidates, and the
+			// prompt carries the whole inventory — which survives `metadata-only`,
+			// where only `state` is hashed.
+			const request = stub.requests[0];
+			expect(request).toBeDefined();
+			const questions = request!.body.questions as Record<string, { instructions: string; criteria: Record<string, string> }>;
+			const quick = questions.quick!;
+			const keys = Object.keys(quick.criteria);
+			expect(keys.filter((key) => key.startsWith("claude:")).length).toBeGreaterThanOrEqual(2);
+			expect(keys.filter((key) => key.startsWith("codex:")).length).toBeGreaterThanOrEqual(2);
+			expect(keys.some((key) => key.startsWith("opencode"))).toBe(true);
+			expect(quick.instructions).toContain("codex:gpt-6-sol");
+			expect(quick.instructions).toContain("gpt-6-astra");
+			expect(quick.criteria[chosen]).toContain("external_harness");
+
+			// The persisted per-role binding.
+			const loaded = loadConfig(cwd, {}, env);
+			const codexRoles = MODEL_ROLES.filter((role) => loaded.models[role]?.backend === "codex");
+			expect(codexRoles.length).toBeGreaterThan(0);
+			expect(codexRoles.every((role) => loaded.models[role]?.model === "gpt-6-sol")).toBe(true);
+			expect(resolveRole(loaded, codexRoles[0]!)).toEqual({ backend: "codex", model: "gpt-6-sol", type: "external_harness" });
+
+			// And the persisted value reaches the CLI argv through the spawn seam.
+			const spawned: string[][] = [];
+			await runWorkerTurn(
+				{ objective: "x", role: codexRoles[0]! },
+				{
+					registry: new BackendRegistry(loaded),
+					cwd,
+					exclude: ["claude", "opencode"],
+					spawn: async (request) => {
+						spawned.push(request.args);
+						return { code: 0, signal: null, stdout: JSON.stringify({ text: "done" }), stderr: "", error: null, timedOut: false };
+					},
+				},
+			);
+			const args = spawned[0]!;
+			expect(args[args.indexOf("--model") + 1]).toBe("gpt-6-sol");
+		} finally {
+			await stub.close();
+		}
 	});
 });
 

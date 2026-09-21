@@ -159,3 +159,29 @@ describe("PRD-024 Phase 3 — the fallback (AC-5 negative control)", () => {
 		expect(() => resolveRole(config, "quick")).toThrowError(/pin names "ghost"/);
 	});
 });
+
+describe("PRD-030 — a configured CLI model with no measured score", () => {
+	// A CLI-backed model enters the ranking as its own record with a null score
+	// and price: unmeasured, never fabricated, and never aliased to a scored
+	// record. It still binds, so the configured choice resolves to itself and the
+	// shortfall is reported instead of silently falling back.
+	const models = [
+		record({ model_id: "gpt-6-astra", aliases: ["openai/gpt-6-astra"], provider: "openai", backend_hint: "metered", coding_score: null, general_score: null, price_blended_per_mtok: null }),
+	];
+	const config = fixtureConfig({
+		models: { strong: { backend: "metered", model: "gpt-6-astra" } },
+		capability: { rankingFile: writeRanking(models), roles: { strong: { min_coding_index: 85 } } },
+	});
+
+	it("AC-4: binds as its own record and reports the capability gap", () => {
+		const selection = selectRoleModel("strong", loadRanking(config), config);
+		expect(selection.model_id).toBe("gpt-6-astra");
+		expect(selection.ref).toEqual({ backend: "metered", model: "gpt-6-astra", type: "native" });
+		expect(selection.capability_gap?.best_available).toBeNull();
+		expect(selection.capability_gap?.reason).toContain("no known coding score");
+	});
+
+	it("AC-4: resolveRole returns the binding rather than the static fallback", () => {
+		expect(resolveRole(config, "strong")).toEqual({ backend: "metered", model: "gpt-6-astra", type: "native" });
+	});
+});
