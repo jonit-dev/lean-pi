@@ -25,9 +25,23 @@ import type { RequiredCapability } from "../compiler/contract.js";
 import { isModelRole, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import type { RouteCandidate } from "./cost.js";
 
+export interface InventoryEntry {
+	/** The `model_id` a candidate id uses. */
+	id: string;
+	backend: string;
+	/** Why this model is or is not in this turn's clearing set. */
+	reason: string;
+}
+
 export interface ClearingResult {
 	/** Every candidate that cleared the floor, ranked by `route_cost` by this PRD. */
 	candidates: RouteCandidate[];
+	/**
+	 * Every model the ranking or the config knows, eligible or excluded, with the
+	 * reason. Runtime JEV gets this as decision data; the eligible candidates above
+	 * are the only enum it may choose from.
+	 */
+	inventory?: InventoryEntry[];
 	/** Present when nothing cleared: an escalation, never a dispatch (PRD-024 AC-4). */
 	capability_gap?: CapabilityGap;
 }
@@ -72,6 +86,44 @@ export function defaultClearingSource(config: LeanPiConfig): ClearingSource {
 				priority: backend?.priority ?? 0,
 			});
 		}
-		return { candidates, ...(selection.capability_gap ? { capability_gap: selection.capability_gap } : {}) };
+		return { candidates, inventory: inventoryOf(ranking, config, candidates), ...(selection.capability_gap ? { capability_gap: selection.capability_gap } : {}) };
 	};
+}
+
+/**
+ * Every model the runtime knows, with why it is or is not eligible this turn.
+ * The ranking is the inventory; a configured model the ranking does not carry is
+ * appended as unmeasured. JEV sees all of it, chooses only from the eligible set.
+ */
+function inventoryOf(ranking: Ranking, config: LeanPiConfig, eligible: readonly RouteCandidate[]): InventoryEntry[] {
+	const eligibleKeys = new Set(eligible.map((candidate) => candidate.id));
+	const rankedSpellings = new Set(ranking.models.flatMap((record) => [record.model_id, ...record.aliases]));
+	const entries: InventoryEntry[] = [];
+	const seen = new Set<string>();
+	for (const record of ranking.models) {
+		const binding = record.backend_binding;
+		const key = binding ? `${binding.backend}/${record.model_id}` : record.model_id;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const reason =
+			binding === null
+				? "no enabled backend binds it"
+				: eligibleKeys.has(record.model_id)
+					? "clears the floor this turn"
+					: record.coding_score === null
+						? "no known coding score"
+						: `coding score ${record.coding_score} below the requested floor`;
+		entries.push({ id: record.model_id, backend: binding?.backend ?? "", reason });
+	}
+	for (const [role, entry] of Object.entries(config.models)) {
+		if (!isModelRole(role) || !entry) continue;
+		// A config entry the ranking already carries (by id or alias) is listed
+		// above; only a genuinely unmeasured spelling is appended here.
+		if (rankedSpellings.has(entry.model)) continue;
+		const key = `${entry.backend}/${entry.model}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		entries.push({ id: entry.model, backend: entry.backend, reason: "not in the ranking (unmeasured)" });
+	}
+	return entries;
 }

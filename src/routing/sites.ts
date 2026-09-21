@@ -26,6 +26,12 @@ export const DELEGATION_QUESTION_ID = "delegation";
 export interface QuotaPreferenceState {
 	/** The tie-band members, cheapest first — the only ids an answer may name. */
 	candidates: { id: string; backend: string; route_cost: number; reason: string }[];
+	/**
+	 * Models the runtime knows that are not in the tie band, with why. Decision
+	 * data, not options: it travels in the question text because `state` is hashed
+	 * in `metadata-only` mode, while an answer may only name a band member.
+	 */
+	inventory?: { id: string; backend: string; reason: string }[];
 }
 
 export interface EffortState {
@@ -48,11 +54,20 @@ export const EFFORT_RUBRIC: Record<EffortLevel, string> = {
 
 /** One Choice question, restricted to the tie band the deterministic scorer produced. */
 export function quotaPreferenceQuestions(state: QuotaPreferenceState): JevQuestion[] {
+	// The full inventory is stated, the eligible band is the enum. A model that
+	// did not clear the bar is visible to JEV but cannot be chosen, so the
+	// constraint stays the deterministic scorer's.
+	const band = new Set(state.candidates.map((candidate) => candidate.id));
+	const excluded = (state.inventory ?? []).filter((entry) => !band.has(entry.id));
+	const inventoryLine =
+		excluded.length === 0
+			? ""
+			: ` Other models on this machine: ${excluded.map((entry) => `${entry.backend === "" ? "" : `${entry.backend}/`}${entry.id} (${entry.reason})`).join("; ")}.`;
 	return [
 		{
 			id: QUOTA_QUESTION_ID,
 			kind: "Choice",
-			text: "Candidates A and B both meet the capability bar for this task; which is more likely to succeed on the first attempt?",
+			text: `Candidates A and B both meet the capability bar for this task; which is more likely to succeed on the first attempt?${inventoryLine}`,
 			options: Object.fromEntries(state.candidates.map((candidate) => [candidate.id, candidate.reason])),
 		},
 	];

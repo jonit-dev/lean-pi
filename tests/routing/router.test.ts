@@ -226,6 +226,23 @@ describe("AC-5 — the JEV sites sit above the deterministic path", () => {
 		expect(row).toMatchObject({ answer: "generic-model", fallback_used: false });
 	});
 
+	it("AC-3: gives JEV the full inventory with exclusion reasons while the enum stays the tie band", async () => {
+		const { client, stub, config, cwd } = await withStubJev(namedChoice("generic-model"), {
+			tie_band_usd: 0.05,
+			sites: { "routing.quota_preference": true, "routing.reasoning_effort": false, "routing.delegation_worth": false },
+		});
+		const decision = await selectRoute({ contract, config, cwd, history: HISTORY, client, slices: 1 });
+
+		const questions = (stub.requests[0]?.body.questions ?? {}) as Record<string, { instructions: string; criteria: Record<string, string> }>;
+		const quota = questions.candidate!;
+		// The below-floor model is decision data in the prompt — JEV is told why it
+		// is out — but it is never an option it could choose.
+		expect(quota.instructions).toContain("local/weak-ts");
+		expect(quota.instructions).toContain("below the requested floor");
+		expect(Object.keys(quota.criteria)).not.toContain("weak-ts");
+		expect(decision.selected?.candidate.id).toBe("generic-model");
+	});
+
 	it("ignores an answer naming a candidate outside the clearing set", async () => {
 		const { client, stub, config, cwd } = await withStubJev(namedChoice("not-a-candidate"), {
 			tie_band_usd: 0.05,

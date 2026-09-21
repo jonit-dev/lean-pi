@@ -63,8 +63,32 @@ export function baselineToolDefinitions(cwd: string): ToolDefinition[] {
 	return definitions;
 }
 
+/**
+ * Baseline names `pi-claude-code-ui` registers itself when the launcher attaches
+ * it (`launch.ts`), so LeanPi must not.
+ *
+ * Pi refuses a second registration of a name and drops the whole extension with
+ * it — three conflicts left the compact renderer unloaded entirely. Yielding
+ * costs nothing: `read`, `edit` and `write` are Pi's own definitions passed
+ * through unchanged on both sides, and PRD-017's guard is a `tool_call` hook
+ * keyed by name, not a wrapper around the definition. `search` and `execute`
+ * stay LeanPi's — the renamed names never collide, and `execute` carries the
+ * command timeout and the spawn environment.
+ */
+export const YIELDED_TOOL_NAMES: readonly string[] = ["read", "edit", "write"];
+
+/** Whether the compact UI extension is attached to this Pi process. */
+export function compactUiAttached(argv: readonly string[] = process.argv): boolean {
+	return argv.some((argument) => argument.includes("pi-claude-code-ui"));
+}
+
 /** Registers the five baseline tools on the extension. Returns the names for the session allowlist. */
-export function registerBaselineTools(pi: ExtensionAPI, cwd: string): string[] {
-	for (const definition of baselineToolDefinitions(cwd)) pi.registerTool(definition);
+export function registerBaselineTools(pi: ExtensionAPI, cwd: string, yielded: readonly string[] = []): string[] {
+	for (const definition of baselineToolDefinitions(cwd)) {
+		if (yielded.includes(definition.name)) continue;
+		pi.registerTool(definition);
+	}
+	// Every baseline name stays on the allowlist: a yielded one is registered by
+	// the extension that took it, under the same name the model already knows.
 	return [...BASELINE_TOOL_NAMES];
 }

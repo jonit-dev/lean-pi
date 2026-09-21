@@ -15,6 +15,7 @@ export {
 	GOAL_USAGE,
 	goalStatePath,
 	goalTextSource,
+	isRunningHere,
 	newGoalState,
 	parseGoalArgs,
 	type GoalArgs,

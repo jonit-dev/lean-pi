@@ -116,6 +116,7 @@ export function loadRanking(config: LeanPiConfig, options: LoadRankingOptions = 
 
 let cached: { key: string; ranking: Ranking } | null = null;
 const reportedFallbacks = new Set<string>();
+const reportedGaps = new Set<string>();
 
 function rankingPathOf(config: LeanPiConfig): string {
 	return capabilityConfigOf(config).rankingFile ?? BUNDLED_RANKING_PATH;
@@ -131,8 +132,21 @@ function sourceKeyOf(path: string): string {
 	}
 }
 
+/**
+ * The config facts `loadRanking` bakes into each record's `backend_binding`. Two
+ * configs can share the bundled file and still resolve different bindings, so the
+ * role map and backend enablement are part of the cache identity, not just the
+ * file's mtime.
+ */
+function bindingKeyOf(config: LeanPiConfig): string {
+	return JSON.stringify([
+		config.models,
+		Object.entries(config.backends).map(([name, entry]) => [name, entry.type, entry.enabled !== false]),
+	]);
+}
+
 function rankingFor(config: LeanPiConfig): Ranking {
-	const key = sourceKeyOf(rankingPathOf(config));
+	const key = `${sourceKeyOf(rankingPathOf(config))}:${bindingKeyOf(config)}`;
 	if (cached?.key === key) return cached.ranking;
 	const ranking = loadRanking(config);
 	cached = { key, ranking };
@@ -158,12 +172,22 @@ export function resolveRoleViaRanking(config: LeanPiConfig, role: ModelRole): Ba
 		}
 		return null;
 	}
-	return selectRoleModel(role, ranking, config).ref;
+	const selection = selectRoleModel(role, ranking, config);
+	// A gap is not a silent fallback: the resolved binding is returned either way,
+	// and the shortfall is named once per role so a machine running an unmeasured
+	// CLI model says so instead of looking like a clean selection. A config whose
+	// models the ranking does not carry at all (model_id null) is the ordinary
+	// static path, not a gap worth reporting.
+	if (selection.capability_gap && selection.model_id !== null && !reportedGaps.has(role)) {
+		reportedGaps.add(role);
+		process.stderr.write(`leanpi: capability gap (${role}): ${selection.capability_gap.reason}\n`);
+	}
+	return selection.ref;
 }
 
 export { capabilityConfigOf, DEFAULT_ROLE_SETTINGS, DEFAULT_STALENESS_DAYS, roleResolutionsOf, selectRoleModel, UnknownPinError } from "./roles.js";
 export type { CapabilityRoleSetting, CapabilitySetting, ResolvedCapabilitySetting, RoleSelection } from "./roles.js";
-export { boundCandidates, candidateRef, compareCandidates, findRankedModel, selectCheapestClearing } from "./select.js";
+export { boundCandidates, boundRecords, candidateRef, compareCandidates, findRankedModel, selectCheapestClearing } from "./select.js";
 export type { CapabilityCandidate, CapabilityGap, ClearingSelection } from "./select.js";
 export { EVIDENCE_VALUES, RankingUnavailableError, RankingValidationError, SPEED_TIERS, parseRankingFile } from "./schema.js";
 export type { Evidence, ModelCapability, RankedModel, Ranking, RankingFile, SpeedTier } from "./schema.js";

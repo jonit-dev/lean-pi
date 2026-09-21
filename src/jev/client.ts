@@ -63,6 +63,15 @@ export interface JevClient {
 	sites(): DecisionSite[];
 	/** Token usage of the most recently resolved site; zero when it fell back. */
 	lastUsage(): JevUsage;
+	/**
+	 * Decisions JEV itself answered this session, fallbacks excluded.
+	 *
+	 * JEV is the part of LeanPi a user cannot see working: it is never a tool, it
+	 * emits nothing, and a session where it answered every routing question looks
+	 * exactly like one where it was never configured. This is what lets the turn
+	 * report say which it was.
+	 */
+	answeredCount(): number;
 	getMode(): JevMode;
 	setMode(mode: JevMode): void;
 	fallbackCount(): number;
@@ -180,6 +189,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 	let lastUsage: JevUsage = emptyUsage();
 	let mode: JevMode = config.jev.mode;
 	let fallbackCount = 0;
+	let answeredCount = 0;
 	let reachable = false;
 	let modelVersion = model;
 
@@ -289,6 +299,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			}
 			log.append(rowFor(site, accepted, response.usage));
 			lastUsage = response.usage;
+			answeredCount += 1;
 			return accepted;
 		},
 
@@ -299,6 +310,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			mode = next;
 		},
 		fallbackCount: () => fallbackCount,
+		answeredCount: () => answeredCount,
 		credentialSource: () => currentCredential().source,
 		async status() {
 			const credential = currentCredential();

@@ -63,6 +63,22 @@ describe("PRD-024 Phase 1 — the shipped ranking", () => {
 		expect(ranking.models.map((model) => model.model_id)).toEqual(ids);
 	});
 
+	it("AC-4: CLI-backed records are their own ids with null scores, never an alias across generations", () => {
+		const file = parseRankingFile(JSON.parse(readFileSync(BUNDLED_RANKING_PATH, "utf8")), BUNDLED_RANKING_PATH);
+		const cliBacked = file.models.filter((model) => model.backend_hint === "claude" || model.backend_hint === "codex" || model.backend_hint === "opencode-go");
+		expect(cliBacked.length).toBeGreaterThanOrEqual(4);
+		for (const model of cliBacked) {
+			// Unmeasured means null, never a fabricated zero or score.
+			expect(model.coding_score).toBeNull();
+			expect(model.price_blended_per_mtok).toBeNull();
+			// An alias is a spelling of this model, never another record's id.
+			for (const alias of model.aliases) expect(file.models.some((other) => other.model_id === alias)).toBe(false);
+		}
+		// A moving vendor alias resolves to its own generation's record, not another's.
+		expect(file.models.find((model) => model.aliases.includes("opus"))?.model_id).toBe("claude-opus-5");
+		expect(file.models.find((model) => model.aliases.includes("gpt-5"))).toBeUndefined();
+	});
+
 	it("AC-2: a validation failure names the record and the field", () => {
 		const path = writeRanking([record({ model_id: "too-strong", coding_score: 120 })]);
 		expect(() => loadRanking(fixtureConfig({ capability: { rankingFile: path } }))).toThrowError(/record "too-strong" field "coding_score"/);

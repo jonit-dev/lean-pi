@@ -26,6 +26,7 @@ import {
 } from "./commands/session.js";
 import { commandRegistry, type CommandRegistry } from "./commands/registry.js";
 import { registerJevCommands } from "./commands/jev.js";
+import { registerThinkingFoldCommand } from "./commands/thinking-fold.js";
 import { ConfigError, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
@@ -50,8 +51,15 @@ import {
 import { createArtifactStore, type ArtifactStore } from "./context/artifacts.js";
 import type { WorkingStateSources } from "./context/working-state.js";
 import { reduceToolOutput } from "./rtk/index.js";
-import { gateFromProofResult, itemsOf, registerTodoCommands, type TodoCarrier, type TodoGate } from "./todo/index.js";
-import { createGoalStore, goalTextSource, registerGoalCommands } from "./goal/index.js";
+import {
+	gateFromProofResult,
+	itemsOf,
+	registerTodoCommands,
+	registerTodoTool,
+	type TodoCarrier,
+	type TodoGate,
+} from "./todo/index.js";
+import { createGoalStore, goalTextSource, isRunningHere, registerGoalCommands, sessionCost } from "./goal/index.js";
 import { registerReviewCommand, type ReviewCommandDeps } from "./review/index.js";
 import { createLspProvider } from "./lsp/index.js";
 import { LSP_TOOL_NAMES, registerLspTools } from "./lsp/tools.js";
@@ -68,9 +76,11 @@ import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
-import { renderTurnOutcome } from "./cli/outcome.js";
-import { BASELINE_TOOL_NAMES, registerBaselineTools } from "./core/tools.js";
-import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
+import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
+import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
+import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
+import { jevWarning } from "./cli/bootstrap.js";
+import { resolveCredential } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
@@ -268,11 +278,17 @@ function verdictOf(context: TurnContext): RunVerdict {
  * field reads live state, so a `/goal`, `/todo` or `/prd` between two turns
  * changes the next prompt without anything being copied at activation time.
  */
-function workingStateSourcesFor(state: { cwd: string; todo: TodoCarrier; lastContext: () => TurnContext | undefined }): WorkingStateSources {
+function workingStateSourcesFor(state: {
+	cwd: string;
+	todo: TodoCarrier;
+	lastContext: () => TurnContext | undefined;
+	/** Only this session's goal steers this session's turns. */
+	sessionId?: string;
+}): WorkingStateSources {
 	const goalStore = createGoalStore(state.cwd);
 	const evidence = (): readonly EvidenceRecord[] => state.lastContext()?.executor?.evidence ?? [];
 	return {
-		goal: goalTextSource(goalStore),
+		goal: goalTextSource(goalStore, state.sessionId),
 		acceptance: () => readPrdState(state.cwd)?.criteria.map((criterion) => `${criterion.id}: ${criterion.text}`) ?? [],
 		filesTouched: () => state.lastContext()?.executor?.changedFiles ?? [],
 		failingEvidence: () => {
@@ -336,7 +352,7 @@ function installArtifactTool(pi: ExtensionAPI, artifacts: ArtifactStore): void {
  * reported the latter's empty history as the session's was the source of
  * `/context`'s invented totals.
  */
-function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string): void {
+function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string, after: (ctx: TodoWidgetHost) => void): void {
 	for (const command of commands.entries()) {
 		pi.registerCommand(command.name, {
 			description: command.summary.length > 0 ? command.summary : command.usage,
@@ -355,9 +371,37 @@ function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string
 					},
 				});
 				ctx.ui.notify(result.text, result.ok ? "info" : "error");
+				// A command that starts work sends its own prompt. Without this
+				// `/goal <task>` only wrote the goal file and the session sat idle
+				// until the user typed again.
+				if (result.start) {
+					pi.sendUserMessage(result.start, ctx.isIdle() ? {} : { deliverAs: "followUp" });
+				}
+				// `/todo` and `/goal` both write the list; the widget above the editor
+				// is a snapshot, so it is re-rendered once every command has run.
+				after(ctx);
 			},
 		});
 	}
+}
+
+/**
+ * `/clear` is the word users reach for when they mean `/new`. Pi ships the
+ * session replacement under `/new` but not the alias, so this calls Pi's own
+ * `ctx.newSession()` — the same runtime call `/new` makes — rather than a
+ * weaker re-implementation. It is registered straight onto Pi and stays out of
+ * LeanPi's registry on purpose: `/help` lists LeanPi's surface, this is Pi's
+ * session action.
+ */
+function registerClearAlias(pi: ExtensionAPI): void {
+	pi.registerCommand("clear", {
+		description: "Start a new session (same as /new)",
+		handler: async (_args, ctx) => {
+			// Terminal: after replacement the old `ctx` is stale, so the handler
+			// must not touch it again (Pi's session-replacement footgun).
+			await ctx.newSession();
+		},
+	});
 }
 
 export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanPiActivation {
@@ -379,7 +423,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	const commands = options.commands ?? commandRegistry;
 	const config = options.config ?? loadConfig(cwd, {}, env);
 	registerBackends(pi, config, env);
-	const tools = registerBaselineTools(pi, cwd);
+	const tools = registerBaselineTools(pi, cwd, compactUiAttached() ? YIELDED_TOOL_NAMES : []);
 	// PRD-018: the seven LSP tools are registered once and stay inactive until a
 	// turn's compiled mode exposes its group (§15: never on by default). The mode
 	// is applied per turn in `runTurn`.
@@ -538,7 +582,23 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		gate: { verdict: (criterionId) => todoGate?.verdict(criterionId) },
 		prd: () => readPrdState(cwd),
 	});
+	// The list, on screen instead of behind `/todo`: one row per item above the
+	// editor, for as long as the session has a list. Refreshed wherever the list
+	// can change — a command, a `todo_add` call, the end of a turn — because Pi's
+	// widget slot holds a snapshot, not a live view of the carrier.
+	const showTodo = (ctx: TodoWidgetHost): void => {
+		// The terminal's own width: a clipped row is one row, a wrapped one is two.
+		ctx.ui.setWidget?.(LEANPI_TODO_WIDGET_KEY, todoWidget(itemsOf(todoCarrier), process.stdout.columns));
+	};
+	pi.on("tool_execution_end", (_event, ctx) => showTodo(ctx));
 	registerGoalCommands(commands, { cwd, config, prd: () => readPrdState(cwd), sessionId: manager.getSessionId() });
+	// PRD-025's executor-facing `todo_add`. Whether a call appends is the
+	// executor's own call: the tool is on the surface, and the list only costs
+	// bytes once it has items.
+	registerTodoTool(pi, {
+		state: todoCarrier,
+		gate: () => todoGate,
+	});
 	registerReviewCommand(commands, reviewDeps);
 	// The evidence path for the native loop (§23): Pi's own loop is the executor
 	// there, so nothing verifies its work and nothing gates it. This is how the
@@ -564,7 +624,19 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// the entry points hand it back here, and the command surfaces, the working
 	// state and the todo gate read it. Nothing else stores per-turn state here.
 	let lastContext: TurnContext | undefined;
-	const workingStateSources = workingStateSourcesFor({ cwd, todo: todoCarrier, lastContext: () => lastContext });
+	const workingStateSources = workingStateSourcesFor({ cwd, todo: todoCarrier, lastContext: () => lastContext, sessionId: manager.getSessionId() });
+
+	// The two facts the status line carries that no contract holds: what the
+	// session has spent so far, and whether a goal is running. Both are read at
+	// render time — a goal set or stopped between turns must change the next line.
+	const statusGoalStore = createGoalStore(cwd);
+	const statusExtras = (): { cost: number; goal?: string } => {
+		const goal = statusGoalStore.load();
+		return {
+			cost: sessionCost(cwd, manager.getSessionId(), resolveCostConfig(config)),
+			...(isRunningHere(goal, manager.getSessionId()) ? { goal: (goal as { text: string }).text } : {}),
+		};
+	};
 	const observeTurn = (context: TurnContext): void => {
 		lastContext = context;
 		// `/route`, `/status` and `/models` read the contract off the surface, and
@@ -594,20 +666,15 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		env,
 	});
 
-	const declinedFor = credentialsPath(env);
-	registerJevCommands(commands, {
-		client: jev,
-		env,
-		onDeclined: () => declined.add(declinedFor),
-		wasDeclined: () => declined.has(declinedFor),
-	});
+	registerJevCommands(commands, { client: jev, env });
+	// The reasoning display (folded by default); the launcher reads what this stores.
+	registerThinkingFoldCommand(commands, env);
 
-	// First run without a resolved key prompts exactly once; declining is a
-	// first-class path that leaves the harness working on deterministic fallback.
-	// A session that starts on a session Pi switched to (`/new`, `/resume`,
-	// `/fork`) keeps the extension but not the previous session's pins: the
-	// route overrides and the recorded contract belonged to the conversation
-	// that just went away.
+	// First run without a resolved key warns exactly once; the harness keeps
+	// running on deterministic fallback. A session that starts on a session Pi
+	// switched to (`/new`, `/resume`, `/fork`) keeps the extension but not the
+	// previous session's pins: the route overrides and the recorded contract
+	// belonged to the conversation that just went away.
 	pi.on("session_start", async (event, ctx) => {
 		if (event.reason !== "startup") {
 			surface.resetSessionState();
@@ -615,24 +682,14 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		}
 		if (!ctx.hasUI) return;
 		// Asking for a credential the session is configured never to use is the
-		// prompt equivalent of the `--no-jev` bug above.
+		// warning equivalent of the `--no-jev` bug above.
 		if (jev.getMode() === "disabled") return;
 		if (resolveCredential(config, env, cwd).key !== null) return;
-		if (declined.has(declinedFor)) return;
-		const key = await ctx.ui.input("LeanPi needs a JEV API key (leave empty to use deterministic fallback):");
-		if (!key) {
-			declined.add(declinedFor);
-			ctx.ui.notify("LeanPi: JEV left unconfigured — routing falls back to deterministic heuristics.", "warning");
-			return;
-		}
-		const validation = await jev.validateKey(key);
-		if (!validation.ok) {
-			declined.add(declinedFor);
-			ctx.ui.notify(`LeanPi: JEV key rejected (${validation.error}). Continuing on deterministic fallback.`, "error");
-			return;
-		}
-		writeStoredKey(key, env);
-		ctx.ui.notify(`LeanPi: JEV configured (model ${validation.modelVersion}).`, "info");
+		// A run launched through `leanpi` already printed these lines under the
+		// banner; the flag keeps the user from reading them twice.
+		if (env.LEANPI_JEV_WARNED === "1") return;
+		const warning = jevWarning("not configured");
+		if (warning) ctx.ui.notify(warning.join("\n"), "warning");
 	});
 
 	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
@@ -659,6 +716,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// is the only progress surface Pi gives an extension that is not itself
 		// streaming, so the lanes report their phase into it.
 		const progress = (phase: string): void => ctx.ui.setStatus(LEANPI_STATUS_KEY, `LeanPi: ${phase}`);
+		// Counters are cumulative for the session; the turn's share is the delta.
+		const jevBefore = { answered: jev.answeredCount(), fellBack: jev.fallbackCount() };
+		const turnJev = (): TurnJev => ({
+			answered: jev.answeredCount() - jevBefore.answered,
+			fellBack: jev.fallbackCount() - jevBefore.fellBack,
+			enabled: jev.getMode() !== "disabled",
+		});
 		progress("compiling the task");
 		try {
 			const context = await runLanes(
@@ -684,13 +748,15 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 						config,
 						contract: context.contract,
 						lane: "executor",
+						...statusExtras(),
+						color: true,
 						prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
 					}),
 				);
 			} else {
 				ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
 			}
-			ctx.ui.notify(renderTurnOutcome(context), context.executor?.status === "blocked" ? "error" : "info");
+			ctx.ui.notify(renderTurnOutcome(context, turnJev()), outcomeLevel(context));
 			if (context.contract) {
 				emitRunTelemetry(collector, context.contract, verdictOf(context), {
 					cwd,
@@ -776,6 +842,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 					config,
 					contract: context.contract,
 					lane: owns ? "executor" : "pi_loop",
+					...statusExtras(),
+					color: true,
 					...(running === undefined ? {} : { model: running }),
 					...(effort === undefined ? {} : { effort }),
 					prdWanted: context.contract.task.planning_decision === "PRD_REQUIRED" && context.prd === undefined,
@@ -802,7 +870,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// PRD-015's sink for the path Pi itself drives: one call per assistant message
 	// the loop produced, plus the tool calls it made, then exactly one record.
-	pi.on("agent_end", (event) => {
+	pi.on("agent_end", (event, ctx) => {
+		showTodo(ctx);
 		const run = pendingRun;
 		pendingRun = undefined;
 		setLaneCollector(undefined);
@@ -827,7 +896,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// The result is printed with `ui.notify`, not `pi.sendMessage`: a custom
 	// message would enter the LLM context and every later request in the session
 	// would carry the output of every command the user ran.
-	bridgeCommands(pi, commands, cwd);
+	bridgeCommands(pi, commands, cwd, showTodo);
+	registerClearAlias(pi);
 
 	return {
 		name: LEANPI_EXTENSION_NAME,
@@ -846,9 +916,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 }
 
 export default activate;
-
-/** Credential paths the user has declined this process; they are not prompted again. */
-const declined = new Set<string>();
 
 export interface CreateLeanPiSessionOptions {
 	cwd?: string;
@@ -999,7 +1066,7 @@ export {
 } from "./core/instructions/prefix.js";
 export { ConfigError, CONFIG_FILENAME, configPathFor, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 export { resolveRole, ROLE_FALLBACK_CHAINS, UnresolvedRoleError } from "./core/roles.js";
-export { BASELINE_TOOL_NAMES, baselineToolDefinitions, registerBaselineTools } from "./core/tools.js";
+export { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, baselineToolDefinitions, compactUiAttached, registerBaselineTools } from "./core/tools.js";
 export {
 	clearLanes,
 	getActivePrefix,
@@ -1166,6 +1233,7 @@ export type {
 export { commandRegistry, createCommandRegistry, DuplicateCommandError } from "./commands/registry.js";
 export type { CommandContext, CommandHandler, CommandRegistry, CommandResult } from "./commands/registry.js";
 export { jevStatus, registerJevCommands } from "./commands/jev.js";
+export { registerThinkingFoldCommand } from "./commands/thinking-fold.js";
 export { MODEL_ROLES, isModelRole } from "./core/types.js";
 export type {
 	BackendConfig,

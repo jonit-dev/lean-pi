@@ -24,11 +24,48 @@ the PRD index with per-PRD status is [`docs/PRDs/v1/INDEX.md`](docs/PRDs/v1/INDE
 
 ---
 
+## Quick start
+
+```sh
+npx leanpi
+```
+
+That is the whole install. Node 22+ is the only requirement, and the first run
+configures itself — it asks the machine which vendor CLIs are installed and
+signed in, writes `~/.config/leanpi/leanpi.config.yaml`, and opens a session.
+Then say what you want, in prose:
+
+> refactor the auth middleware, and prove the tests still pass
+
+To keep it on `PATH` instead of typing `npx` every time:
+
+```sh
+npm install -g leanpi
+leanpi
+```
+
+Useful once you are in a session — `/help` lists the rest:
+
+| command | what it does |
+| --- | --- |
+| `/status` | session identity, role bindings, reasoning level, backend health and session cost |
+| `/models` | configured models by role, with availability, coding score and price |
+| `/context` | the context in layers, Pi's measured usage against LeanPi's estimate |
+| `/thinking-fold [on\|off]` | fold streaming reasoning to a timed preview (`ctrl+t` expands) |
+| `/doctor` | probe backends, JEV and the capability registries; report the worst status |
+
+Nothing is required up front — LeanPi asks only for what it cannot work out,
+such as a missing credential. If a run looks wrong, `/doctor` is the first stop.
+
+---
+
 ## Run it
 
-Requires `git`; developed and tested on Node 22 (`engines.node >=22.19.0`). The
-published 2026-09-19 benchmark used Node 20; the 2026-09-19 audit smoke-tested the
-documented path on Node 22.
+Requires Node 22+ (`engines.node >=22.19.0`); developed and tested on Node 22.
+`npx leanpi` is the short path — see [Quick start](#quick-start) above.
+
+**From a checkout (contributors).** Requires `git` too. The published 2026-09-19
+benchmark used Node 20; the 2026-09-19 audit smoke-tested this path on Node 22.
 
 ```sh
 npm install
@@ -66,16 +103,17 @@ LeanPi's commands are ordinary Pi slash commands: `/help` lists them, and
 `/skills`, `/mcp`, `/permissions`, `/jev`, `/todo`, `/goal`, `/review`,
 `/verify` and `/prd` are all typed into the same prompt as a task.
 
-**The JEV key is required.** The task compiler, the skill disclosure and the
-proof gate are JEV decisions; without a key every one of them falls back to a
-heuristic, which is a different harness than the measured one, so `leanpi`
-refuses to start and says how to configure it:
+**The JEV key is optional, and it pays for itself.** The task compiler, the
+skill disclosure and the proof gate are JEV decisions; with a key they route on
+what a task actually needs. Without one, every site falls back to a
+deterministic heuristic — LeanPi still runs, it just routes worse and spends
+more tokens per task, and says so on startup:
 
 ```sh
 leanpi --jev-key <key>          # stored at ~/.config/leanpi/credentials.json (0600)
 export JEV_API_KEY=<key>        # or this shell
 echo 'JEV_API_KEY=<key>' >> .env  # or this project — read, never exported
-leanpi --no-jev                 # or run the degraded harness deliberately
+leanpi --no-jev                 # or skip the control plane deliberately
 ```
 
 Tool authorization is per scope (`read`, `edit`, `shell`, `network`, `mcp`,
@@ -96,6 +134,33 @@ leanpi --safety high     # read allow, edit ask, everything else deny
 A level is the whole policy — your stored scopes and every capability rule are
 ignored while it is in force, since a level a forgotten `/permissions set` could
 undercut would not be a level.
+
+Tool calls render as Claude Code's compact rows — one line per call, the output
+behind `ctrl+o` (`ctrl+shift+o` for the long form), in whatever theme is active.
+How much shows is a session-level choice, and a durable one:
+
+```sh
+/cc-tools status            # what every switch is set to right now
+/cc-tools detail on         # the long form by default, without the keystroke
+/cc-tools thinking full     # keep finished thinking expanded, not just live
+/cc-tools group off         # one row per call instead of grouped runs
+leanpi --ui plain           # Pi's own rendering, for a session or for good
+```
+
+`/cc-tools` writes `.pi/settings.json`, so the choice survives the session;
+`readOutputMode`, `previewLines`, `bashCollapsedLines` and the rest can be set
+there directly. Colours, borders and diff tints follow `themes/leanpi.json` on
+their own (`/cc-theme status` shows what they resolved to); the one thing a
+theme cannot reach is the syntax highlighting inside a diff, so the first run
+seeds `diffTheme` in `~/.pi/settings.json` — and never touches a key you set.
+
+Reasoning folds by default: a streaming thinking block collapses to a timed
+tail preview, `ctrl+t` expands it, and a finished one is one line. `/thinking-fold
+off` detaches that renderer and gives you Pi's own live thinking instead;
+`/thinking-fold` alone says which is set. The choice is which extension the
+launcher attaches, so it applies from the next session, and it is stored in
+`$XDG_CONFIG_HOME/leanpi/ui.json`. Fold depth and strategy are the vendor's own
+`/99settings`.
 
 Two other entry points, one code path:
 
@@ -224,10 +289,48 @@ been proven fail-before/pass-after on this machine. Adapters: `leanpi`,
 | `docs/reports/` | the cost investigation and the wiring audit behind the numbers |
 | `bench/out/` | every recorded run: ledger, §52 telemetry, report, patches |
 | `skills/` | the bundled skill pack |
-| `tests/` | the suite: every PRD's acceptance criteria, run with `npm test` |
+| `tests/` | the suite: every PRD's acceptance criteria, run with `pnpm test` |
 
 ```sh
-npm test        # acceptance criteria, end to end (548 tests, 7 skipped)
-npm run lint
-npm run typecheck
+pnpm test        # acceptance criteria, end to end
+pnpm run lint
+pnpm run typecheck
 ```
+
+The suite needs no credential, no subscription and no network: it boots stub
+backends and points `$XDG_CONFIG_HOME` at a temporary directory, so it never
+reads your own `~/.config/leanpi/`. Three specs assert against the machine's own
+`$HOME` — a signed-in vendor CLI, the installed skill library — instead of a
+fixture, and are skipped unless asked for (`LEANPI_REAL_HOME=1`,
+`LEANPI_REAL_SKILLS=1`, `LEANPI_PRD_REAL_SKILLS=1`); CI runs without them.
+
+---
+
+## Development
+
+Node `>=22.19.0` (`.nvmrc` pins 22) and `git`. The lockfile is pnpm's; npm works
+too.
+
+```sh
+git clone https://github.com/jonit-dev/lean-pi.git
+cd lean-pi
+pnpm install
+pnpm build
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the gates a pull request has to
+pass and what the review looks for. [`AGENTS.md`](AGENTS.md) is the same rules
+in the form an agent reads.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). Third-party content vendored into this
+repository (the bundled skill pack and the static instruction prefix, both MIT)
+is listed with its copyright holders in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+## Security
+
+Report vulnerabilities privately, not in the issue tracker — see
+[`SECURITY.md`](SECURITY.md) for the reporting channels and the boundaries that
+are in scope.

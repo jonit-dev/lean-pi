@@ -11,7 +11,9 @@
  * they would shadow Pi's own with weaker re-implementations. LeanPi's
  * deterministic reduction survives under its own name, `/compact-refs`: it
  * rewrites repeated blocks to `artifact://` references and spends no tokens,
- * where Pi's `/compact` asks a model for a summary.
+ * where Pi's `/compact` asks a model for a summary. `/clear`, an alias for
+ * `/new`, is absent for the same reason and registered straight onto Pi by
+ * `registerClearAlias` (`src/index.ts`), not through this registry.
  */
 import { registerConfigCommand } from "./config.js";
 import { registerContextCommands } from "./context.js";

@@ -92,6 +92,11 @@ export function boundCandidates(ranking: Ranking, config?: LeanPiConfig): Capabi
 	return candidates;
 }
 
+/** Every record with a reachable backend binding, unmeasured (null-score) ones included. */
+export function boundRecords(ranking: Ranking): RankedModel[] {
+	return ranking.models.filter((record) => record.backend_binding !== null);
+}
+
 /**
  * The clearing set for `required_capability`: every bound record at or above the
  * floor (and carrying the specialization, when one is asked for), cheapest

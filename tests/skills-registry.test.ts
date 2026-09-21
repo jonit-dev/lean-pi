@@ -59,7 +59,11 @@ describe("PRD-005 Phase 1 — skill registry", () => {
 		expect(scanSkills(cwd, { roots: [{ path: tempDir("leanpi-empty-"), class: "user" }] })).toEqual([]);
 	});
 
-	it("AC-1: the machine's real roots produce a library, prd-creator resolving to the .claude copy", () => {
+	// This machine's real `$HOME/.claude/skills` install; skipped unless asked
+	// for, because another machine's roots are not this suite's contract — and
+	// on a clean runner `prd-creator` resolves to the bundled copy instead.
+	const realInstall = process.env.LEANPI_REAL_SKILLS === "1" ? it : it.skip;
+	realInstall("AC-1: the machine's real roots produce a library, prd-creator resolving to the .claude copy", () => {
 		const cwd = tempDir("leanpi-skills-real-");
 		const roots = defaultSkillRoots(cwd, homedir());
 		resetScanStats();

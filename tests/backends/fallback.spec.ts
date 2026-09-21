@@ -89,7 +89,11 @@ describe("PRD-008 Phase 4 — vendor limits, fallback and the cost hook", () => 
 		expect(registry.selectBackend("strong")[0]!.name).toBe("codex");
 	});
 
-	it("AC-8: the executor lane keeps one pool across turns, so a limited vendor is asked once per session", async () => {
+	// Drives the real turn lane end to end, which on a bare `$HOME` — a clean CI
+	// runner — reaches no vendor at all and records nothing to assert on.
+	// Skipped unless asked for; `pnpm test` on a developer machine runs it.
+	const realHome = process.env.LEANPI_REAL_HOME === "1" ? it : it.skip;
+	realHome("AC-8: the executor lane keeps one pool across turns, so a limited vendor is asked once per session", async () => {
 		// The cooldown lives in the `BackendRegistry` the lane holds. The lane used
 		// to build one per turn, which emptied the cooldown map between turns and
 		// made every later turn pay the limited vendor's failure again — the cost
