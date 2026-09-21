@@ -23,6 +23,10 @@ jobs:
           runtime: node@22
           cache: true
 
+      # The suite execs `bin/leanpi.js` and calls `launchPlan`, both of which
+      # resolve `dist/` — so the gates need the build, not just the sources.
+      - run: pnpm build
+
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
