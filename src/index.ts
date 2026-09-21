@@ -26,6 +26,7 @@ import {
 } from "./commands/session.js";
 import { commandRegistry, type CommandRegistry } from "./commands/registry.js";
 import { registerJevCommands } from "./commands/jev.js";
+import { registerThinkingFoldCommand } from "./commands/thinking-fold.js";
 import { ConfigError, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
@@ -666,6 +667,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	});
 
 	registerJevCommands(commands, { client: jev, env });
+	// The reasoning display (folded by default); the launcher reads what this stores.
+	registerThinkingFoldCommand(commands, env);
 
 	// First run without a resolved key warns exactly once; the harness keeps
 	// running on deterministic fallback. A session that starts on a session Pi
@@ -1230,6 +1233,7 @@ export type {
 export { commandRegistry, createCommandRegistry, DuplicateCommandError } from "./commands/registry.js";
 export type { CommandContext, CommandHandler, CommandRegistry, CommandResult } from "./commands/registry.js";
 export { jevStatus, registerJevCommands } from "./commands/jev.js";
+export { registerThinkingFoldCommand } from "./commands/thinking-fold.js";
 export { MODEL_ROLES, isModelRole } from "./core/types.js";
 export type {
 	BackendConfig,

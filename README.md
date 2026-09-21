@@ -122,6 +122,14 @@ their own (`/cc-theme status` shows what they resolved to); the one thing a
 theme cannot reach is the syntax highlighting inside a diff, so the first run
 seeds `diffTheme` in `~/.pi/settings.json` — and never touches a key you set.
 
+Reasoning folds by default: a streaming thinking block collapses to a timed
+tail preview, `ctrl+t` expands it, and a finished one is one line. `/thinking-fold
+off` detaches that renderer and gives you Pi's own live thinking instead;
+`/thinking-fold` alone says which is set. The choice is which extension the
+launcher attaches, so it applies from the next session, and it is stored in
+`$XDG_CONFIG_HOME/leanpi/ui.json`. Fold depth and strategy are the vendor's own
+`/99settings`.
+
 Two other entry points, one code path:
 
 ```sh

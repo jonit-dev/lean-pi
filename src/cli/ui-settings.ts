@@ -12,7 +12,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /** What LeanPi's theme implies for the compact UI, where the user said nothing. */
 export const COMPACT_UI_DEFAULTS: Readonly<Record<string, unknown>> = {
@@ -42,4 +42,41 @@ export function ensureCompactUiDefaults(home: string = homedir(), defaults: Read
 	mkdirSync(directory, { recursive: true });
 	writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
 	return added;
+}
+
+/**
+ * `/thinking-fold` — LeanPi's own user-scope preference, in its own file.
+ *
+ * Which reasoning display is attached is decided before a session exists, so
+ * the command persists the answer and the launcher reads it on the next start.
+ * Kept out of Pi's `settings.json`: that file is Pi's and the vendor UI's, and
+ * this key is neither's.
+ */
+export interface UiPrefsEnv {
+	XDG_CONFIG_HOME?: string;
+	HOME?: string;
+}
+
+/** Next to the permission state and the credential store. */
+export function uiPrefsPath(env: UiPrefsEnv = process.env): string {
+	const base = env.XDG_CONFIG_HOME ?? join(env.HOME ?? homedir(), ".config");
+	return join(base, "leanpi", "ui.json");
+}
+
+/** Folded unless the user said otherwise; an absent or unreadable file is "unsaid". */
+export function thinkingFoldEnabled(env: UiPrefsEnv = process.env): boolean {
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(uiPrefsPath(env), "utf8"));
+		return (parsed as { thinkingFold?: unknown }).thinkingFold !== false;
+	} catch {
+		return true;
+	}
+}
+
+/** Writes the choice; returns the file it wrote. The only key this file has. */
+export function setThinkingFold(enabled: boolean, env: UiPrefsEnv = process.env): string {
+	const path = uiPrefsPath(env);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, `${JSON.stringify({ thinkingFold: enabled }, null, 2)}\n`);
+	return path;
 }

@@ -40,20 +40,22 @@
 		"src/capability/models.json",
 		"src/cli/spinner.ts",
 		"src/core/instructions/ponytail.md",
-		"src/core/instructions/ponytail.lock.json"
+		"src/core/instructions/ponytail.lock.json",
+		"vendor"
 	],
 	"scripts": {
-		"build": "tsc -p tsconfig.json",
-		"prepack": "tsc -p tsconfig.json",
+		"build": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json",
+		"prepack": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json",
 		"prepublishOnly": "npm run build && npm run typecheck && npm run lint && npm test",
 		"release": "npm publish",
-		"leanpi": "tsc -p tsconfig.json && node ./bin/leanpi.js",
+		"leanpi": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json && node ./bin/leanpi.js",
+		"vendor:thinking-fold": "node scripts/vendor-thinking-fold.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"lint": "oxlint src tests",
 		"sync:ponytail": "node scripts/sync-ponytail.mjs",
 		"bench:skills": "vitest run --config vitest.bench.config.ts",
-		"bench": "tsc -p tsconfig.json && node dist/bench/lane.js",
+		"bench": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json && node dist/bench/lane.js",
 		"sync:skills": "node scripts/sync-skills.mjs"
 	},
 	"dependencies": {

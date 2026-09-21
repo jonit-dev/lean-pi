@@ -68,6 +68,30 @@ const COMPACT_UI_EXTENSIONS: readonly string[] = [
 ];
 
 /**
+ * The folded reasoning display (`/thinking-fold`, on unless the user said off).
+ *
+ * Streaming reasoning otherwise grows upward for as long as the model thinks,
+ * which on a long turn is the whole screen. This folds it to a timed tail
+ * preview that Ctrl+T expands, and leaves the rest of the transcript alone.
+ * Detached, Pi's own rendering — which `pi-claude-code-ui` styles — shows the
+ * reasoning live again, so the choice is which of the two is attached, made
+ * before the session exists and therefore at launch.
+ *
+ * Attached from `vendor/`, not from `node_modules/`. The package ships only
+ * `index.min.js`, and Pi native-imports a `.js` extension rather than routing it
+ * through jiti's virtual-module map — so its
+ * `AssistantMessageComponent.prototype.updateContent` patch landed on a second
+ * copy of the class and nothing that renders ever saw it, silently: the
+ * extension still loaded and still registered `/99settings`. The same bytes
+ * under a `.ts` name are transformed by jiti and resolve Pi's own modules.
+ * `scripts/vendor-thinking-fold.mjs` makes the copy; `spinnerExtension` below
+ * documents the identical trap, found the same way.
+ */
+export function thinkingFoldExtension(root: string = packageRoot()): string {
+	return join(root, "vendor", "pi-thinking-fold", "index.min.ts");
+}
+
+/**
  * LeanPi's own spinner frames, as a path to *source*, not to the build output.
  *
  * Pi loads a `.ts` extension through jiti, which resolves
@@ -114,10 +138,14 @@ export function dependencyDir(entry: string, from: string): string | undefined {
 /**
  * The bundled extensions present in this installation, as absolute paths.
  */
-export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "compact"): string[] {
-	return [...BUNDLED_EXTENSIONS, ...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])]
+export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "compact", thinkingFold = true): string[] {
+	const installed = [...BUNDLED_EXTENSIONS, ...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])]
 		.map((entry) => dependencyDir(entry, root))
 		.filter((path): path is string => path !== undefined);
+	// Vendored rather than resolved, and skipped when the copy is absent — the
+	// launcher's job is to start a session, not to insist on a display.
+	const fold = thinkingFold ? thinkingFoldExtension(root) : undefined;
+	return fold !== undefined && existsSync(fold) ? [...installed, fold] : installed;
 }
 
 /** This package's root, from the module's own location (`dist/cli/launch.js`). */
@@ -243,7 +271,7 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
  * accepts the flag more than once, and silently dropping a user's extension
  * would be the launcher deciding something it was not asked to decide.
  */
-export function launchPlan(argv: readonly string[], root: string = packageRoot(), sessionModel?: string, ui: UiMode = "compact"): LaunchPlan {
+export function launchPlan(argv: readonly string[], root: string = packageRoot(), sessionModel?: string, ui: UiMode = "compact", thinkingFold = true): LaunchPlan {
 	// `dist/leanpi.js`, not `dist/index.js`: Pi names an extension after its
 	// file and the banner is the user's first screen (`[Extensions] leanpi`).
 	const extension = join(root, "dist", "leanpi.js");
@@ -278,7 +306,7 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// LeanPi's own extension first: it registers the baseline tools and the
 	// permission guard, and a bundled extension that replaces a tool name must
 	// take it from a surface that already exists.
-	const bundled = bundledExtensions(root, ui);
+	const bundled = bundledExtensions(root, ui, thinkingFold);
 	const bundledArgs = bundled.flatMap((path) => ["--extension", path]);
 	return {
 		cli: resolvePiCli(root),

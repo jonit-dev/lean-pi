@@ -21,7 +21,7 @@ import { autoConfigure, jevClientFor, jevWarning, unusableBackendKeys, requireJe
 import { loadConfig } from "../dist/core/config.js";
 import { isInformational, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 import { ensureGitIgnored } from "../dist/runtime/ignore.js";
-import { ensureCompactUiDefaults } from "../dist/cli/ui-settings.js";
+import { ensureCompactUiDefaults, thinkingFoldEnabled } from "../dist/cli/ui-settings.js";
 
 let flags;
 try {
@@ -40,7 +40,7 @@ try {
 	// `--help`/`--version` print and exit: they start no session, so they neither
 	// need a control plane nor deserve a refusal.
 	if (isInformational(flags.rest)) {
-		plan = launchPlan(flags.rest, undefined, undefined, flags.ui);
+		plan = launchPlan(flags.rest, undefined, undefined, flags.ui, thinkingFoldEnabled());
 	} else {
 	// Everything LeanPi writes lands in `.leanpi/`. Exclude it before the first
 	// session creates it, or the operator's next `git status` is our state dir.
@@ -84,7 +84,8 @@ try {
 	for (const { backend, variable } of unusableBackendKeys(config)) {
 		process.stderr.write(`leanpi: backend "${backend}" reads its key from $${variable}, which is not set in this shell — export it, or remove the \`apiKey\` line to use pi's own credential for that provider.\n`);
 	}
-	plan = launchPlan(flags.rest, undefined, sessionModel, flags.ui);
+	// Folded reasoning unless `/thinking-fold off` stored the other answer.
+	plan = launchPlan(flags.rest, undefined, sessionModel, flags.ui, thinkingFoldEnabled());
 	}
 } catch (error) {
 	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
