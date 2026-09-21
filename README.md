@@ -24,13 +24,45 @@ the PRD index with per-PRD status is [`docs/PRDs/v1/INDEX.md`](docs/PRDs/v1/INDE
 
 ---
 
+## Quick start
+
+```sh
+npx leanpi
+```
+
+That is the whole install. Node 22+ is the only requirement, and the first run
+configures itself — it asks the machine which vendor CLIs are installed and
+signed in, writes `~/.config/leanpi/leanpi.config.yaml`, and opens a session.
+Then say what you want, in prose:
+
+> refactor the auth middleware, and prove the tests still pass
+
+To keep it on `PATH` instead of typing `npx` every time:
+
+```sh
+npm install -g leanpi
+leanpi
+```
+
+Useful once you are in a session — `/help` lists the rest:
+
+| command | what it does |
+| --- | --- |
+| `/status` | session identity, role bindings, reasoning level, backend health and session cost |
+| `/models` | configured models by role, with availability, coding score and price |
+| `/context` | the context in layers, Pi's measured usage against LeanPi's estimate |
+| `/thinking-fold [on\|off]` | fold streaming reasoning to a timed preview (`ctrl+t` expands) |
+| `/doctor` | probe backends, JEV and the capability registries; report the worst status |
+
+Nothing is required up front — LeanPi asks only for what it cannot work out,
+such as a missing credential. If a run looks wrong, `/doctor` is the first stop.
+
+---
+
 ## Run it
 
 Requires Node 22+ (`engines.node >=22.19.0`); developed and tested on Node 22.
-
-```sh
-npx leanpi        # run it anywhere, nothing to install
-```
+`npx leanpi` is the short path — see [Quick start](#quick-start) above.
 
 **From a checkout (contributors).** Requires `git` too. The published 2026-09-19
 benchmark used Node 20; the 2026-09-19 audit smoke-tested this path on Node 22.
