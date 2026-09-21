@@ -75,6 +75,7 @@ import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
+import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
 import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
 import { credentialsPath, resolveCredential, writeStoredKey } from "./jev/credentials.js";
@@ -349,7 +350,7 @@ function installArtifactTool(pi: ExtensionAPI, artifacts: ArtifactStore): void {
  * reported the latter's empty history as the session's was the source of
  * `/context`'s invented totals.
  */
-function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string): void {
+function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string, after: (ctx: TodoWidgetHost) => void): void {
 	for (const command of commands.entries()) {
 		pi.registerCommand(command.name, {
 			description: command.summary.length > 0 ? command.summary : command.usage,
@@ -374,6 +375,9 @@ function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string
 				if (result.start) {
 					pi.sendUserMessage(result.start, ctx.isIdle() ? {} : { deliverAs: "followUp" });
 				}
+				// `/todo` and `/goal` both write the list; the widget above the editor
+				// is a snapshot, so it is re-rendered once every command has run.
+				after(ctx);
 			},
 		});
 	}
@@ -576,6 +580,15 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		gate: { verdict: (criterionId) => todoGate?.verdict(criterionId) },
 		prd: () => readPrdState(cwd),
 	});
+	// The list, on screen instead of behind `/todo`: one row per item above the
+	// editor, for as long as the session has a list. Refreshed wherever the list
+	// can change — a command, a `todo_add` call, the end of a turn — because Pi's
+	// widget slot holds a snapshot, not a live view of the carrier.
+	const showTodo = (ctx: TodoWidgetHost): void => {
+		// The terminal's own width: a clipped row is one row, a wrapped one is two.
+		ctx.ui.setWidget?.(LEANPI_TODO_WIDGET_KEY, todoWidget(itemsOf(todoCarrier), process.stdout.columns));
+	};
+	pi.on("tool_execution_end", (_event, ctx) => showTodo(ctx));
 	registerGoalCommands(commands, { cwd, config, prd: () => readPrdState(cwd), sessionId: manager.getSessionId() });
 	// PRD-025's executor-facing `todo_add`. Whether a call appends is the
 	// executor's own call: the tool is on the surface, and the list only costs
@@ -870,7 +883,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// PRD-015's sink for the path Pi itself drives: one call per assistant message
 	// the loop produced, plus the tool calls it made, then exactly one record.
-	pi.on("agent_end", (event) => {
+	pi.on("agent_end", (event, ctx) => {
+		showTodo(ctx);
 		const run = pendingRun;
 		pendingRun = undefined;
 		setLaneCollector(undefined);
@@ -895,7 +909,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// The result is printed with `ui.notify`, not `pi.sendMessage`: a custom
 	// message would enter the LLM context and every later request in the session
 	// would carry the output of every command the user ran.
-	bridgeCommands(pi, commands, cwd);
+	bridgeCommands(pi, commands, cwd, showTodo);
 	registerClearAlias(pi);
 
 	return {
