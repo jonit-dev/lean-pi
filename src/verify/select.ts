@@ -11,7 +11,7 @@ import type { ExecutionContract } from "../compiler/contract.js";
 import type { JevClient } from "../jev/client.js";
 import { ensureSite, type DecisionSite } from "../jev/registry.js";
 import type { ChoiceAnswer, JevQuestion, JevResult } from "../jev/types.js";
-import { DEFAULT_SCOPES, isVerifierKind, resolveCommand, type VerifierDescriptor, type VerifierKind } from "./descriptors.js";
+import { DEFAULT_SCOPES, isVerifierKind, quoteScope, resolveCommand, type ScopeSpec, type VerifierDescriptor, type VerifierKind } from "./descriptors.js";
 
 export type RegressionScope = "TARGETED_SUFFICIENT" | "BROADER_SUITE_REQUIRED";
 
@@ -36,14 +36,17 @@ const TEST_FILE_PATTERN = /\.(spec|test)\.[cm]?[jt]sx?$/;
 const TEST_DIRECTORY_PATTERN = /(^|\/)(tests|__tests__)\//;
 
 /**
- * The test files among `files`, space-joined, or `""` when there are none.
+ * The test files among `files`, as the raw literal surface list — `[]` when
+ * there are none.
  *
  * One rule, two readers: the compiler stamps the contract's criteria with it,
  * and selection derives the targeted scope from the run's own files with it, so
- * "what does the targeted test run over" cannot be answered two ways.
+ * "what does the targeted test run over" cannot be answered two ways. The list
+ * stays structured and unquoted; the shell-quoting boundary lives in
+ * `resolveCommand`, once, rather than in every caller that touches a scope.
  */
-export function targetedSurfaceOf(files: readonly string[]): string {
-	return files.filter((file) => TEST_FILE_PATTERN.test(file) || TEST_DIRECTORY_PATTERN.test(file)).join(" ");
+export function targetedSurfaceOf(files: readonly string[]): string[] {
+	return files.filter((file) => TEST_FILE_PATTERN.test(file) || TEST_DIRECTORY_PATTERN.test(file));
 }
 
 /**
@@ -66,8 +69,11 @@ export interface CriterionVerification {
 	id: string;
 	/** Verifier kinds this criterion is proved by. Absent means it declares none. */
 	verifiers?: string[];
-	/** The concrete surface for this criterion's verifier, e.g. a test pattern. */
-	scope?: string;
+	/**
+	 * The concrete surface for this criterion's verifier: a single declared
+	 * pattern (a string), or the compiler's list of literal changed test paths.
+	 */
+	scope?: ScopeSpec;
 }
 
 export interface VerificationBlock {
@@ -110,10 +116,21 @@ export function verificationBlockOf(contract: ExecutionContract): VerificationBl
 			const item = entry as Record<string, unknown>;
 			if (typeof item.id !== "string" || item.id.length === 0) continue;
 			const verifiers = Array.isArray(item.verifiers) ? item.verifiers.filter((value): value is string => typeof value === "string") : undefined;
+			// The contract's surface crosses into this subsystem as data: a string is
+			// a declared pattern, an array is literal paths. Quoting is deferred to
+			// `resolveCommand`, so a scope is never quoted twice.
+			const scope: ScopeSpec | undefined =
+				typeof item.scope === "string"
+					? item.scope.trim().length > 0
+						? item.scope.trim()
+						: undefined
+					: Array.isArray(item.scope)
+						? item.scope.filter((value): value is string => typeof value === "string")
+						: undefined;
 			criteria.push({
 				id: item.id,
 				...(verifiers ? { verifiers } : {}),
-				...(typeof item.scope === "string" ? { scope: item.scope } : {}),
+				...(scope !== undefined && quoteScope(scope).trim().length > 0 ? { scope } : {}),
 			});
 		}
 	}
@@ -124,16 +141,16 @@ function criterionIdsFor(kind: VerifierKind, criteria: readonly CriterionVerific
 	return criteria.filter((entry) => (entry.verifiers ?? []).some((name) => normalizeVerifierKind(name) === kind)).map((entry) => entry.id);
 }
 
-function scopeFor(kind: VerifierKind, criteria: readonly CriterionVerification[], derived = ""): string {
+function scopeFor(kind: VerifierKind, criteria: readonly CriterionVerification[], derived: ScopeSpec = ""): ScopeSpec {
 	// A package-wide surface (typecheck, lint, build) is what the verifier
 	// actually runs over regardless of which criterion asked for it; only a kind
 	// with no default surface — the targeted test pattern — takes the surface the
 	// contract's verification block declares for the criterion.
 	if ((DEFAULT_SCOPES[kind] ?? "").length > 0) return DEFAULT_SCOPES[kind]!;
 	const declared = criteria.find(
-		(entry) => entry.scope !== undefined && entry.scope.trim().length > 0 && (entry.verifiers ?? []).some((name) => normalizeVerifierKind(name) === kind),
+		(entry) => entry.scope !== undefined && quoteScope(entry.scope).trim().length > 0 && (entry.verifiers ?? []).some((name) => normalizeVerifierKind(name) === kind),
 	);
-	if (declared?.scope !== undefined) return declared.scope.trim();
+	if (declared?.scope !== undefined) return declared.scope;
 	// Nothing declared one, so the run's own test files are the surface — the
 	// only one this layer can name without guessing. A kind with no default
 	// surface and no command of its own takes none.
@@ -247,15 +264,17 @@ export async function selectVerifiers(contract: ExecutionContract, options: Sele
 	// The diff is also the fallback surface for the targeted test: the files this
 	// run changed are the tests it must re-run, when the contract names none.
 	const derived = targetedSurfaceOf(options.diff?.files ?? []);
+	const targetedScope = scopeFor("targeted_test", block.criteria, derived);
 
-	const add = (kind: VerifierKind, scope: string = scopeFor(kind, block.criteria, derived), mandatory = true): void => {
+	/** `scope` stays structured; only the descriptor's display/evidence copy is rendered to text. */
+	const add = (kind: VerifierKind, scope: ScopeSpec = scopeFor(kind, block.criteria, derived), mandatory = true): void => {
 		if (descriptors.some((descriptor) => descriptor.kind === kind)) return;
 		descriptors.push({
 			kind,
 			command: resolveCommand(kind, scope, options.commands ?? {}),
 			mandatory,
 			criterion: criterionIdsFor(kind, block.criteria),
-			scope,
+			scope: quoteScope(scope),
 		});
 	};
 
@@ -274,7 +293,7 @@ export async function selectVerifiers(contract: ExecutionContract, options: Sele
 	if (targeted && !descriptors.some((descriptor) => descriptor.kind === "full_suite")) {
 		regressionScope = await decideRegressionScope(options);
 		if (regressionScope === "BROADER_SUITE_REQUIRED") {
-			add("full_suite", targeted.scope.trim().length > 0 ? targeted.scope : scopeFor("full_suite", block.criteria));
+			add("full_suite", quoteScope(targetedScope).trim().length > 0 ? targetedScope : scopeFor("full_suite", block.criteria));
 		}
 	}
 

@@ -35,9 +35,11 @@
 	"files": [
 		"bin",
 		"dist",
+		"scripts/patch-pi-model-command.mjs",
 		"skills",
 		"themes",
 		"src/capability/models.json",
+		"src/cli/fold-cache.ts",
 		"src/cli/spinner.ts",
 		"src/core/instructions/ponytail.md",
 		"src/core/instructions/ponytail.lock.json",

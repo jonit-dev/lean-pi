@@ -56,6 +56,7 @@ PRDs added after the original 26-PRD slice are not in the table above. Status re
 | [036](./done/PRD-036-session-recap.md) | Session Recap | DONE | `done/` |
 | [037](./PRD-037-reasoning-token-lever.md) | Reasoning-Token Cost Lever | NOT STARTED | open |
 | [038](./done/PRD-038-cost-regression-gate.md) | Pre-publish Cost-Regression Gate | DONE (verified 2026-09-22) | `done/` |
+| [040](./done/PRD-040-production-tdd-audit.md) | Production TDD Audit & Hardening | DONE (verified 2026-09-22) | `done/` |
 
 ## Build order
 

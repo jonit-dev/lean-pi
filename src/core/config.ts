@@ -9,6 +9,7 @@ import { isAbsolute } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { CONFIG_FILENAME, configPathFor, userConfigPath } from "./config-path.js";
 import { assertTrusted, isProjectLocal, mergePermissions, readUserState, type PermissionEnv, type RawPermissionsBlock } from "../permissions/trust.js";
+import { parseRuntimePlan } from "../runtime/plan.js";
 import {
 	BACKEND_TYPES,
 	isModelRole,
@@ -23,6 +24,7 @@ import {
 	type LeanPiConfig,
 	type ModelRole,
 	type ModelsConfig,
+	type RoutingBlockConfig,
 	type VerifyConfig,
 } from "./types.js";
 
@@ -48,6 +50,24 @@ function asRecord(value: unknown, path: string): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
+/**
+ * Every recognized USD/Mtok rate key. A configured rate is an operator's
+ * declaration, so a negative or non-finite value is a named error rather than a
+ * silent clamp that makes a typo look free (COST-4). Unknown keys are ignored.
+ */
+const MONETARY_RATE_KEYS: ReadonlySet<string> = new Set(["input", "cachedInput", "cacheRead", "cacheWrite", "output"]);
+
+function validateMonetaryBlock(raw: unknown, path: string): void {
+	if (raw === undefined || raw === null) return;
+	const record = asRecord(raw, path);
+	for (const [key, value] of Object.entries(record)) {
+		if (!MONETARY_RATE_KEYS.has(key)) continue;
+		if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+			throw new ConfigError(`${key} must be a non-negative finite USD/Mtok rate`, `${path}.${key}`);
+		}
+	}
+}
+
 function parseBackends(raw: unknown): Record<string, BackendConfig> {
 	if (raw === undefined) return {};
 	const record = asRecord(raw, "backends");
@@ -55,6 +75,7 @@ function parseBackends(raw: unknown): Record<string, BackendConfig> {
 	for (const [name, value] of Object.entries(record)) {
 		const path = `backends.${name}`;
 		const entry = asRecord(value, path);
+		validateMonetaryBlock(entry.cost, `${path}.cost`);
 		const type = entry.type;
 		// ROADMAP §25's discriminant, parsed verbatim by PRD-008. A block still
 		// carrying the pre-§25 `kind:` key fails here with its dotted path.
@@ -135,8 +156,8 @@ function parseJev(raw: unknown): LeanPiConfig["jev"] {
 	// project; it is the same switch as `mode: disabled`, not a second one.
 	const resolvedMode: JevMode = record.enabled === false ? "disabled" : ((mode as JevMode | undefined) ?? "enabled");
 	const usdPerMtok = record.usd_per_mtok;
-	if (usdPerMtok !== undefined && (typeof usdPerMtok !== "number" || !Number.isFinite(usdPerMtok))) {
-		throw new ConfigError(`usd_per_mtok must be a finite number`, "jev.usd_per_mtok");
+	if (usdPerMtok !== undefined && (typeof usdPerMtok !== "number" || !Number.isFinite(usdPerMtok) || usdPerMtok < 0)) {
+		throw new ConfigError(`usd_per_mtok must be a non-negative finite number`, "jev.usd_per_mtok");
 	}
 	return {
 		apiKey: typeof record.apiKey === "string" ? record.apiKey : null,
@@ -158,16 +179,24 @@ function parseCost(raw: unknown): CostBlockConfig | undefined {
 	const finite = (key: string): number | undefined => {
 		const value = record[key];
 		if (value === undefined) return undefined;
-		if (typeof value !== "number" || !Number.isFinite(value)) {
-			throw new ConfigError(`must be a finite number`, `cost.${key}`);
+		if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+			throw new ConfigError(`must be a non-negative finite number`, `cost.${key}`);
 		}
 		return value;
 	};
 	const models = record.models === undefined ? undefined : (asRecord(record.models, "cost.models") as CostBlockConfig["models"]);
+	if (models) for (const [model, rates] of Object.entries(models)) validateMonetaryBlock(rates, `cost.models.${model}`);
 	const quotaShadow =
 		record.quota_shadow_usd === undefined
 			? undefined
 			: (asRecord(record.quota_shadow_usd, "cost.quota_shadow_usd") as Record<string, number>);
+	if (quotaShadow) {
+		for (const [quotaClass, value] of Object.entries(quotaShadow)) {
+			if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+				throw new ConfigError(`must be a non-negative finite number`, `cost.quota_shadow_usd.${quotaClass}`);
+			}
+		}
+	}
 	const telemetryPath = record.telemetry_path;
 	if (telemetryPath !== undefined && (typeof telemetryPath !== "string" || telemetryPath.length === 0)) {
 		throw new ConfigError(`telemetry_path must be a non-empty string`, "cost.telemetry_path");
@@ -181,6 +210,21 @@ function parseCost(raw: unknown): CostBlockConfig | undefined {
 		...(latency === undefined ? {} : { latency_usd_per_sec: latency }),
 		...(telemetryPath === undefined ? {} : { telemetry_path: telemetryPath }),
 	};
+}
+
+/**
+ * The top-level `routing:` block (PRD-020). Retained so the router reads the
+ * operator's declared calibration; the cached-input fraction is a share, so a
+ * value outside `[0,1]` fails load rather than pricing predicted input negative.
+ */
+function parseRouting(raw: unknown): RoutingBlockConfig | undefined {
+	if (raw === undefined) return undefined;
+	const record = asRecord(raw, "routing");
+	const fraction = record.predicted_cached_input_fraction;
+	if (fraction !== undefined && (typeof fraction !== "number" || !Number.isFinite(fraction) || fraction < 0 || fraction > 1)) {
+		throw new ConfigError(`must be a fraction between 0 and 1`, "routing.predicted_cached_input_fraction");
+	}
+	return record as RoutingBlockConfig;
 }
 
 function parseSkills(raw: unknown): LeanPiConfig["skills"] {
@@ -343,7 +387,61 @@ function parseVerify(raw: unknown): VerifyConfig {
 	if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
 		throw new ConfigError(`timeoutMs must be a positive number`, "verify.timeoutMs");
 	}
-	return { commands, ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }) };
+	// PRD-022: the runtime declarations carry executable commands, so a malformed
+	// block is a named error here rather than a field the verifier drops at run
+	// time and reports `not_run` for a turn that already depends on it.
+	let runtime: VerifyConfig["runtime"];
+	if (record.runtime !== undefined) {
+		const parsed = parseRuntimePlan(record.runtime, { commands });
+		if (parsed.issues.length > 0) {
+			const field = parsed.issues[0]!;
+			throw new ConfigError(`invalid runtime declaration${field.length > 0 ? ` at ${field}` : ""}: expected the smoke/cli/browser/screenshot shape from runtime/plan.ts`, `verify.runtime${field.length > 0 ? `.${field}` : ""}`);
+		}
+		runtime = parsed.plan;
+	}
+	return { commands, ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }), ...(runtime === undefined ? {} : { runtime }) };
+}
+
+/**
+ * The bounded-execution limits (PRD-007/PDR-009/PRD-022). Every budget that
+ * reaches a loop is a non-negative integer here: a fractional or negative
+ * `executionAttempts` would otherwise escape into `for (;;)` accounting, and a
+ * non-finite one could disable the loop's only bound. `max_escalations` stays
+ * absent when unconfigured so the compiler keeps its complexity-derived default.
+ */
+function parseLimits(raw: unknown): LeanPiConfig["limits"] {
+	const record = raw === undefined ? {} : asRecord(raw, "limits");
+	const budget = (key: "executionAttempts" | "semanticReviewRounds" | "max_escalations", fallback?: number): number | undefined => {
+		const value = record[key];
+		if (value === undefined) return fallback;
+		if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+			throw new ConfigError(`must be a non-negative integer`, `limits.${key}`);
+		}
+		return value;
+	};
+	const isolation = record.isolation;
+	if (isolation !== undefined && isolation !== "none" && isolation !== "worktree") {
+		throw new ConfigError(`must be one of none | worktree`, "limits.isolation");
+	}
+	// Every ceiling stays absent when unconfigured: the compiler's complexity
+	// default applies, and an explicit `0` is still the operator's own bound.
+	return {
+		...(record.executionAttempts === undefined ? {} : { executionAttempts: budget("executionAttempts")! }),
+		...(record.semanticReviewRounds === undefined ? {} : { semanticReviewRounds: budget("semanticReviewRounds")! }),
+		...(record.max_escalations === undefined ? {} : { max_escalations: budget("max_escalations")! }),
+		isolation: (isolation as "none" | "worktree" | undefined) ?? "none",
+	};
+}
+
+/** The `workspace:` block (PRD-022): where an isolated run's checkout is created. */
+function parseWorkspace(raw: unknown): LeanPiConfig["workspace"] {
+	if (raw === undefined) return undefined;
+	const record = asRecord(raw, "workspace");
+	const worktreeRoot = record.worktreeRoot;
+	if (worktreeRoot !== undefined && (typeof worktreeRoot !== "string" || worktreeRoot.trim().length === 0)) {
+		throw new ConfigError(`worktreeRoot must be a non-empty path`, "workspace.worktreeRoot");
+	}
+	return worktreeRoot === undefined ? {} : { worktreeRoot: worktreeRoot as string };
 }
 
 /**
@@ -401,7 +499,6 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 	if (instructionsRaw.ponytail !== undefined && typeof instructionsRaw.ponytail !== "boolean") {
 		throw new ConfigError(`ponytail must be a boolean`, "instructions.ponytail");
 	}
-	const limitsRaw = record.limits === undefined ? {} : asRecord(record.limits, "limits");
 
 	const backends = parseBackends(record.backends);
 	// PRD-017: assertTrusted runs between load and use. An untrusted project keeps
@@ -418,7 +515,18 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 	// binding still resolves.
 	const effectiveBackends = trust.trusted ? backends : withoutProjectSuppliedCommands(cwd, backends);
 	const parsedVerify = parseVerify(record.verify);
-	const effectiveVerify: VerifyConfig = trust.trusted ? parsedVerify : { ...parsedVerify, commands: {} };
+	// T1: an untrusted project contributes no executable verifier command — and
+	// PRD-022's `runtime` block is a command carrier too, so it is dropped with
+	// the commands rather than left as a second execution path. The timeout is
+	// not executable and is preserved.
+	const effectiveVerify: VerifyConfig = trust.trusted
+		? parsedVerify
+		: { ...(parsedVerify.timeoutMs === undefined ? {} : { timeoutMs: parsedVerify.timeoutMs }), commands: {} };
+	// SURF-3: a `servers` override names an executable, and it comes from the
+	// untrusted YAML. An untrusted project keeps the `mode` (not executable) but
+	// contributes no server command; the built-in table and PATH still apply.
+	const parsedLsp = parseLsp(record.lsp);
+	const effectiveLsp = trust.trusted ? parsedLsp : { ...parsedLsp, servers: {} };
 	const permissions = mergePermissions({
 		user: readUserState(env),
 		project: parsePermissions(record.permissions),
@@ -434,18 +542,17 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		skills: parseSkills(record.skills),
 		bench: parseBench(record.bench),
 		context: parseContext(record.context),
-		lsp: parseLsp(record.lsp),
+		lsp: effectiveLsp,
 		mcp: parseMcp(record.mcp),
 		capability: parseCapability(record.capability),
 		cost: parseCost(record.cost),
+		routing: parseRouting(record.routing),
 		recap: parseRecap(record.recap),
 		verify: effectiveVerify,
 		permissions,
 		thresholds: parseThresholds(record.thresholds),
-		limits: {
-			executionAttempts: (limitsRaw.executionAttempts as number | undefined) ?? 2,
-			semanticReviewRounds: (limitsRaw.semanticReviewRounds as number | undefined) ?? 1,
-		},
+		limits: parseLimits(record.limits),
+		workspace: parseWorkspace(record.workspace),
 		...overrides,
 	};
 

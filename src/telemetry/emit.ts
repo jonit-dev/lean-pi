@@ -14,7 +14,7 @@
 import { runTurn, type TurnContext, type TurnDeps, type TurnInput } from "../commands/session.js";
 import type { ExecutionContract } from "../compiler/contract.js";
 import { billedRefs, billingOf, type BackendCall, type RunCollector } from "./collect.js";
-import { priceCall, priceRun, resolveCostConfig, type CostConfig } from "./pricing.js";
+import { hasMissingRates, priceCall, priceRun, resolveCostConfig, type CostConfig } from "./pricing.js";
 import type { CallRow, RouteCostBlock, RunCapabilities, RunResult, RunTelemetry } from "./record.js";
 import { appendRun } from "./store.js";
 
@@ -55,8 +55,16 @@ function callRow(call: BackendCall, runId: string, cost: CostConfig): CallRow {
 		model: call.model,
 		role: call.role,
 		inputTokens: call.usage.inputTokens ?? call.usage.tokens ?? 0,
+		...(call.usage.cachedInputTokens !== undefined ? { cachedInputTokens: call.usage.cachedInputTokens } : {}),
+		...(call.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: call.usage.cacheWriteTokens } : {}),
 		outputTokens: call.usage.outputTokens ?? 0,
+		...(call.usage.reasoningTokens !== undefined ? { reasoningTokens: call.usage.reasoningTokens } : {}),
 		costUsd: priceCall(call, cost),
+		// Recorded at write time, so a reader never has to reprice against a
+		// config that has since changed: a `$0` says whether a rate was missing.
+		...(billingOf(call) === "metered"
+			? { pricing: hasMissingRates(cost, call.backend, call.model, call.usage) ? ("missing" as const) : ("declared" as const) }
+			: {}),
 		...(call.quotaClass ? { quotaClass: call.quotaClass } : {}),
 		runId,
 		billing: billingOf(call),
@@ -130,26 +138,62 @@ export interface TurnTelemetryOptions {
 }
 
 /**
+ * The verdict a run that threw before it could finish gets. It claims nothing —
+ * no verification pass, no proof, no review, no success — while the record still
+ * carries the calls and usage that really happened. Used by both entry points so
+ * a failed compiled turn is billed exactly once and never reads as a success.
+ */
+export function failedRunResult(): RunResult {
+	return { verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: false };
+}
+
+/**
  * The session turn entry point with its record: the real `runTurn()` first, then
  * exactly one emission. A turn that never produced a contract was not a run and
- * writes nothing.
+ * writes nothing. A turn that compiled and then threw emits one failed record
+ * from the partial context `runTurn` published, then rethrows the original error.
  */
 export async function runTurnWithTelemetry(
 	turn: TurnInput,
 	deps: TurnDeps,
 	telemetry: TurnTelemetryOptions,
 ): Promise<TurnContext> {
-	const context = await runTurn(turn, deps);
+	// Capture the context `runTurn` publishes before an exception, so a turn that
+	// threw after compiling is still billable. The caller's own observer still
+	// receives every context exactly as before.
+	let published: TurnContext | undefined;
+	const callerOnContext = deps.onContext;
+	const wrapped: TurnDeps = {
+		...deps,
+		onContext: (context) => {
+			published = context;
+			callerOnContext?.(context);
+		},
+	};
+	const options = (context: TurnContext): EmitOptions => ({
+		cwd: deps.cwd,
+		cost: telemetry.cost ?? resolveCostConfig(deps.config),
+		...(telemetry.prdUsed === undefined ? {} : { prdUsed: telemetry.prdUsed }),
+		// PRD-020's prediction travels on the executor outcome, so the record
+		// carries what the router predicted for the identity that ran.
+		...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
+	});
+	let context: TurnContext;
+	try {
+		context = await runTurn(turn, wrapped);
+	} catch (error) {
+		if (published?.contract) {
+			try {
+				emitRunTelemetry(telemetry.collector, published.contract, failedRunResult(), options(published));
+			} catch {
+				// Accounting must never replace the turn's own failure.
+			}
+		}
+		throw error;
+	}
 	if (context.contract) {
 		const verdict = typeof telemetry.verdict === "function" ? await telemetry.verdict(context) : telemetry.verdict;
-		emitRunTelemetry(telemetry.collector, context.contract, verdict, {
-			cwd: deps.cwd,
-			cost: telemetry.cost ?? resolveCostConfig(deps.config),
-			...(telemetry.prdUsed === undefined ? {} : { prdUsed: telemetry.prdUsed }),
-			// PRD-020's prediction travels on the executor outcome, so the record
-			// carries what the router predicted for the identity that ran.
-			...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
-		});
+		emitRunTelemetry(telemetry.collector, context.contract, verdict, options(context));
 	}
 	return context;
 }

@@ -8,6 +8,7 @@
  */
 import type { ModelRole, SelectedSkill } from "../core/types.js";
 import type { TaskPacket } from "../scout/index.js";
+import type { RuntimePlan } from "../runtime/plan.js";
 import type { TaskState } from "./state.js";
 
 export type PlanningDecision = "PRD_REQUIRED" | "DIRECT_EXECUTION" | "UNCERTAIN";
@@ -100,12 +101,19 @@ export interface ExecutionContract {
 	verification: {
 		required: string[];
 		/**
+		 * PRD-022's runtime declarations, copied from the trusted `verify.runtime`
+		 * block when one is configured. `runtimePlanOf` reads this block and the
+		 * planner selects the runtime kinds it names; it is absent for a task that
+		 * declared none, so no smoke facility is demanded it cannot satisfy.
+		 */
+		runtime?: RuntimePlan;
+		/**
 		 * PRD-009's per-criterion attribution (FR-124): which verifier kinds prove
 		 * each criterion, and over what surface. The compiler fills this only when
 		 * it can name a surface — a criterion whose surface is unknown carries no
 		 * scope rather than a guessed one.
 		 */
-		criteria?: Array<{ id: string; verifiers?: string[]; scope?: string }>;
+		criteria?: Array<{ id: string; verifiers?: string[]; scope?: string | string[] }>;
 	};
 	limits: {
 		/** A hard total: every backend invocation the turn makes, escalations included. */

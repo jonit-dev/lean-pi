@@ -33,8 +33,11 @@ const DEFAULT_VALUES: Record<string, unknown> = {
 	"thresholds.gate_prd_required": 0.5,
 	"thresholds.complexity": 0.5,
 	"thresholds.review_risk": 0.5,
-	"limits.executionAttempts": 2,
-	"limits.semanticReviewRounds": 1,
+	// Unconfigured, both ceilings stay absent and the compiler derives a bound
+	// from the task's complexity — so the value a project override displaces is
+	// that derived bound, not a fixed number.
+	"limits.executionAttempts": "complexity-derived",
+	"limits.semanticReviewRounds": "complexity-derived",
 };
 
 /** Subtrees another command owns, or that carry no provenance of their own. */

@@ -16,6 +16,8 @@ import type { ExecutionContract } from "../compiler/contract.js";
 import type { ArtifactStore } from "../context/artifacts.js";
 import type { LeanPiConfig } from "../core/types.js";
 import type { JevClient } from "../jev/client.js";
+import type { BrowserFacility } from "../runtime/browser.js";
+import { runtimePlanOf, type RuntimePlan } from "../runtime/plan.js";
 import { aggregate, type VerificationStatus } from "./aggregate.js";
 import { captureArtifact, DEFAULT_SCOPES, verifierFor, verifierOutcome, type VerifierContext, type VerifierDescriptor } from "./descriptors.js";
 import { EvidenceStore, type EvidenceRecord, type EvidenceView, type VerifierResult } from "./evidence.js";
@@ -47,6 +49,10 @@ export interface VerifyOptions {
 	assertions?: ReadonlyArray<{ source: string; text: string; recordedAt?: string }>;
 	/** Test seam: command execution. */
 	exec?: ShellExec;
+	/** The contract's runtime plan, when the caller already parsed it; otherwise read off the contract. */
+	runtime?: RuntimePlan;
+	/** The host's browser adapter, threaded to the browser/screenshot runners per run. */
+	browserFacility?: BrowserFacility | null;
 	now?: () => Date;
 }
 
@@ -100,6 +106,10 @@ export async function verifyTask(contract: ExecutionContract, workspaceRoot: str
 	const context: VerifierContext = {
 		cwd: workspaceRoot,
 		timeoutMs: settings.timeoutMs,
+		// The plan travels with this run, not in a process-global: overlapping
+		// verifications each read their own contract's declarations.
+		runtime: options.runtime ?? runtimePlanOf(contract),
+		...(options.browserFacility !== undefined ? { browserFacility: options.browserFacility } : {}),
 		...(options.artifacts ? { artifacts: options.artifacts } : {}),
 		...(options.exec ? { exec: options.exec } : {}),
 	};

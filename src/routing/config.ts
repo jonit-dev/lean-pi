@@ -9,6 +9,7 @@
  * behaves exactly as the defaults describe.
  */
 import type { ExecutionComplexity } from "../compiler/contract.js";
+import { ConfigError } from "../core/config.js";
 import { isModelRole, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { resolveCostConfig } from "../telemetry/pricing.js";
 import { ROUTING_DEFAULTS, ROUTING_SITE_IDS, type EffortLevel, type RoutingSiteId } from "./defaults.js";
@@ -38,25 +39,22 @@ export interface RoutingConfig {
 	specialists: Record<string, ModelRole>;
 }
 
-/** The `routing:` block as it may appear in `leanpi.config.yaml`. Every key is optional. */
-interface RawRoutingConfig {
-	predicted_input_tokens?: number;
-	predicted_output_tokens?: number;
-	predicted_cached_input_fraction?: number;
-	effort_token_multiplier?: Partial<Record<EffortLevel, number>>;
-	effort_by_complexity?: Partial<Record<ExecutionComplexity, EffortLevel>>;
-	retry_effort_threshold?: number;
-	matrix_retry_rate?: number;
-	min_bucket_runs?: number;
-	tie_band_usd?: number;
-	delegation_slice_threshold?: number;
-	local_gpu_seconds?: number;
-	latency_ms?: number;
-	sites?: Partial<Record<RoutingSiteId, boolean>>;
-}
-
 function positive(value: unknown, fallback: number): number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+/**
+ * A cached-input share must be a fraction, so a declared value outside `[0,1]`
+ * is a named error. `loadConfig` already rejects it for a file; this guard also
+ * covers a config assembled from `overrides`, where an out-of-range share would
+ * otherwise price predicted input negative (COST-4).
+ */
+function fraction(value: unknown, fallback: number): number {
+	if (value === undefined) return fallback;
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+		throw new ConfigError(`must be a fraction between 0 and 1`, "routing.predicted_cached_input_fraction");
+	}
+	return value;
 }
 
 /**
@@ -64,7 +62,7 @@ function positive(value: unknown, fallback: number): number {
  * user sets the shadow price once and both the router and the record read it.
  */
 export function resolveRoutingConfig(config?: LeanPiConfig | null): RoutingConfig {
-	const raw = (config as { routing?: RawRoutingConfig } | null | undefined)?.routing ?? {};
+	const raw = config?.routing ?? {};
 	const cost = resolveCostConfig(config);
 	const sites: Record<RoutingSiteId, boolean> = {
 		[ROUTING_SITE_IDS.quota_preference]: true,
@@ -89,7 +87,7 @@ export function resolveRoutingConfig(config?: LeanPiConfig | null): RoutingConfi
 	return {
 		predicted_input_tokens: positive(raw.predicted_input_tokens, ROUTING_DEFAULTS.predicted_input_tokens),
 		predicted_output_tokens: positive(raw.predicted_output_tokens, ROUTING_DEFAULTS.predicted_output_tokens),
-		predicted_cached_input_fraction: positive(raw.predicted_cached_input_fraction, ROUTING_DEFAULTS.predicted_cached_input_fraction),
+		predicted_cached_input_fraction: fraction(raw.predicted_cached_input_fraction, ROUTING_DEFAULTS.predicted_cached_input_fraction),
 		effort_token_multiplier: { ...ROUTING_DEFAULTS.effort_token_multiplier, ...(raw.effort_token_multiplier ?? {}) } as Record<EffortLevel, number>,
 		effort_by_complexity: {
 			LOW: raw.effort_by_complexity?.LOW ?? ROUTING_DEFAULTS.effort_by_complexity.LOW,

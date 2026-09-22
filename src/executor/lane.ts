@@ -127,6 +127,8 @@ export interface ExecutorDeps {
 	env?: NodeJS.ProcessEnv;
 	/** Test seam: PRD-009's command runner. */
 	exec?: ShellExec;
+	/** PRD-022's host browser adapter, threaded to the runtime verifiers this turn selects. */
+	browserFacility?: import("../runtime/browser.js").BrowserFacility | null;
 	/** Verifier command overrides for this turn, on top of the config's `verify` block. */
 	verifyCommands?: Partial<Record<string, string>>;
 	/** Test seam: replaces the PRD-011 reviewer worker. */
@@ -251,7 +253,16 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 	const seenRecords = new Set<string>();
 	let question: string | undefined;
 	let assumption: string | undefined;
-	/** The files the last attempt reported changing; `GET_MORE_CONTEXT` widens with them. */
+	/**
+	 * Every task-owned file any attempt has changed, unioned across attempts. A
+	 * retry that edits nothing must not erase the change set the earlier attempt
+	 * produced: verification, review and the reported outcome all read this, not
+	 * the last attempt's delta. Pre-existing user edits are excluded by
+	 * construction — a worker reports only what it changed.
+	 */
+	const taskOwnedFiles = new Set<string>();
+	let taskOwnedUnknown = false;
+	/** The cumulative task-owned change set; `GET_MORE_CONTEXT` widens with it. */
 	let lastChangedFiles: string[] = [];
 	/** What the next attempt must do differently; consumed by the next packet. */
 	let nextDirective: NextAttempt | null = null;
@@ -296,7 +307,12 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 
 	const blocked = (reason: string, review?: ExecutorReviewOutcome): ExecutorOutcome => ({
 		status: "blocked",
-		changedFiles: [],
+		// The cumulative task-owned set: a turn blocked after its worker edited
+		// (a failed verifier, a FIX_REQUIRED reviewer, a rejected retry) still
+		// reports the work it did and the hash that stamped its evidence, across
+		// every retry. A block before any worker succeeded reports none, because
+		// nothing was changed yet.
+		changedFiles: lastChangedFiles,
 		...(verifiedHash ? { workspaceHash: verifiedHash } : {}),
 		evidence,
 		commands,
@@ -371,17 +387,20 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 			}
 		} else {
 			invocations.push({ role, backend: backendName, strategy: strategyLabel, ok: true });
-			lastChangedFiles = [...outcome.result.changedFiles];
+			for (const file of outcome.result.changedFiles) taskOwnedFiles.add(file);
+			if (outcome.result.changedFilesUnknown === true) taskOwnedUnknown = true;
+			lastChangedFiles = [...taskOwnedFiles].sort();
 			const result = await verifyTask(contract, deps.cwd, {
 				...(deps.store ? { store: deps.store } : {}),
 				...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 				...(deps.jev ? { jev: deps.jev } : {}),
+				...(deps.browserFacility !== undefined ? { browserFacility: deps.browserFacility } : {}),
 				config: deps.config,
-				touchedPaths: outcome.result.changedFiles,
+				touchedPaths: lastChangedFiles,
 				// B4: the verifier can only widen the regression scope when it is told
 				// what the diff touched; without it `regressionScopeRule(undefined)`
 				// answers `TARGETED_SUFFICIENT` by construction.
-				diff: { files: [...outcome.result.changedFiles], ...(outcome.result.changedFilesUnknown ? { unknown: true } : {}) },
+				diff: { files: lastChangedFiles, ...(taskOwnedUnknown ? { unknown: true } : {}) },
 				...(deps.verifyCommands ? { commands: deps.verifyCommands } : {}),
 				...(deps.exec ? { exec: deps.exec } : {}),
 			});
@@ -392,8 +411,10 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 			if (result.status === "pass") {
 				const ranBackend = outcome.backend ? deps.registry.byName(outcome.backend) : undefined;
 				const reviewOutcome = await runReview(contract, deps, {
-					changedFiles: outcome.result.changedFiles,
-					changedFilesUnknown: outcome.result.changedFilesUnknown === true,
+					// The cumulative task-owned set: a no-op retry still reviews the
+					// change the earlier attempt actually made.
+					changedFiles: lastChangedFiles,
+					changedFilesUnknown: taskOwnedUnknown,
 					evidence: result.records,
 					failedAttempts: retryHistory.length,
 					// F4: the identity that actually ran, so the reviewer lane can prefer
@@ -404,7 +425,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 				if (reviewOutcome.skipped || !verdict || verdict.decision === "PASS") {
 					return {
 						status: "completed",
-						changedFiles: outcome.result.changedFiles,
+						changedFiles: lastChangedFiles,
 						...(verifiedHash ? { workspaceHash: verifiedHash } : {}),
 						evidence,
 						commands,

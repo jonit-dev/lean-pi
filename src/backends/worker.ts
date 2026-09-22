@@ -119,6 +119,11 @@ export interface BackendInvocation {
 export interface InvocationUsage {
 	inputTokens?: number;
 	cachedInputTokens?: number;
+	/**
+	 * Input tokens written into the provider's prompt cache; a separate rate on
+	 * every vendor's card, so it stays its own bucket (PRD-015's pricing reads it).
+	 */
+	cacheWriteTokens?: number;
 	outputTokens?: number;
 	reasoningTokens?: number;
 }

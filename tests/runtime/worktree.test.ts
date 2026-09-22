@@ -9,7 +9,8 @@
  * in the main checkout during and after the run — not by asserting which
  * directory the executor was handed.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LeanPiConfig } from "../../src/core/types.js";
@@ -18,6 +19,7 @@ import { verifyTask } from "../../src/verify/index.js";
 import type { EvidenceRecord } from "../../src/verify/evidence.js";
 import { workspaceHash } from "../../src/verify/hash.js";
 import { git, gitStatus, gitWorktreePaths, permissionConfig, runtimeContract, scratchRepo, sha256File, sha256Text } from "./support.js";
+import { tempDir } from "../helpers/fixtures.js";
 
 const BASE_FILE = "src/app.ts";
 const BASE_CONTENT = "export const version = 1;\n";
@@ -56,9 +58,9 @@ describe("AC-6 — a bounded execution in a worktree leaves the main checkout un
 
 	it("places the worktree under the configured run root", async () => {
 		const repo = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
-		expect(worktreeRootOf(undefined, repo)).toBe(join(repo, ".leanpi", "worktrees"));
-		const configured = worktreeRootOf({ workspace: { worktreeRoot: "runs" } } as unknown as LeanPiConfig, repo);
-		expect(configured).toBe(join(repo, "runs"));
+		expect(worktreeRootOf(undefined, repo)).toBe(join(repo, ".worktrees"));
+		const configured = worktreeRootOf({ workspace: { worktreeRoot: ".worktrees/custom" } } as unknown as LeanPiConfig, repo);
+		expect(configured).toBe(join(repo, ".worktrees/custom"));
 
 		const run = await runIsolated("run-configured", {
 			repoRoot: repo,
@@ -69,7 +71,7 @@ describe("AC-6 — a bounded execution in a worktree leaves the main checkout un
 			},
 		});
 
-		expect(run.path).toBe(join(repo, "runs", "run-configured"));
+		expect(run.path).toBe(join(repo, ".worktrees/custom", "run-configured"));
 		expect(run.cleanup?.removed).toBe(true);
 		expect(readdirSync(configured)).toEqual([]);
 		expect(gitWorktreePaths(repo)).toEqual([repo]);
@@ -319,5 +321,173 @@ describe("AC-8 — cleanup, including the crash path", () => {
 		expect(result.commits).toHaveLength(1);
 		expect(result.reason).toContain("commit(s) the surfaced patch does not represent");
 		expect(existsSync(kept.path)).toBe(true);
+	});
+
+	it("surfaces one complete diff that creates new files too", async () => {
+		const repo = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		const run = await runIsolated("run-complete", {
+			repoRoot: repo,
+			permissions: permissionConfig("git_destructive", "allow"),
+			async run(cwd) {
+				writeFileSync(join(cwd, BASE_FILE), "export const version = 2;\n");
+				writeFileSync(join(cwd, "src", "added.ts"), "export const added = true;\n");
+			},
+		});
+		expect(run.patch.completeDiff).toBeDefined();
+		expect(run.patch.completeDiff).toContain("src/added.ts");
+		// The one displayed command applies the whole result to a fresh checkout.
+		const clean = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		execFileSync("git", ["apply", "--binary", "-"], { cwd: clean, input: run.patch.completeDiff! });
+		expect(readFileSync(join(clean, BASE_FILE), "utf8")).toBe("export const version = 2;\n");
+		expect(readFileSync(join(clean, "src", "added.ts"), "utf8")).toBe("export const added = true;\n");
+	});
+
+	it("creates a new-files-only result through the complete diff", async () => {
+		const repo = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		const run = await runIsolated("run-new-only", {
+			repoRoot: repo,
+			permissions: permissionConfig("git_destructive", "allow"),
+			async run(cwd) {
+				writeFileSync(join(cwd, "src", "brand-new.ts"), "export const fresh = true;\n");
+			},
+		});
+		// The tracked-only diff is empty; the complete diff is what makes the
+		// result applicable at all.
+		expect(run.patch.diff.trim()).toBe("");
+		expect(run.patch.completeDiff).toBeDefined();
+		const clean = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		execFileSync("git", ["apply", "--binary", "-"], { cwd: clean, input: run.patch.completeDiff! });
+		expect(readFileSync(join(clean, "src", "brand-new.ts"), "utf8")).toBe("export const fresh = true;\n");
+	});
+
+	it("refuses a conflicting apply without partially applying tracked edits", async () => {
+		const repo = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		const kept = await runIsolated("run-conflict", {
+			repoRoot: repo,
+			permissions: permissionConfig("git_destructive", "allow"),
+			keep: true,
+			async run(cwd) {
+				writeFileSync(join(cwd, BASE_FILE), "export const version = 2;\n");
+				writeFileSync(join(cwd, "src", "new.ts"), "from the run\n");
+			},
+		});
+		const target = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		// Only the new file conflicts: the tracked edit would apply cleanly, so a
+		// partial apply would be visible as the tracked file changing.
+		writeFileSync(join(target, "src", "new.ts"), "the user already wrote this\n");
+
+		expect(() => applyPatch(kept.patch, target)).toThrow();
+		// Refused means nothing changed: the tracked edit did not land and the
+		// user's file still holds their content.
+		expect(readFileSync(join(target, BASE_FILE), "utf8")).toBe(BASE_CONTENT);
+		expect(readFileSync(join(target, "src", "new.ts"), "utf8")).toBe("the user already wrote this\n");
+	});
+
+	it("refuses a patch path that escapes the target", () => {
+		const target = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		// A unique name, so a leftover from another run cannot mask the assertion.
+		const escapeName = `leanpi-escape-${process.pid}-${Date.now()}.txt`;
+		const escaped = join(target, "..", escapeName);
+		const malicious = {
+			runId: "run-escape",
+			baseCommit: git(target, ["rev-parse", "HEAD"]).trim(),
+			diff: "",
+			untracked: [{ path: `../${escapeName}`, content: "pwned\n", encoding: "utf8" as const }],
+			paths: [`../${escapeName}`],
+			hashes: {},
+		};
+		try {
+			expect(() => applyPatch(malicious, target)).toThrow(/escapes|relative path/);
+			expect(existsSync(escaped)).toBe(false);
+		} finally {
+			rmSync(escaped, { force: true });
+		}
+	});
+
+	it("confines every run root to the owning repository", () => {
+		const repo = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		expect(() => worktreeRoot(repo, "/tmp/leanpi-outside")).toThrow("escapes the owning repository");
+		expect(() => worktreeRoot(repo, "../sibling"), "a relative climb").toThrow("escapes the owning repository");
+		// A custom relative root inside the repo is still allowed.
+		expect(worktreeRoot(repo, ".worktrees/custom")).toBe(join(repo, ".worktrees/custom"));
+	});
+
+	it("refuses a root whose existing ancestor symlinks outside the repository", () => {
+		const repo = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		const outside = tempDir("leanpi-outside-");
+		symlinkSync(outside, join(repo, "escape"), "dir");
+		expect(() => worktreeRoot(repo, "escape/runs")).toThrow("escapes the owning repository");
+	});
+
+	it("leaves sibling unowned worktrees and a live owned run untouched", async () => {
+		const repo = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		const runRoot = worktreeRoot(repo);
+		// A developer's own registered worktree under the shared root, with no stamp.
+		const sibling = join(runRoot, "sibling-dev");
+		git(repo, ["worktree", "add", "--detach", sibling, "HEAD"]);
+		writeFileSync(join(sibling, "src", "sibling.ts"), "export const sibling = 1;\n");
+		// A plain directory that is not a worktree at all.
+		mkdirSync(join(runRoot, "not-a-worktree"), { recursive: true });
+		// A live owned run: ownership stamp plus a registered checkout, but running.
+		const live = await runIsolated("run-live", {
+			repoRoot: repo,
+			permissions: permissionConfig("git_destructive", "allow"),
+			keep: true,
+			async run(cwd) {
+				writeFileSync(join(cwd, BASE_FILE), "export const version = 30;\n");
+			},
+		});
+
+		expect(pruneOrphans({ repoRoot: repo, liveRunIds: ["run-live"] })).toEqual([]);
+		expect(existsSync(sibling)).toBe(true);
+		expect(readFileSync(join(sibling, "src", "sibling.ts"), "utf8")).toBe("export const sibling = 1;\n");
+		expect(existsSync(join(runRoot, "not-a-worktree"))).toBe(true);
+		expect(existsSync(live.path)).toBe(true);
+
+		// Cleanup refuses a clean worktree with no ownership stamp rather than
+		// force-removing work this module never created.
+		const refused = cleanup("sibling-dev", { repoRoot: repo });
+		expect(refused.removed).toBe(false);
+		if (refused.removed) throw new Error("unreachable");
+		expect(refused.reason).toContain("no ownership stamp");
+		expect(existsSync(sibling)).toBe(true);
+	});
+
+	it("surfaces untracked names with spaces and a leading dash through ls-files -z", async () => {
+		const repo = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		const run = await runIsolated("run-weird", {
+			repoRoot: repo,
+			permissions: permissionConfig("git_destructive", "allow"),
+			async run(cwd) {
+				writeFileSync(join(cwd, "weird name.txt"), "hello\n");
+				writeFileSync(join(cwd, "-dash.txt"), "dash\n");
+			},
+		});
+		expect(run.patch.untracked.map((file) => file.path).sort()).toEqual(["-dash.txt", "weird name.txt"]);
+		expect(run.patch.paths).toEqual(["-dash.txt", "weird name.txt"]);
+	});
+
+	it("owns a run started from a linked checkout under the primary repository", async () => {
+		const primary = scratchRepo({ [BASE_FILE]: BASE_CONTENT });
+		const linked = join(tempDir("leanpi-linked-"), "checkout");
+		// A linked checkout, as an agent's own task worktree would be.
+		git(primary, ["worktree", "add", "--detach", linked, "HEAD"]);
+
+		expect(worktreeRoot(linked, undefined)).toBe(join(primary, ".worktrees"));
+
+		const run = await runIsolated("run-linked", {
+			repoRoot: linked,
+			permissions: permissionConfig("git_destructive", "allow"),
+			async run(cwd) {
+				writeFileSync(join(cwd, BASE_FILE), "export const version = 21;\n");
+			},
+		});
+
+		// The worktree is owned by the primary repository, and never nested under
+		// the linked checkout that started the run.
+		expect(run.path).toBe(join(primary, ".worktrees", "run-linked"));
+		expect(run.cleanup?.removed).toBe(true);
+		expect(existsSync(join(linked, ".worktrees"))).toBe(false);
+		expect(readFileSync(join(primary, BASE_FILE), "utf8")).toBe(BASE_CONTENT);
 	});
 });

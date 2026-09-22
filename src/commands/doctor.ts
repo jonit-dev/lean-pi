@@ -7,7 +7,7 @@
  * installs anything, or prints a credential value — probe results only.
  */
 import { homedir } from "node:os";
-import { defaultSkillRoots, scanSkills, type SkillRoot } from "../capabilities/skills.js";
+import { defaultRuntimeSkillRoots, scanSkills, type SkillRoot } from "../capabilities/skills.js";
 import { buildCatalog, resolveConfigPaths } from "../mcp/catalog.js";
 import type { CommandRegistry, CommandResult } from "./registry.js";
 import { probeBackends, type CommandSurface } from "./surface.js";
@@ -25,7 +25,7 @@ const WORST_ORDER: DoctorStatus[] = ["ok", "degraded", "unavailable"];
 /** The skill roots the session actually indexes: config when declared, else the shared defaults. */
 export function skillRootsOf(surface: CommandSurface): SkillRoot[] {
 	const declared = surface.config.capabilities.skillRoots;
-	if (declared.length === 0) return defaultSkillRoots(surface.cwd, surface.env.HOME ?? homedir());
+	if (declared.length === 0) return defaultRuntimeSkillRoots(surface.cwd, surface.config.permissions.trust.trusted, surface.env.HOME ?? homedir());
 	return declared.map((path) => ({ path, class: path.includes(".claude/plugins") ? ("plugin" as const) : ("user" as const) }));
 }
 

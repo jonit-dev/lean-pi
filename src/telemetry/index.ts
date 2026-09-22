@@ -29,7 +29,7 @@ export {
 	renderRun,
 	type CostCommandDeps,
 } from "./cost.js";
-export { emitRunTelemetry, runTurnWithTelemetry, type EmitOptions, type RunVerdict, type TurnTelemetryOptions } from "./emit.js";
+export { emitRunTelemetry, failedRunResult, runTurnWithTelemetry, type EmitOptions, type RunVerdict, type TurnTelemetryOptions } from "./emit.js";
 export { priceCall, priceQuota, priceRun, ratesFor, resolveCostConfig, round6, TELEMETRY_PATH_DEFAULT, type CostConfig, type ModelRate } from "./pricing.js";
 export type {
 	CallRow,

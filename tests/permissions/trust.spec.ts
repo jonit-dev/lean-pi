@@ -9,12 +9,12 @@
  *
  * ACs: AC-6, AC-7, AC-8.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/commands/registry.js";
 import { loadConfig } from "../../src/index.js";
-import { assertTrusted, BUILTIN_SECRETS_POLICY, grantTrust, loadPermissionState, mergePermissions, registerPermissionsCommand, type PermissionState } from "../../src/permissions/index.js";
+import { assertTrusted, BUILTIN_SECRETS_POLICY, grantTrust, isProjectLocal, loadPermissionState, mergePermissions, projectSurface, registerPermissionsCommand, surfaceFiles, type PermissionState } from "../../src/permissions/index.js";
 import { nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
 import { STUB_MODEL, bootGuardedSession, call, drive, toolMessages } from "./harness.js";
@@ -283,5 +283,134 @@ describe("B3 — a trusted project cannot loosen its own secrets policy", () => 
 		expect(untrusted.ignoredProjectGrants).toEqual([
 			{ capability: "permissions.secrets", decision: "allow", reason: "project secrets policy ignored while the project is untrusted" },
 		]);
+	});
+});
+
+/**
+ * A parent security review of the trust fallback: `isProjectLocal`'s symlink
+ * branch had its containment arguments reversed, so a path outside the project
+ * that aliases into it read as not-local; and the surface hash followed
+ * directory symlinks instead of recording them.
+ */
+describe("the project-local containment fallback", () => {
+	it("treats an outside symlink that resolves inside the project as local, and a genuine outside path as not", () => {
+		const root = tempDir("leanpi-local-root-");
+		mkdirSync(join(root, "subdir"), { recursive: true });
+		const outside = tempDir("leanpi-local-outside-");
+		symlinkSync(join(root, "subdir"), join(outside, "alias"), "dir");
+		writeFileSync(join(outside, "genuine.txt"), "x");
+
+		// Lexical: inside stays inside.
+		expect(isProjectLocal(root, join(root, "subdir"))).toBe(true);
+		// A symlink outside the tree whose target is inside is project-local.
+		expect(isProjectLocal(root, join(outside, "alias"))).toBe(true);
+		// A real outside path is not.
+		expect(isProjectLocal(root, join(outside, "genuine.txt"))).toBe(false);
+	});
+
+	it("terminates on self-referential and mutual symlinks while hashing their content", () => {
+		const root = tempDir("leanpi-hash-cycle-");
+		const extensions = join(root, ".leanpi", "extensions");
+		mkdirSync(extensions, { recursive: true });
+		writeFileSync(join(extensions, "real.ts"), "export {};\n");
+		// `loop -> extensions` would re-hash the directory that contains it forever;
+		// `a <-> b` is unresolvable. Both must be recorded, bounded, not thrown.
+		symlinkSync(extensions, join(extensions, "loop"), "dir");
+		symlinkSync(join(extensions, "b"), join(extensions, "a"), "dir");
+		symlinkSync(join(extensions, "a"), join(extensions, "b"), "dir");
+
+		const files = [...surfaceFiles(projectSurface(root)).keys()];
+		expect(files).toContain(join(".leanpi", "extensions", "loop"));
+		expect(files).toContain(join(".leanpi", "extensions", "a"));
+		expect(files).toContain(join(".leanpi", "extensions", "b"));
+	});
+});
+
+/**
+ * A symlink is part of the trusted surface, so what it points at is too: a
+ * trusted project could otherwise swap the contents behind a link after the
+ * grant and keep its approval. The hash follows the link to its target content
+ * and keeps the link path as the entry, bounded by the real paths already on
+ * the walk so a cycle terminates.
+ */
+describe("trust follows symlink targets and revokes when their content changes", () => {
+	function linkedRepo(): { root: string; env: { XDG_CONFIG_HOME: string }; shared: string } {
+		const root = tempDir("leanpi-link-root-");
+		const env = { XDG_CONFIG_HOME: tempDir("leanpi-link-xdg-") };
+		const shared = tempDir("leanpi-link-shared-");
+		return { root, env, shared };
+	}
+
+	it("revokes trust when the file behind a symlinked skill changes", () => {
+		const { root, env, shared } = linkedRepo();
+		writeFileSync(join(shared, "note.md"), "# one\n");
+		mkdirSync(join(root, ".claude", "skills", "evil"), { recursive: true });
+		symlinkSync(join(shared, "note.md"), join(root, ".claude", "skills", "evil", "SKILL.md"));
+
+		grantTrust(root, env);
+		expect(assertTrusted(root, env).trusted).toBe(true);
+
+		writeFileSync(join(shared, "note.md"), "# two\n");
+		const after = assertTrusted(root, env);
+		expect(after.trusted).toBe(false);
+		expect(after.status).toBe("changed");
+	});
+
+	it("revokes trust when a file inside a symlinked skill directory changes", () => {
+		const { root, env, shared } = linkedRepo();
+		mkdirSync(join(shared, "skills", "pack"), { recursive: true });
+		writeFileSync(join(shared, "skills", "pack", "SKILL.md"), "# one\n");
+		mkdirSync(join(root, ".claude"), { recursive: true });
+		symlinkSync(join(shared, "skills"), join(root, ".claude", "skills"), "dir");
+
+		grantTrust(root, env);
+		expect(assertTrusted(root, env).trusted).toBe(true);
+
+		writeFileSync(join(shared, "skills", "pack", "SKILL.md"), "# two\n");
+		expect(assertTrusted(root, env).trusted).toBe(false);
+	});
+
+	it("revokes trust when a link changes destination, even to identical content", () => {
+		const { root, env, shared } = linkedRepo();
+		writeFileSync(join(shared, "one.md"), "same\n");
+		writeFileSync(join(shared, "two.md"), "same\n");
+		mkdirSync(join(root, ".claude", "skills", "evil"), { recursive: true });
+		const link = join(root, ".claude", "skills", "evil", "SKILL.md");
+		symlinkSync(join(shared, "one.md"), link);
+
+		grantTrust(root, env);
+		expect(assertTrusted(root, env).trusted).toBe(true);
+
+		rmSync(link);
+		symlinkSync(join(shared, "two.md"), link);
+		expect(assertTrusted(root, env).trusted).toBe(false);
+	});
+
+	it("revokes trust when content changes behind nested directory symlinks", () => {
+		const { root, env, shared } = linkedRepo();
+		const payload = tempDir("leanpi-nested-skill-");
+		mkdirSync(join(shared, "skills"));
+		writeFileSync(join(payload, "SKILL.md"), "# one\n");
+		symlinkSync(payload, join(shared, "skills", "pack"), "dir");
+		mkdirSync(join(root, ".claude"));
+		symlinkSync(join(shared, "skills"), join(root, ".claude", "skills"), "dir");
+
+		grantTrust(root, env);
+		expect(assertTrusted(root, env).trusted).toBe(true);
+		writeFileSync(join(payload, "SKILL.md"), "# changed executable instructions\n");
+		expect(assertTrusted(root, env).trusted).toBe(false);
+	});
+
+	it("records destination changes for broken symlinks", () => {
+		const { root, env, shared } = linkedRepo();
+		const extensions = join(root, ".leanpi", "extensions");
+		mkdirSync(extensions, { recursive: true });
+		const link = join(extensions, "hook.js");
+		symlinkSync(join(shared, "missing-one.js"), link);
+		grantTrust(root, env);
+		expect(assertTrusted(root, env).trusted).toBe(true);
+		rmSync(link);
+		symlinkSync(join(shared, "missing-two.js"), link);
+		expect(assertTrusted(root, env).trusted).toBe(false);
 	});
 });

@@ -19,7 +19,7 @@ import { loadConfig } from "../../src/core/config.js";
 import { runExecutor, type ExecutorDeps } from "../../src/executor/index.js";
 import { EvidenceStore } from "../../src/verify/evidence.js";
 import { installStubCli, setStubScript } from "../backends/helpers.js";
-import { quickContract, repoWithTest, type ExecHarness } from "./helpers.js";
+import { execConfig, quickContract, repoWithTest, type ExecHarness } from "./helpers.js";
 
 const PASS_VERDICT = JSON.stringify({ decision: "PASS", findings: [] });
 
@@ -84,5 +84,40 @@ describe("A1 — executor change detection", () => {
 		} finally {
 			restore();
 		}
+	});
+
+	it("a block after the worker edited keeps the cumulative change set; a block before it stays empty", async () => {
+		const { cwd, agentDir } = repoWithTest();
+		const base = await quickContract({ cwd } as ExecHarness);
+		const contract: ExecutionContract = {
+			...base,
+			task: { ...base.task, review_risk: "R0" },
+			routing: { ...base.routing, executor_class: "quick", reviewer_class: "none" },
+			limits: { ...base.limits, executionAttempts: 1 },
+		};
+		const config = execConfig(cwd);
+		const deps = (worker: ExecutorDeps["worker"]): ExecutorDeps => ({
+			registry: new BackendRegistry(config),
+			cwd,
+			config,
+			artifacts: createArtifactStore({ sessionDir: join(agentDir, "session") }),
+			store: new EvidenceStore(),
+			worker,
+			// The verifier fails, so the turn blocks after the worker's edit.
+			verifyCommands: { typecheck: "exit 1", targeted_test: "exit 1", runtime_smoke: "exit 1", lint: "exit 1", build: "exit 1", git_status: "git status --porcelain" },
+		});
+
+		// A worker that edited, then a failing verifier: the blocked outcome still
+		// reports the work it did and the hash its evidence was stamped with.
+		writeFileSync(join(cwd, "src", "target.ts"), "export const value = 2;\n");
+		const edited = await runExecutor(contract, deps(async () => ({ status: "completed", backend: "local", result: { status: "ok", changedFiles: ["src/target.ts"], summary: "edited" }, attempts: [] })));
+		expect(edited.status).toBe("blocked");
+		expect(edited.changedFiles).toEqual(["src/target.ts"]);
+		expect(edited.workspaceHash).toBeTruthy();
+
+		// A worker that never edited: the block precedes any work, so the set is empty.
+		const none = await runExecutor(contract, deps(async () => ({ status: "blocked", attempts: [{ backend: "none", failure: "exit", reason: "needs user input" }] })));
+		expect(none.status).toBe("blocked");
+		expect(none.changedFiles).toEqual([]);
 	});
 });

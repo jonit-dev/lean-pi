@@ -11,6 +11,7 @@
 import { statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { LeanPiConfig } from "../core/types.js";
+import { isProjectLocal } from "../permissions/trust.js";
 import { lspConfigOf } from "./config.js";
 
 /** Language id → server command lines, in preference order. Args after the executable are passed through. */
@@ -64,6 +65,19 @@ export interface DetectOptions {
 	env?: NodeJS.ProcessEnv;
 }
 
+/**
+ * The trust boundary for discovery (SURF-3). A loaded config carries the
+ * measured project trust — the established source, `config.permissions.trust`.
+ * An untrusted project contributes neither a `servers` override nor any
+ * project-local executable, whether it sits in `node_modules/.bin` or arrives
+ * through `PATH` (including a PATH entry outside the tree that links back in).
+ * Without a config the call is a direct probe (a PATH check, a fixture) and the
+ * built-in table keeps its historical reach — no project data is being read.
+ */
+function trustedFor(options: DetectOptions): boolean {
+	return options.config?.permissions?.trust?.trusted ?? true;
+}
+
 export interface DetectedServer {
 	language: string;
 	/** The command line that resolved, as named in the table or config. */
@@ -96,20 +110,24 @@ interface ProbeDir {
 }
 
 /** Discovery order: the project's own bin dir first, then PATH. */
-function probeDirs(root: string, env: NodeJS.ProcessEnv): ProbeDir[] {
-	const dirs: ProbeDir[] = [{ path: join(root, "node_modules/.bin"), source: "local-bin" }];
+function probeDirs(root: string, env: NodeJS.ProcessEnv, includeLocalBin: boolean): ProbeDir[] {
+	const dirs: ProbeDir[] = includeLocalBin ? [{ path: join(root, "node_modules/.bin"), source: "local-bin" }] : [];
 	for (const entry of (env.PATH ?? env.Path ?? "").split(delimiter)) {
 		if (entry.length > 0) dirs.push({ path: entry, source: "path" });
 	}
 	return dirs;
 }
 
-function resolveCommand(root: string, command: string, env: NodeJS.ProcessEnv): { path: string; source: DetectedServer["source"] } | null {
+function resolveCommand(root: string, command: string, env: NodeJS.ProcessEnv, trusted: boolean): { path: string; source: DetectedServer["source"] } | null {
 	if (isAbsolute(command)) return isExecutableFile(command) ? { path: command, source: "config" } : null;
-	for (const dir of probeDirs(root, env)) {
+	for (const dir of probeDirs(root, env, trusted)) {
 		for (const candidate of [command, `${command}.cmd`, `${command}.exe`]) {
 			const path = join(dir.path, candidate);
-			if (isExecutableFile(path)) return { path, source: dir.source };
+			if (!isExecutableFile(path)) continue;
+			// Every candidate is measured, not just the implicit bin dir: a project
+			// that puts its own directory on PATH must not reach its own executable.
+			if (!trusted && isProjectLocal(root, path)) continue;
+			return { path, source: dir.source };
 		}
 	}
 	return null;
@@ -117,7 +135,7 @@ function resolveCommand(root: string, command: string, env: NodeJS.ProcessEnv): 
 
 /** True when `command` resolves on this machine's PATH — the test-skip guard. */
 export function commandOnPath(command: string, env: NodeJS.ProcessEnv = process.env): boolean {
-	return resolveCommand(process.cwd(), command, env) !== null;
+	return resolveCommand(process.cwd(), command, env, true) !== null;
 }
 
 /** The command list for a language: the config override first, the table otherwise. */
@@ -130,12 +148,15 @@ export function serverCommandsFor(language: string, config?: LeanPiConfig): stri
 /** Availability probe for one language. Never throws. */
 export function lookupServer(root: string, language: string, options: DetectOptions = {}): ServerLookup {
 	const env = options.env ?? process.env;
-	const commands = serverCommandsFor(language, options.config);
+	const trusted = trustedFor(options);
+	// Defense in depth: even a hand-built config with an override is ignored while
+	// untrusted, so no caller can route around `loadConfig`'s strip.
+	const commands = trusted ? serverCommandsFor(language, options.config) : (LSP_SERVER_COMMANDS[language] ?? []);
 	if (commands.length === 0) return { ok: false, reason: `no language server is defined for "${language}"` };
 	for (const command of commands) {
 		const [executable, ...args] = command.split(/\s+/).filter((token) => token.length > 0);
 		if (executable === undefined) continue;
-		const resolved = resolveCommand(root, executable, env);
+		const resolved = resolveCommand(root, executable, env, trusted);
 		if (resolved === null) continue;
 		return { ok: true, server: { language, command, args, path: resolved.path, source: resolved.source } };
 	}
@@ -147,7 +168,9 @@ export function lookupServer(root: string, language: string, options: DetectOpti
 
 /** Every language with a server on this machine, plus config-declared ones. */
 export function detectServers(root: string, options: DetectOptions = {}): DetectedServer[] {
-	const declared = Object.keys(lspConfigOf(options.config).servers).filter((language) => LSP_SERVER_COMMANDS[language] === undefined);
+	const declared = trustedFor(options)
+		? Object.keys(lspConfigOf(options.config).servers).filter((language) => LSP_SERVER_COMMANDS[language] === undefined)
+		: [];
 	const found: DetectedServer[] = [];
 	for (const language of [...Object.keys(LSP_SERVER_COMMANDS), ...declared]) {
 		const lookup = lookupServer(root, language, options);

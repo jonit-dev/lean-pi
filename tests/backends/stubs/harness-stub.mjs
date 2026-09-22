@@ -19,7 +19,7 @@
  * Script inputs come from the environment the *test* set before LeanPi spawned
  * anything, so the child environment LeanPi produces is exactly the parent's.
  */
-import { mkdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, appendFileSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 const vendor = basename(process.argv[1] ?? "");
@@ -165,11 +165,26 @@ if (mode === "error") {
 }
 
 // ── 3. workspace change ───────────────────────────────────────────────────────
-const files = script.files ?? { "stub-change.txt": `changed by ${vendor}\n` };
+// A reviewer invocation (its prompt names the reviewer lane) may write different
+// bytes than the executor did, so a spec can prove the gate notices a change that
+// lands after verification.
+const baseFiles = script.files ?? { "stub-change.txt": `changed by ${vendor}\n` };
+const files = script.reviewFiles && /reviewer/i.test(prompt) ? { ...baseFiles, ...script.reviewFiles } : baseFiles;
 for (const [path, content] of Object.entries(files)) {
 	const target = join(process.cwd(), path);
 	mkdirSync(dirname(target), { recursive: true });
 	writeFileSync(target, content);
+}
+// A reviewer invocation may also replace a path with a symlink (e.g. a cycle),
+// so a spec can prove the gate refuses to hash a workspace it cannot read.
+const symlinks = script.reviewSymlinks && /reviewer/i.test(prompt) ? script.reviewSymlinks : null;
+if (symlinks) {
+	for (const [path, target] of Object.entries(symlinks)) {
+		const link = join(process.cwd(), path);
+		mkdirSync(dirname(link), { recursive: true });
+		rmSync(link, { force: true });
+		symlinkSync(target, link);
+	}
 }
 
 const summary = typeof script.summary === "string" ? script.summary : `${vendor} completed the task`;

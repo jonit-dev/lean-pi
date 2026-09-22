@@ -32,6 +32,11 @@ function detail(label: string, value: string): string {
 	return `   ${label.padEnd(LABEL_WIDTH)}${value}`;
 }
 
+/** POSIX single-quote a displayed path, so a space in a checkout path survives a copy-paste. */
+function shellPath(path: string): string {
+	return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", () => "'\\''")}'`;
+}
+
 /** The headline: what the proof gate decided, or why no decision exists. */
 function headline(context: TurnContext): string {
 	const executor = context.executor;
@@ -114,5 +119,18 @@ export function renderTurnOutcome(context: TurnContext, jev?: TurnJev): string {
 	}
 
 	if (context.goal?.decision === "stop") lines.push(detail("goal", `${context.goal.stop} — ${context.goal.reason}`));
+
+	// PRD-022: an isolated run's edits are not in this checkout. Name where the
+	// captured patch is and the explicit step that applies it; LeanPi never
+	// auto-applies over the operator's own working tree.
+	const isolation = context.isolation;
+	if (isolation?.patchPath) {
+		const apply = isolation.diffPath ? `git apply ${shellPath(isolation.diffPath)}` : `the patch manifest at ${shellPath(isolation.patchPath)}`;
+		lines.push(detail("isolated", `${isolation.paths.length} change(s) saved; apply explicitly: ${apply}`));
+	}
+	if (isolation?.retained) {
+		const extra = isolation.retained.paths.length > 0 ? `; it could not account for: ${isolation.retained.paths.join(", ")}` : "";
+		lines.push(detail("kept", `${shellPath(isolation.retained.path)} was retained — ${isolation.retained.reason}${extra}`));
+	}
 	return lines.join("\n");
 }

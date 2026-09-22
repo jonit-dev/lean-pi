@@ -23,7 +23,7 @@ import { porcelainPaths, readPorcelain } from "../runtime/git.js";
 export function workspaceHash(root: string, touchedPaths: readonly string[] = []): string {
 	const porcelain = readPorcelain(root);
 	const dirty = porcelain === null ? [] : porcelainPaths(porcelain);
-	const paths = [...new Set([...touchedPaths, ...dirty])].map((path) => path.trim()).filter((path) => path.length > 0).sort();
+	const paths = [...new Set([...touchedPaths, ...dirty])].filter((path) => path.length > 0).sort();
 
 	const digest = createHash("sha256");
 	digest.update(`git:${porcelain === null ? "unavailable" : "ok"}\0`);

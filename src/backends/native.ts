@@ -199,7 +199,10 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 		usage: {
 			inputTokens: stats.tokens.input,
 			cachedInputTokens: stats.tokens.cacheRead,
+			cacheWriteTokens: stats.tokens.cacheWrite,
 			outputTokens: stats.tokens.output,
+			// Pi's stats carry no reasoning split and `output` already includes
+			// reasoning, so an invented split would double-count it.
 			reasoningTokens: 0,
 		},
 		exitCode: 0,

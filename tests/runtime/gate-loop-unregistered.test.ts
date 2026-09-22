@@ -31,7 +31,7 @@ describe("AC-5 — an unregistered runtime verifier leaves the gap open", () => 
 			runtime: { browser: { url: server.url, selectors: ["#app"] } },
 			rounds: 1,
 		});
-		contract.verification.required = ["targeted_test", ...selectRuntimeVerifiers(contract, { cwd: root })];
+		contract.verification.required = ["targeted_test", ...selectRuntimeVerifiers(contract)];
 		const hash = workspaceHash(root, []);
 
 		try {

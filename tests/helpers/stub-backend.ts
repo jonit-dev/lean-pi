@@ -14,7 +14,40 @@ export interface StubToolCall {
 	args: unknown;
 }
 
-export type StubStep = { text: string } | { toolCalls: StubToolCall[] } | { status: number; body?: string };
+/**
+ * Token usage the stub reports on its final stream chunk, in OpenAI's wire
+ * shape. `cached_tokens` is a cache read and `cache_write_tokens` a cache write;
+ * both are sub-counts of `prompt_tokens`, exactly as a real provider reports them.
+ */
+export interface StubUsage {
+	prompt_tokens: number;
+	completion_tokens: number;
+	cached_tokens?: number;
+	cache_write_tokens?: number;
+	reasoning_tokens?: number;
+}
+
+export type StubStep = { text: string; usage?: StubUsage } | { toolCalls: StubToolCall[]; usage?: StubUsage } | { status: number; body?: string };
+
+function usageLine(model: string, usage: StubUsage): string {
+	const payload = {
+		id: "chatcmpl-stub",
+		object: "chat.completion.chunk",
+		created: 0,
+		model,
+		choices: [],
+		usage: {
+			prompt_tokens: usage.prompt_tokens,
+			completion_tokens: usage.completion_tokens,
+			prompt_tokens_details: {
+				...(usage.cached_tokens === undefined ? {} : { cached_tokens: usage.cached_tokens }),
+				...(usage.cache_write_tokens === undefined ? {} : { cache_write_tokens: usage.cache_write_tokens }),
+			},
+			...(usage.reasoning_tokens === undefined ? {} : { completion_tokens_details: { reasoning_tokens: usage.reasoning_tokens } }),
+		},
+	};
+	return `data: ${JSON.stringify(payload)}\n\n`;
+}
 
 export interface CapturedRequest {
 	url: string;
@@ -92,6 +125,9 @@ export async function startStubBackend(steps: StubStep[] = [{ text: "ok" }]): Pr
 				);
 				res.write(sseLine(model, {}, "tool_calls"));
 			}
+			// Usage arrives on its own final chunk (OpenAI `include_usage`), after
+			// the content and before `[DONE]`.
+			if ("usage" in step && step.usage) res.write(usageLine(model, step.usage));
 			res.write("data: [DONE]\n\n");
 			res.end();
 		});

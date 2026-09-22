@@ -293,15 +293,20 @@ export interface HarnessSpawnResult {
 export type HarnessSpawn = (request: HarnessSpawnRequest) => Promise<HarnessSpawnResult>;
 
 /**
- * Spawn with the inherited environment and nothing added — the whole credential
- * story of this PRD is `env: request.env`, where `request.env` is `process.env`
- * by construction in `runHarness`.
+ * Spawn with the inherited environment and nothing added. That inheritance is
+ * deliberate: a vendor CLI authenticates from its own environment (OAuth token,
+ * API key, config path), and the guarded `execute` tool's allowlist (PRD-017) is
+ * not applied here. `request.env` is `process.env` by construction in
+ * `runHarness`; LeanPi adds no variable of its own.
  */
 export const spawnProcess: HarnessSpawn = async (request) => {
 	const child = spawn(request.command, request.args, {
 		cwd: request.cwd,
 		env: request.env,
 		stdio: ["pipe", "pipe", "pipe"],
+		// Its own process group, so a timeout can reap descendants too: without it
+		// only the direct child dies and a vendor CLI's children are left running.
+		detached: true,
 	});
 	let stdout = "";
 	let stderr = "";
@@ -310,9 +315,21 @@ export const spawnProcess: HarnessSpawn = async (request) => {
 	child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
 	child.stdin.on("error", () => {});
 	child.stdin.end(request.stdin ?? "");
+	const terminate = (): void => {
+		const pid = child.pid;
+		// `kill(-1)` broadcasts to every signalable process the user owns, so only an
+		// owned PID > 1 may be signalled; an invalid/reserved PID reaches neither
+		// `process.kill` nor `child.kill`. Mirrors `execShell`'s teardown.
+		if (pid === undefined || !Number.isSafeInteger(pid) || pid <= 1) return;
+		try {
+			process.kill(-pid, "SIGKILL");
+		} catch {
+			child.kill("SIGKILL");
+		}
+	};
 	const timer = setTimeout(() => {
 		timedOut = true;
-		child.kill("SIGKILL");
+		terminate();
 	}, request.timeoutMs);
 	try {
 		// `once` rejects on the child's `error` event (a spawn failure) and resolves
@@ -438,7 +455,8 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 			// The vendor CLI reads its prompt from argv; stdin is closed empty so a
 			// CLI that accepts both never waits on a terminal.
 			stdin: null,
-			// Inherited verbatim: LeanPi adds no variable, so no credential crosses it.
+			// Inherited verbatim and deliberately: the vendor CLI may need its own
+			// credential from the environment, and LeanPi adds no variable of its own.
 			env: deps.env ?? process.env,
 			timeoutMs: deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
 		});

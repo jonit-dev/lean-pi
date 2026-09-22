@@ -12,7 +12,7 @@ import type { RegressionScope } from "../../src/verify/select.js";
 
 export interface ContractVerification {
 	required: string[];
-	criteria?: Array<{ id: string; verifiers?: string[]; scope?: string }>;
+	criteria?: Array<{ id: string; verifiers?: string[]; scope?: string | string[] }>;
 }
 
 /** A §8 contract carrying only the verification block this layer reads. */

@@ -34,13 +34,16 @@ import { installPermissionGuard, loadPermissionState, registerPermissionsCommand
 import { registerCostCommand } from "./telemetry/index.js";
 import { registerMcpCommand, registerMcpDisclosure } from "./mcp/index.js";
 import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS } from "./commands/index.js";
-import { registerRuntimeVerifiers } from "./runtime/index.js";
+import { ensureGitIgnored, registerRuntimeVerifiers, worktreePermissionPrompt } from "./runtime/index.js";
+import type { WorktreePermissionRequest } from "./runtime/index.js";
+import type { BrowserFacility } from "./runtime/browser.js";
 import { ownsExecutionLoop, registerTurnLanesIfOwned, setLaneCollector } from "./commands/turn-lanes.js";
 import type { ExecutionContract } from "./compiler/contract.js";
 import {
 	callsFromMessages,
 	createRunCollector,
 	emitRunTelemetry,
+	failedRunResult,
 	resolveCostConfig,
 	runTurnWithTelemetry,
 	type RunCollector,
@@ -67,7 +70,7 @@ import { aggregate } from "./verify/aggregate.js";
 import type { EvidenceRecord } from "./verify/evidence.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultSkillRoots, scanSkills, createSkillControl, withoutSkillCatalog, type SkillRecord } from "./capabilities/skills.js";
+import { defaultRuntimeSkillRoots, defaultSkillRoots, scanSkills, createSkillControl, withoutSkillCatalog, type SkillRecord } from "./capabilities/skills.js";
 import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
@@ -86,6 +89,17 @@ import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
 import { isModelRole, type LeanPiConfig, type ModelRole } from "./core/types.js";
 
+/**
+ * The host's `ask` channel for an isolated worktree, built from Pi's own UI.
+ * `undefined` when no prompt is reachable, so an `ask` posture refuses exactly as
+ * PRD-017's guard does without a UI.
+ */
+function uiWorktreeConfirm(ctx: { hasUI: boolean; ui: { confirm(title: string, message: string): Promise<boolean> } }): ((request: WorktreePermissionRequest) => Promise<boolean>) | undefined {
+	if (!ctx.hasUI || typeof ctx.ui.confirm !== "function") return undefined;
+	const confirm = ctx.ui.confirm.bind(ctx.ui);
+	return (request) => confirm("LeanPi worktree request", worktreePermissionPrompt(request));
+}
+
 export interface ActivateOptions {
 	config?: LeanPiConfig;
 	cwd?: string;
@@ -97,6 +111,12 @@ export interface ActivateOptions {
 	jevTransport?: import("./jev/client.js").JevTransport;
 	/** Recap seam: tests replace the one-shot recap call so no model is reached. */
 	recapRunner?: RecapRunner;
+	/**
+	 * PRD-022's browser adapter. The installed Pi SDK exposes no browser, so the
+	 * host that owns one injects it here; it travels per verification context to
+	 * the browser/screenshot runners. Absent leaves them `unavailable`.
+	 */
+	browserFacility?: BrowserFacility | null;
 }
 
 /** What a booted LeanPi session exposes to its own lanes. */
@@ -401,6 +421,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// resolves it from the process. `LEANPI_CWD` is the documented override for
 	// launching Pi from outside the project it should configure.
 	const cwd = options.cwd ?? process.env.LEANPI_CWD ?? process.cwd();
+	// LeanPi's own state (sessions, artifacts, telemetry, decisions) lands under
+	// `.leanpi/`, and the freshness hash now sees every untracked path — so a
+	// store written between verification and the gate used to invalidate the
+	// evidence it had just produced. Excluding the directory here, at the
+	// session boundary before any store exists, keeps LeanPi's output out of the
+	// workspace it is measuring. Project source the operator edits is untouched.
+	ensureGitIgnored(cwd, ".leanpi");
 	// One environment for credentials, the permission store and the guard: the
 	// credential view is a strict subset of `ProcessEnv`'s shape.
 	const env = (options.env ?? process.env) as NodeJS.ProcessEnv & CredentialEnv;
@@ -493,6 +520,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// Providers are process-global and bound to this session's JEV client, so the
 	// session being activated replaces the previous one's set rather than stacking.
 	clearCapabilityProviders();
+	const trustedProject = config.permissions.trust.trusted;
 	const skillRoots = config.capabilities.skillRoots.length > 0
 		? [
 				...config.capabilities.skillRoots.map((path) => ({ path, class: path.includes(".claude/plugins") ? ("plugin" as const) : ("user" as const) })),
@@ -501,7 +529,11 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 				// omission, only by disabling individual skills.
 				{ path: bundledRoot(), class: "bundled" as const },
 			]
-		: defaultSkillRoots(cwd);
+		// SURF-4: the loader strips declared roots for an untrusted project, so
+		// falling back to the raw defaults put `<cwd>/.claude/skills` back on the
+		// surface. Keep user/plugin/bundled roots; a project-local root only when
+		// the project is trusted.
+		: defaultRuntimeSkillRoots(cwd, trustedProject, env.HOME ?? homedir());
 	const scan = () => scanSkills(cwd, { roots: skillRoots });
 	const skillRecords = scan();
 	const skillControl = createSkillControl(config.skills.state, (state) => writeSkillsState(cwd, state));
@@ -599,7 +631,16 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// The evidence path for the native loop (§23): Pi's own loop is the executor
 	// there, so nothing verifies its work and nothing gates it. This is how the
 	// user asks for the same decision an executor-lane turn is held to.
-	registerVerifyCommand(commands, { cwd, config, artifacts, jev, contract: () => lastContext?.contract });
+	registerVerifyCommand(commands, {
+		cwd,
+		config,
+		artifacts,
+		jev,
+		contract: () => lastContext?.contract,
+		// Explicit `null` when the session supplied no adapter: an independent
+		// session must not inherit another caller's process-global facility.
+		browserFacility: options.browserFacility ?? null,
+	});
 	registerPrdCommandsLazily(commands, {
 		cwd,
 		config,
@@ -695,6 +736,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		sessionId: manager.getSessionId(),
 		skills: { records: scan, control: skillControl },
 		env,
+		// Same reason as `/verify`: the lane's facility is this session's, never a
+		// global another caller left behind.
+		browserFacility: options.browserFacility ?? null,
 	});
 
 	registerJevCommands(commands, { client: jev, env });
@@ -710,6 +754,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		if (event.reason !== "startup") {
 			surface.resetSessionState();
 			clearRoutePins();
+			// A switch invalidates the previous session's turn, cache and in-flight
+			// generation *before* the new session's persisted recap is restored: the
+			// old session's input must not answer `/recap` for the new one.
+			recap.reset(ctx);
 		}
 		// The recap survives the session: the newest persisted one is shown again
 		// on resume without a model call. Reading it first means a session that
@@ -725,6 +773,16 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		if (env.LEANPI_JEV_WARNED === "1") return;
 		const warning = jevWarning("not configured");
 		if (warning) ctx.ui.notify(warning.join("\n"), "warning");
+	});
+
+	// Pi's `navigateTree` moves the active leaf to another branch. The recap on
+	// screen belongs to the branch that was active: reset drops the previous
+	// branch's turn/cache and invalidates its in-flight generation, then restore
+	// reads the recap on the branch just navigated to. Without this the old
+	// branch's recap stays on screen and answers a manual `/recap`.
+	pi.on("session_tree", (_event, ctx) => {
+		recap.reset(ctx);
+		recap.restore(ctx);
 	});
 
 	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
@@ -763,22 +821,28 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			enabled: jev.getMode() !== "disabled",
 		});
 		progress("compiling the task");
+		// The partial context is reachable from the catch below so a lane that
+		// throws still bills the fail-closed gate's spend. It is built *inside* the
+		// try so a throw while building it (an unresolved role) still reaches the
+		// finally that clears this run's collector.
+		let context: TurnContext | undefined;
 		try {
-			const context = await runLanes(
-				{ text: event.text },
-				{
-					turn: { text: event.text },
-					role: "balanced",
-					cwd,
-					config,
-					modelRef: resolveRole(config, "balanced"),
-					skills: [],
-					todo: todoCarrier,
-					workingStateSources,
-					prefix: "",
-					onProgress: progress,
-				},
-			);
+			context = {
+				turn: { text: event.text },
+				role: "balanced",
+				cwd,
+				config,
+				modelRef: resolveRole(config, "balanced"),
+				skills: [],
+				todo: todoCarrier,
+				workingStateSources,
+				// The interactive path's own prompt channel: Pi's `confirm` is only
+				// reachable while the turn is in flight, so it rides the context.
+				worktreeConfirm: uiWorktreeConfirm(ctx),
+				prefix: "",
+				onProgress: progress,
+			};
+			await runLanes({ text: event.text }, context);
 			observeTurn(context);
 			if (context.contract) {
 				ctx.ui.setStatus(
@@ -805,6 +869,22 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			// The recap's "what the turn did" slot is the report the user just read:
 			// the deterministic half already exists, so only the sentence is bought.
 			await recap.recapTurn(ctx, { ask: event.text, did: outcome });
+		} catch (error) {
+			// The lanes threw after compiling. The turn failed, but the worker and
+			// reviewer that already ran are real spend: emit one failed record from
+			// the collector that captured them, then rethrow the original error.
+			if (context?.contract) {
+				try {
+					emitRunTelemetry(collector, context.contract, failedRunResult(), {
+						cwd,
+						cost: resolveCostConfig(config),
+						...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
+					});
+				} catch {
+					// Accounting must never replace the turn's own failure.
+				}
+			}
+			throw error;
 		} finally {
 			setLaneCollector(undefined);
 		}
@@ -994,6 +1074,10 @@ export interface CreateLeanPiSessionOptions {
 	uiInput?: (message: string) => Promise<string | undefined>;
 	/** Overrides the model chosen for the initial turn, e.g. for `/model`. */
 	model?: string | { provider: string; model: string };
+	/** PRD-022's browser adapter for this session; see `ActivateOptions.browserFacility`. */
+	browserFacility?: BrowserFacility | null;
+	/** PRD-017's `ask` channel for an isolated worktree; absent means an `ask` posture refuses. */
+	worktreeConfirm?: (request: WorktreePermissionRequest) => boolean | Promise<boolean>;
 }
 
 export interface LeanPiSession {
@@ -1038,6 +1122,7 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 						env: options.env,
 						commands: options.commands,
 						jevTransport: options.jevTransport,
+						...(options.browserFacility !== undefined ? { browserFacility: options.browserFacility } : {}),
 					});
 				},
 			],
@@ -1058,8 +1143,13 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 				const resolved = resolveRole(loaded.config, "balanced");
 				return { provider: resolved.backend, model: resolved.model };
 			})();
+	// An external-only configuration runs every executor role through an external
+	// harness, so Pi's own loop never serves a request and the balanced role has
+	// no model in Pi's runtime. Boot without one rather than inventing a native
+	// role to hold the session open. An explicit `model` override, or a config
+	// that does route execution through Pi, still has to name a registered model.
 	const model = services.modelRuntime.getModel(ref.provider, ref.model);
-	if (!model) {
+	if (!model && (options.model !== undefined || !ownsExecutionLoop(loaded.config))) {
 		throw new Error(
 			`Model ${ref.provider}/${ref.model} is not registered. Configure "backends.${ref.provider}.baseUrl" in leanpi.config.yaml.`,
 		);
@@ -1106,6 +1196,7 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 					runtime: services.modelRuntime,
 					todo: loaded.todo,
 					workingStateSources: loaded.workingStateSources,
+					...(options.worktreeConfirm ? { worktreeConfirm: options.worktreeConfirm } : {}),
 					onContext: (context) => loaded.observeTurn(context),
 				},
 				{
@@ -1224,6 +1315,7 @@ export * from "./executor/index.js";
 // resolved explicitly here rather than by dropping either.
 export {
 	createSkillControl,
+	defaultRuntimeSkillRoots,
 	defaultSkillRoots,
 	frontmatterOf,
 	FRONTMATTER_READ_LIMIT,

@@ -24,6 +24,11 @@ export interface RouteDescriptor {
 export interface RunUsage {
 	input_tokens: number;
 	cached_input_tokens: number;
+	/**
+	 * Input tokens written into the provider's prompt cache. Optional so a
+	 * record written before this field existed still parses and aggregates.
+	 */
+	cache_write_tokens?: number;
 	output_tokens: number;
 	reasoning_tokens: number;
 	jev_tokens: number;
@@ -107,9 +112,22 @@ export interface CallRow {
 	role: ModelRole;
 	/** Non-cached input tokens; cached input is priced separately and stays in `usage`. */
 	inputTokens: number;
+	/** Cache-read tokens this call reported; optional for rows written before it existed. */
+	cachedInputTokens?: number;
+	/** Cache-write tokens this call reported; optional for rows written before it existed. */
+	cacheWriteTokens?: number;
 	outputTokens: number;
+	/** Reasoning tokens this call reported; optional for rows written before it existed. */
+	reasoningTokens?: number;
 	/** USD for this call, 6-decimal rounded; 0 for subscription and local calls. */
 	costUsd: number;
+	/**
+	 * Whether every rate the call's measured buckets needed was declared at write
+	 * time. `"declared"` makes a `$0` a measured zero (a real zero rate, or a
+	 * charge rounded to zero); `"missing"` means a used bucket had no rate.
+	 * Absent on rows written before this field, which fall back to `costUsd === 0`.
+	 */
+	pricing?: "declared" | "missing";
 	quotaClass?: string;
 	/** The run this call belongs to: the record's `task_id`. */
 	runId?: string;

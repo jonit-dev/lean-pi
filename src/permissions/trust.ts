@@ -12,7 +12,7 @@
  * reach it wants.
  */
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -178,35 +178,48 @@ export function isProjectLocal(root: string, candidate: string): boolean {
 	if (contained(base, absolute)) return true;
 	// A path that only *appears* outside is still local when a symlink leads back in.
 	try {
-		return contained(resolve(realpathSync(absolute)), resolve(realpathSync(base)));
+		return contained(resolve(realpathSync(base)), resolve(realpathSync(absolute)));
 	} catch {
 		return false;
 	}
 }
 
-function hashTarget(root: string, target: string, into: Map<string, string>): void {
-	let stats;
-	try {
-		stats = statSync(target, { throwIfNoEntry: false });
-	} catch {
-		return;
-	}
+/** Hash linked content, tracking real directory ancestors to stop cycles. */
+function hashTarget(root: string, target: string, into: Map<string, string>, ancestors: Set<string>): void {
+	let stats = lstatSync(target, { throwIfNoEntry: false });
 	if (!stats) return;
-	if (stats.isDirectory()) {
-		for (const entry of readdirSync(target)) hashTarget(root, join(target, entry), into);
-		return;
+	const key = relative(root, target);
+	let link = "";
+	if (stats.isSymbolicLink()) {
+		link = `link:${readlinkSync(target)}\n`;
+		try {
+			link += `resolved:${realpathSync(target)}\n`;
+			stats = statSync(target);
+		} catch {
+			// Broken and mutually recursive links still have a destination identity.
+			into.set(key, createHash("sha256").update(link).digest("hex"));
+			return;
+		}
+		into.set(key, createHash("sha256").update(link).digest("hex"));
 	}
-	const content = stats.isSymbolicLink() ? `link:${realpathSync(target)}` : readFileSync(target).toString("base64");
-	into.set(relative(root, target), createHash("sha256").update(content).digest("hex"));
+	if (stats.isDirectory()) {
+		const real = realpathSync(target);
+		if (ancestors.has(real)) return;
+		const next = new Set(ancestors);
+		next.add(real);
+		for (const entry of readdirSync(target).sort()) hashTarget(root, join(target, entry), into, next);
+	} else if (stats.isFile()) {
+		into.set(key, createHash("sha256").update(link).update(readFileSync(target)).digest("hex"));
+	}
 }
 
 /** Every file of the executable/MCP surface, keyed by path relative to the project root. */
 export function surfaceFiles(surface: ProjectSurface): Map<string, string> {
 	const files = new Map<string, string>();
-	hashTarget(surface.root, surface.extensionsDir, files);
-	for (const configPath of surface.mcpConfigPaths) hashTarget(surface.root, configPath, files);
-	for (const skillRoot of surface.skillRoots) hashTarget(surface.root, skillRoot, files);
-	if (surface.configPath !== undefined) hashTarget(surface.root, surface.configPath, files);
+	hashTarget(surface.root, surface.extensionsDir, files, new Set());
+	for (const configPath of surface.mcpConfigPaths) hashTarget(surface.root, configPath, files, new Set());
+	for (const skillRoot of surface.skillRoots) hashTarget(surface.root, skillRoot, files, new Set());
+	if (surface.configPath !== undefined) hashTarget(surface.root, surface.configPath, files, new Set());
 	return files;
 }
 

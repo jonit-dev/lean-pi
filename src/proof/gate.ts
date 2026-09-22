@@ -24,6 +24,8 @@ import { ensureSite } from "../jev/registry.js";
 import type { ChoiceQuestion, JevQuestion, JevResult, JevUsage } from "../jev/types.js";
 import type { EvidenceRecord, EvidenceStore, ModelAssertion } from "../verify/evidence.js";
 import type { ShellExec } from "../verify/run.js";
+import type { BrowserFacility } from "../runtime/browser.js";
+import { runtimePlanOf } from "../runtime/plan.js";
 import { GAP_ACTIONS, type ProofAction } from "./actions.js";
 import {
 	answersToResults,
@@ -103,6 +105,8 @@ export interface ProofDeps {
 	commands?: Partial<Record<string, string>>;
 	timeoutMs?: number;
 	exec?: ShellExec;
+	/** The host's browser adapter, threaded to a gathered browser/screenshot verifier. */
+	browserFacility?: BrowserFacility | null;
 }
 
 export interface ProofCriterionResult extends CriterionResult {
@@ -341,6 +345,10 @@ export async function evaluateProofGate(
 		workspaceHash: hash,
 		...(store ? { store } : {}),
 		...(deps.cwd ? { cwd: deps.cwd } : {}),
+		// PRD-022: a gathered runtime verifier reads the contract's own runtime
+		// declarations, threaded here rather than left in the process-global binder.
+		runtime: runtimePlanOf(deps.contract),
+		...(deps.browserFacility !== undefined ? { browserFacility: deps.browserFacility } : {}),
 		// The host project's `verify:` block, same as PRD-009's own runner reads:
 		// without it a recovery round ignores the configured command and shells out
 		// to the built-in default (`npx vitest run`) in someone else's repository.

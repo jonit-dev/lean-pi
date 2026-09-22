@@ -25,6 +25,7 @@ import type {
 } from "./contract.js";
 import { runGate } from "./gate.js";
 import { applyDeviations, matrixDefault } from "./route.js";
+import { selectRuntimeVerifiers } from "../runtime/planner.js";
 import { createTaskState, deepFreeze } from "./state.js";
 import { applyRoutePins, pinnedDecision, routePins } from "./pins.js";
 
@@ -87,9 +88,12 @@ const VERIFICATION_BY_COMPLEXITY: Record<ExecutionComplexity, string[]> = {
 	LOW: ["typecheck", "affected_tests"],
 	// Canonical PRD-009/PRD-022 verifier kinds only: a kind outside that union is
 	// reported as unsupported and can never be satisfied, so a contract that
-	// required one would be unverifiable by construction.
-	MEDIUM: ["typecheck", "affected_tests", "runtime_smoke"],
-	HIGH: ["typecheck", "affected_tests", "full_suite", "runtime_smoke"],
+	// required one would be unverifiable by construction. `runtime_smoke` is not
+	// here: it is required only when the contract actually declares a smoke plan
+	// (see `compileTask`), because a facility nothing can satisfy is a guaranteed
+	// `not_run` that blocks every MEDIUM/HIGH turn.
+	MEDIUM: ["typecheck", "affected_tests"],
+	HIGH: ["typecheck", "affected_tests", "full_suite"],
 };
 
 const ATTEMPTS_BY_COMPLEXITY = { LOW: 2, MEDIUM: 3, HIGH: 4 } as const;
@@ -126,7 +130,7 @@ function fallbackConfig(): LeanPiConfig {
 		recap: { enabled: true, role: "quick" },
 		verify: { commands: {} },
 		permissions: resolvedDefaults(),
-		limits: { executionAttempts: 2, semanticReviewRounds: 1 },
+		limits: { isolation: "none" },
 		thresholds: DEFAULT_THRESHOLDS,
 	};
 }
@@ -189,6 +193,10 @@ export async function compileTask(
 	// A direct task's single acceptance criterion is the request itself; the PRD
 	// lane replaces this list with the PRD's own criteria.
 	const acceptanceCriteria: AcceptanceCriterion[] = [{ id: "AC-1", text: request }];
+	// PRD-022's runtime declarations come from the trusted `verify.runtime` block;
+	// they are copied verbatim (already validated at load) into the contract, which
+	// is what `runtimePlanOf` and the planner read.
+	const runtimePlan = config.verify?.runtime;
 	const contract: ExecutionContract = {
 		task: {
 			type: inferTaskType(request),
@@ -212,6 +220,7 @@ export async function compileTask(
 		context: CONTEXT_BY_COMPLEXITY[complexity.complexity],
 		verification: {
 			required: requiredVerifiers,
+			...(runtimePlan && Object.keys(runtimePlan).length > 0 ? { runtime: runtimePlan } : {}),
 			// PRD-009 attributes evidence per criterion (FR-124), and the targeted
 			// surface is what each criterion is proved by. A packet that names no
 			// test file declares no scope, so no criterion claims one.
@@ -220,12 +229,24 @@ export async function compileTask(
 				: {}),
 		},
 		limits: {
-			execution_attempts: ATTEMPTS_BY_COMPLEXITY[complexity.complexity],
-			max_escalations: MAX_ESCALATIONS_BY_COMPLEXITY[complexity.complexity],
-			semantic_review_rounds: routing.reviewer_class === "none" ? 0 : routing.reviewer_class === "review_quick" ? 1 : 2,
-			isolation: "none",
+			// An explicit configured ceiling wins; an absent one keeps the
+			// complexity-derived default. `0` is a real, explicit bound.
+			execution_attempts: config.limits.executionAttempts ?? ATTEMPTS_BY_COMPLEXITY[complexity.complexity],
+			max_escalations: config.limits.max_escalations ?? MAX_ESCALATIONS_BY_COMPLEXITY[complexity.complexity],
+			semantic_review_rounds:
+				config.limits.semanticReviewRounds ??
+				(routing.reviewer_class === "none" ? 0 : routing.reviewer_class === "review_quick" ? 1 : 2),
+			isolation: config.limits.isolation,
 		},
 	};
+	// A declared runtime surface is a required check, selected by the planner's
+	// declared-surface rule. It is appended after the contract carries the plan so
+	// the planner reads the same block the contract ships; an absent plan selects
+	// nothing and demands no smoke facility.
+	if (runtimePlan) {
+		const selected = selectRuntimeVerifiers(contract);
+		for (const kind of selected) if (!contract.verification.required.includes(kind)) contract.verification.required.push(kind);
+	}
 
 	// Providers fill the declared slots; with none registered the defaults stand.
 	for (const provider of providers) {

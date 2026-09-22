@@ -53,7 +53,7 @@ describe("AC-5 — the gate's first evaluation asks for UI verification and the 
 		const contract = uiFixture(server.url, 1);
 		// The session's own step: the declared surface puts `browser_test` into the
 		// required set, so the criterion's coverage can actually be satisfied.
-		contract.verification.required = ["targeted_test", ...selectRuntimeVerifiers(contract, { cwd: root })];
+		contract.verification.required = ["targeted_test", ...selectRuntimeVerifiers(contract)];
 		expect(contract.verification.required).toEqual(["targeted_test", "browser_test"]);
 
 		const hash = workspaceHash(root, []);
@@ -116,7 +116,7 @@ describe("AC-5 — the gate's first evaluation asks for UI verification and the 
 
 		try {
 			// No JEV anywhere in this test: the surface alone selects the verifier.
-			const selected = selectRuntimeVerifiers(contract, { cwd: root });
+			const selected = selectRuntimeVerifiers(contract);
 			expect(selected).toEqual(["browser_test"]);
 			contract.verification.required = ["targeted_test", ...selected];
 			// The criterion's own test is real in the session, not in a spec; the

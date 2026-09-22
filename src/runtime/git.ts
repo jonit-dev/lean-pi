@@ -10,7 +10,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 /**
  * Raw `git status --porcelain`, or `null` when git cannot run (not a
@@ -19,7 +19,7 @@ import { isAbsolute, join } from "node:path";
  */
 export function readPorcelain(root: string): string | null {
 	try {
-		return execFileSync("git", ["status", "--porcelain"], {
+		return execFileSync("git", ["status", "--porcelain", "-z", "--untracked-files=all"], {
 			cwd: root,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
@@ -30,13 +30,27 @@ export function readPorcelain(root: string): string | null {
 	}
 }
 
-/** Porcelain lines are `XY <path>`, with `R  old -> new` for renames and quoted odd paths. */
+/** NUL porcelain preserves filename bytes; renames carry destination then source. */
 export function porcelainPaths(porcelain: string): string[] {
 	const paths: string[] = [];
+	if (porcelain.includes("\0")) {
+		const records = porcelain.split("\0");
+		for (let i = 0; i < records.length; i += 1) {
+			const record = records[i]!;
+			if (record.length === 0) continue;
+			paths.push(record.slice(3));
+			if (/[RC]/.test(record.slice(0, 2))) {
+				const source = records[++i];
+				if (source) paths.push(source);
+			}
+		}
+		return [...new Set(paths)];
+	}
+	// Compatibility for callers supplying legacy, line-delimited status.
 	for (const line of porcelain.split("\n")) {
 		if (line.trim().length === 0) continue;
 		const body = line.slice(3);
-		const target = body.includes(" -> ") ? body.split(" -> ").pop()! : body;
+		const target = /[RC]/.test(line.slice(0, 2)) && body.includes(" -> ") ? body.split(" -> ").pop()! : body;
 		paths.push(target.startsWith('"') && target.endsWith('"') ? target.slice(1, -1) : target);
 	}
 	return paths;
@@ -66,6 +80,28 @@ export function changedPathsSince(before: ChangeSnapshot, root: string): string[
 	for (const [path, hash] of after) if (before.get(path) !== hash) changed.add(path);
 	for (const path of before.keys()) if (!after.has(path)) changed.add(path);
 	return [...changed].sort();
+}
+
+/**
+ * The working tree the common git directory belongs to: the primary checkout,
+ * even when `repoRoot` is a linked worktree. Worktrees this product creates are
+ * owned by the primary repository, so a run started from a linked checkout (an
+ * agent's task worktree, say) never nests a new worktree under the linked one.
+ * Not a repository, or a git that cannot answer, resolves to `repoRoot`.
+ */
+export function primaryRepoRoot(repoRoot: string): string {
+	try {
+		const common = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+			cwd: repoRoot,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+		const absolute = isAbsolute(common) ? common : resolve(repoRoot, common);
+		if (basename(absolute) === ".git") return dirname(absolute);
+	} catch {
+		// Not a repository, or git cannot answer: the caller's path is the owner.
+	}
+	return repoRoot;
 }
 
 function contentHash(root: string, path: string): string {

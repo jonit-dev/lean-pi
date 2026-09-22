@@ -9,7 +9,7 @@
  */
 import type { CommandContext, CommandRegistry, CommandResult } from "../commands/registry.js";
 import { aggregateRuns, type TelemetryAggregate } from "./aggregate.js";
-import { unpricedCalls, type CostConfig } from "./pricing.js";
+import { unmeasuredCalls, unpricedCalls, type CostConfig } from "./pricing.js";
 import type { RunTelemetry } from "./record.js";
 import { readRuns, telemetryPath } from "./store.js";
 
@@ -45,7 +45,30 @@ function renderUnpriced(runs: readonly RunTelemetry[]): string[] {
 	const rows = runs.flatMap((run) => unpricedCalls(run.calls ?? []));
 	if (rows.length === 0) return [];
 	const models = [...new Set(rows.map((row) => `${row.backend}/${row.model}`))];
-	return [`unpriced: ${rows.length} metered call(s) with no configured rate (${models.join(", ")})`];
+	const rates = rows.some((row) => row.pricing === undefined) ? "missing or unrecorded rates" : "missing configured rates";
+	return [`unpriced: ${rows.length} metered call(s) with ${rates} (${models.join(", ")})`];
+}
+
+/** Metered calls that recorded no usage: an unknown, labelled rather than read as $0 (COST-3). */
+function renderUnmeasured(runs: readonly RunTelemetry[]): string[] {
+	const rows = runs.flatMap((run) => unmeasuredCalls(run.calls ?? []));
+	return rows.length === 0 ? [] : [`unmeasured: ${rows.length} metered call(s) recorded with no usage`];
+}
+
+/**
+ * The volume a dollar total cannot express. A subscription call draws from a
+ * pool and a local call burns compute, so both price at 0; only their count and
+ * the measured GPU-seconds say the work happened. Reuses the aggregate's own
+ * FR-055 split rather than recomputing it.
+ */
+function renderBillingVolume(aggregate: TelemetryAggregate, runs: readonly RunTelemetry[]): string[] {
+	const subscription = aggregate.byBilling.subscription?.calls ?? 0;
+	const local = aggregate.byBilling.local?.calls ?? 0;
+	if (subscription === 0 && local === 0) return [];
+	const gpuSeconds = runs.reduce((sum, run) => sum + (run.usage?.local_gpu_seconds ?? 0), 0);
+	const parts = [`subscription ${subscription} call(s)`, `local ${local} call(s)`];
+	if (gpuSeconds > 0) parts.push(`${gpuSeconds} local gpu-s`);
+	return [`billing volume: ${parts.join(", ")}`];
 }
 
 /**
@@ -70,9 +93,12 @@ export function renderCostReport(runs: readonly RunTelemetry[], aggregate: Telem
 		"",
 		`runs: ${aggregate.runs}`,
 		`${scope} total: ${money(aggregate.effectiveCostUsd)}`,
+		...renderBillingVolume(aggregate, runs),
 		...renderUnpriced(runs),
+		...renderUnmeasured(runs),
 		`verified successes: ${aggregate.verifiedSuccesses}`,
 		`effective cost per verified success: ${renderEffectiveCostPerSuccess(aggregate)}`,
+		"note: effective cost is a configured post-run valuation in USD, not a provider invoice",
 	].join("\n");
 }
 
@@ -86,7 +112,7 @@ export function renderRun(record: RunTelemetry): string {
 		`prd_used: ${record.prd_used ?? "none"}`,
 		`executor: ${record.executor_backend ?? "n/a"}/${record.executor_model ?? "n/a"}`,
 		`reviewer: ${record.reviewer_backend ?? "n/a"}/${record.reviewer_model ?? "n/a"}`,
-		`usage: input=${usage.input_tokens} cached_input=${usage.cached_input_tokens} output=${usage.output_tokens} reasoning=${usage.reasoning_tokens} jev=${usage.jev_tokens} local_gpu_s=${usage.local_gpu_seconds} external_harness_calls=${usage.external_harness_calls} subscription=${usage.subscription_usage}`,
+		`usage: input=${usage.input_tokens} cached_input=${usage.cached_input_tokens} cache_write=${usage.cache_write_tokens ?? 0} output=${usage.output_tokens} reasoning=${usage.reasoning_tokens} jev=${usage.jev_tokens} local_gpu_s=${usage.local_gpu_seconds} external_harness_calls=${usage.external_harness_calls} subscription=${usage.subscription_usage}`,
 		`cost: api=${money(record.cost.api_usd)} jev=${money(record.cost.jev_usd)} quota=${money(record.cost.estimated_quota_cost)} effective=${money(record.cost.effective_cost)}`,
 		`execution: wall=${execution.wall_ms}ms tool_calls=${execution.tool_calls} file_reads=${execution.file_reads} repeated_reads=${execution.repeated_reads} retries=${execution.retries} escalations=${execution.escalations} compactions=${execution.compactions}`,
 		`result: verification=${record.result.verification} proof_gate=${record.result.proof_gate} reviewer=${record.result.reviewer} success=${record.result.success}`,

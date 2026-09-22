@@ -50,14 +50,12 @@ function git(cwd: string, args: string[]): string {
  * writes to the index.
  */
 export function workspaceChange(cwd: string, base = "HEAD"): { diff: string; files: string[] } {
-	const status = git(cwd, ["status", "--porcelain"]);
+	const status = git(cwd, ["status", "--porcelain", "-z", "--untracked-files=all"]);
 	const files = porcelainPaths(status);
 	const tracked = git(cwd, ["diff", base, "--"]);
-	const untracked = status
-		.split("\n")
-		.filter((line) => line.startsWith("??"))
-		.map((line) => porcelainPaths(line)[0])
-		.filter((path): path is string => path !== undefined)
+	const untracked = git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"])
+		.split("\0")
+		.filter(Boolean)
 		.map((path) => git(cwd, ["diff", "--no-index", "--no-color", "--", "/dev/null", path]));
 	return { diff: [tracked, ...untracked].filter((part) => part.trim().length > 0).join("\n"), files };
 }

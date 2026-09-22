@@ -457,7 +457,15 @@ time, which is what makes "the tests passed" mean *after* the last edit.
 | Verifier kind | Implemented by | Notes |
 | --- | --- | --- |
 | `typecheck`, `targeted_test`, `full_suite`, `lint`, `build`, `git_status` | `src/verify/descriptors.ts` | shelled commands; defaults in `DEFAULT_COMMANDS`, overridable per project |
-| `runtime_smoke`, `cli_invocation`, `browser_test`, `screenshot_compare` | `src/runtime/` | need a runtime plan; without one they record `not_run`, not a pass |
+| `runtime_smoke`, `cli_invocation`, `browser_test`, `screenshot_compare` | `src/runtime/` | declared by the trusted `verify.runtime` block; without one they are not selected, and a declared check records `not_run`/`unavailable`, never a pass |
+
+`runtime_smoke` and `cli_invocation` start real programs. `browser_test` and
+`screenshot_compare` need a browser the **host** owns: the installed Pi SDK
+exposes no browser automation API, so a session passes an optional
+`browserFacility` (`ActivateOptions` / `CreateLeanPiSessionOptions`) that is
+threaded per verification context. With no facility — and no
+`globalThis.browser` — those two record `unavailable`, which the gate reports as
+missing browser evidence rather than a UI defect, and never as a pass.
 
 Downgrades are always recorded rather than implied: an unsupported kind is
 `skipped`, a missing baseline is `unavailable`, a missing plan is `not_run`. The
@@ -531,7 +539,8 @@ tracked `.gitignore`, which the operator did not ask LeanPi to edit):
 | `.leanpi/sessions/` | session records |
 | `.leanpi/prd/` | active PRD state: criteria and work units (the PRD body itself lives in the artifact store) |
 | `.leanpi/goal.json` | the active goal and its limits |
-| `.leanpi/worktrees/<runId>` | isolated checkouts when `limits.isolation: worktree` |
+| `.leanpi/patches/<runId>.patch` | an isolated run's captured patch (tracked diff + untracked manifest), keyed by run id |
+| `<primary-repo>/.worktrees/<runId>` | isolated checkouts when `limits.isolation: worktree`; owned by the primary repository, never nested under a linked checkout |
 | `.leanpi/cache/mcp-catalog.json` | MCP catalog after a connection; schemas only for selected tools |
 | `.leanpi/mcp-auth.json` | MCP OAuth tokens, 0600 |
 | `~/.config/leanpi/leanpi.config.yaml` | the machine's config when no project file exists |
