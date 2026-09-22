@@ -15,7 +15,7 @@ import { loadConfig } from "../../src/core/config.js";
 import { createLeanPiSession, readRuns } from "../../src/index.js";
 import { resolvedDefaults } from "../../src/permissions/trust.js";
 import { setBrowserFacility } from "../../src/runtime/index.js";
-import { bootSession, fixtureRepo, gitCommitAll, gitInit, nativeBackend, writeConfig } from "../helpers/fixtures.js";
+import { bootHarnessSession, fixtureRepo, gitCommitAll, gitInit, harnessStubEnv, nativeBackend, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend } from "../helpers/stub-backend.js";
 import { installStubCli, setStubScript } from "../backends/helpers.js";
 import { fakeBrowser, runtimeFixture } from "../runtime/support.js";
@@ -77,7 +77,7 @@ describe("AC-5 — external value chain through the real session", () => {
 		const config = e2eConfig(cwd, cli, native.baseUrl, {
 			commands: { typecheck: "true", targeted_test: "grep -q 'answer = 42' src/answer.ts", git_status: "git status --porcelain" },
 		});
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			expect(context.contract?.task.execution_complexity).toBe("MEDIUM");
@@ -128,7 +128,7 @@ describe("AC-5 — negative controls block without a false success", () => {
 		const config = e2eConfig(cwd, cli, native.baseUrl, {
 			commands: { typecheck: "true", targeted_test: "exit 1", git_status: "git status --porcelain" },
 		});
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			expect(context.executor?.status).toBe("blocked");
@@ -162,7 +162,7 @@ describe("AC-5 — negative controls block without a false success", () => {
 		// edits nothing. The cumulative change set is what makes that retry still
 		// review the change the first attempt made instead of skipping the reviewer.
 		config.limits.semanticReviewRounds = 2;
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			// The reviewer lane ran for real and returned FIX_REQUIRED, which sent the
@@ -198,7 +198,7 @@ describe("AC-5 — negative controls block without a false success", () => {
 			runtime: { browser: { url: "http://127.0.0.1:1/", selectors: ["#app"] } },
 			commands: { typecheck: "true", targeted_test: "grep -q 'answer = 42' src/answer.ts", git_status: "git status --porcelain" },
 		});
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			expect(context.contract?.verification.required).toContain("browser_test");
@@ -230,7 +230,7 @@ describe("AC-5 — the browser facility is a session option, not a process globa
 		const restore = setStubScript(cli.recordPath, { files: { "src/answer.ts": ANSWERED }, summary: PASS_VERDICT });
 		const config = e2eConfig(cwd, cli, native.baseUrl, browserVerify);
 		const browser = fakeBrowser({ page: runtimeFixture("web/index.html") });
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" }, browserFacility: browser.facility });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" }, browserFacility: browser.facility });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			expect(context.contract?.verification.required).toContain("browser_test");
@@ -254,7 +254,7 @@ describe("AC-5 — the browser facility is a session option, not a process globa
 		// none, so it must not inherit it: the record is `unavailable`.
 		const global = fakeBrowser({ page: runtimeFixture("web/index.html") });
 		setBrowserFacility(global.facility);
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			expect(context.executor?.evidence.find((entry) => entry.kind === "browser_test")?.status).toBe("unavailable");
@@ -282,7 +282,7 @@ describe("AC-5 — a declared screenshot must not vanish when its baseline is mi
 			runtime: { screenshot: { url: "http://127.0.0.1:1/", baseline: "web/absent.png" } },
 			commands: { typecheck: "true", targeted_test: "grep -q 'answer = 42' src/answer.ts", git_status: "git status --porcelain" },
 		});
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			expect(context.contract?.verification.required).toContain("screenshot_compare");
@@ -310,7 +310,7 @@ describe("AC-5 — one executor per turn, and external-only sessions boot", () =
 		});
 		delete config.backends.local;
 		config.models.specialist = { backend: "claude", model: "claude-model" };
-		const session = await createLeanPiSession({ cwd, agentDir, config });
+		const session = await createLeanPiSession({ cwd, agentDir, config, env: harnessStubEnv() });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug" });
 			expect(context.executor?.status).toBe("completed");
@@ -336,7 +336,7 @@ describe("AC-5 — one executor per turn, and external-only sessions boot", () =
 		// No `model` option and no turn role: balanced resolves to the external
 		// harness, which Pi's runtime cannot serve, yet the session must still boot
 		// because LeanPi owns the loop for this configuration.
-		const session = await createLeanPiSession({ cwd, agentDir, config });
+		const session = await createLeanPiSession({ cwd, agentDir, config, env: harnessStubEnv() });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug" });
 			expect(context.executor?.status).toBe("completed");
@@ -361,7 +361,7 @@ describe("AC-5 — one executor per turn, and external-only sessions boot", () =
 			backends: { local: nativeBackend(native.baseUrl) },
 			models: { balanced: { backend: "local", model: "cheap-fast" } },
 		});
-		const session = await bootSession({ cwd, agentDir });
+		const session = await bootHarnessSession({ cwd, agentDir });
 		try {
 			const context = await session.runTurn({ text: "say hi", role: "balanced" });
 			// Pi's loop is the executor here, so there is no executor outcome and the
@@ -395,7 +395,7 @@ describe("PRD-040 E3 — the gate re-hashes the bytes it is about to certify", (
 		const config = e2eConfig(cwd, cli, native.baseUrl, {
 			commands: { typecheck: "true", targeted_test: "grep -q 'answer = 42' src/answer.ts", git_status: "git status --porcelain" },
 		});
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			// The reviewer really changed the bytes after the verifier passed...
@@ -432,7 +432,7 @@ describe("PRD-040 E3 — the gate re-hashes the bytes it is about to certify", (
 		const config = e2eConfig(cwd, cli, native.baseUrl, {
 			commands: { typecheck: "true", targeted_test: "grep -q 'answer = 42' src/answer.ts", git_status: "git status --porcelain" },
 		});
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			// The gate cannot read the touched path, so it must not stamp the
 			// verifier's evidence as current: the turn fails instead of exposing PASS.
@@ -464,7 +464,7 @@ describe("PRD-040 E3 — the gate re-hashes the bytes it is about to certify", (
 		});
 		config.limits.isolation = "worktree";
 		config.permissions.defaults.git_destructive = "allow";
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			expect(context.proof?.decision).not.toBe("PASS");
