@@ -124,6 +124,32 @@ echo 'JEV_API_KEY=<key>' >> .env  # or this project — read, never exported
 leanpi --no-jev                 # or skip the control plane deliberately
 ```
 
+**Or run the control plane locally.** The same typed questions can be answered
+by [Laya](https://huggingface.co/convaiinnovations/laya), an Apache-2.0 decision
+model that runs on your own machine — no key, no per-token cost, and nothing
+leaves the box:
+
+```sh
+leanpi --laya                   # this run
+/jev provider laya --save       # and every run after it
+/jev provider typesafe          # back to the hosted service
+```
+
+Laya is not installed on the first run, so LeanPi provisions it: a Python
+environment, `torch` and the model weights (~3 GB) under
+`~/.local/share/leanpi/laya`. `/jev setup-laya` does the same ahead of time, and
+`jev.laya.autoSetup: false` turns a missing runtime into a clear error instead
+of a download.
+
+⚠️ **Laya is a different trade, not a free upgrade.** Measured on 76 labelled
+cases drawn from LeanPi's own decision sites (`experiments/laya-vs-jev`), it is
+5× faster (p50 19 ms vs 109 ms) and free, but less accurate: `Choice` accuracy
+0.612 vs JEV's 0.845, `Score` error 2.3× higher, and its `Score` answers barely
+separate a relevant file from an irrelevant one. LeanPi adapts Laya's confidence
+to JEV's scale so the answers are usable at all; it does not close the accuracy
+gap. Use JEV when the decisions matter most, Laya when they must stay on your
+machine or cost nothing.
+
 Tool authorization is per scope (`read`, `edit`, `shell`, `network`, `mcp`,
 `external_dir`, `subagent`, `git_destructive`, `package_install`), resolved from
 the built-in defaults, your `~/.config/leanpi/permissions.json` and the

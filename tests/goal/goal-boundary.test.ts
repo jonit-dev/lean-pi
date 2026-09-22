@@ -48,6 +48,7 @@ describe("PRD-013 Phase 2 — boundary evaluation", () => {
 			workspaceHash: HASH,
 			evidence: store,
 			jev,
+			cwd: fixtureCwd(),
 		});
 
 		expect(evaluation.decision).toBe("stop");
@@ -72,6 +73,7 @@ describe("PRD-013 Phase 2 — boundary evaluation", () => {
 				evidence: store,
 				jev: createJevClient({ config, cwd }),
 				config,
+				cwd,
 			});
 
 			expect(yes.requests).toHaveLength(1);
@@ -96,6 +98,7 @@ describe("PRD-013 Phase 2 — boundary evaluation", () => {
 				evidence: store,
 				jev: createJevClient({ config, cwd: noCwd }),
 				config,
+				cwd: noCwd,
 			});
 
 			expect(no.requests).toHaveLength(1);
@@ -121,6 +124,7 @@ describe("PRD-013 Phase 2 — boundary evaluation", () => {
 				evidence: store,
 				jev: createJevClient({ config, cwd }),
 				config,
+				cwd,
 			});
 
 			expect(stub.requests).toHaveLength(0);
@@ -144,6 +148,7 @@ describe("PRD-013 Phase 2 — boundary evaluation", () => {
 			workspaceHash: HASH,
 			evidence: store,
 			jev,
+			cwd: fixtureCwd(),
 			todos: todos([{ id: "t1", text: "fix the failing assertion" }]),
 			turn: async () => {
 				turns += 1;
@@ -162,10 +167,12 @@ describe("PRD-013 Phase 2 — boundary evaluation", () => {
 		const stalled = new EvidenceStore();
 		record(stalled, { kind: "targeted_test", status: "fail" });
 		let extraTurns = 0;
+		const cwd = fixtureCwd();
 		const blocked = await runGoalLoop(newGoal("targeted tests pass"), {
 			workspaceHash: HASH,
 			evidence: stalled,
 			jev,
+			cwd,
 			todos: todos([], [{ id: "t1", text: "apply the fix", blockedReason: "needs the owner" }]),
 			turn: async () => {
 				extraTurns += 1;
@@ -197,7 +204,7 @@ describe("PRD-013 Phase 2 — boundary evaluation", () => {
 		const store = new EvidenceStore();
 		record(store, { kind: "targeted_test", status: "pass", hash: "hash-before-the-edit" });
 
-		const evaluation = await evaluateGoal(newGoal("targeted tests pass"), { workspaceHash: HASH, evidence: store, todos: todos() });
+		const evaluation = await evaluateGoal(newGoal("targeted tests pass"), { workspaceHash: HASH, evidence: store, todos: todos(), cwd: fixtureCwd() });
 
 		expect(evaluation.decision).toBe("stop");
 		expect(evaluation.stop).toBe("BLOCKED");

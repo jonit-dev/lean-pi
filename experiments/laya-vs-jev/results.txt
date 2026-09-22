@@ -1,0 +1,125 @@
+# Raw output of score.py (column order: jev, laya-english, laya-multilingual, laya-typed-decisions)
+# base commit 3229ee6 | JEV jev-1.13.0 | laya 0.3.5 / transformers 5.17.0 / torch 2.6.0+cu124 | RTX 2080 8GB
+# generated 2026-09-22T05:27:51Z
+
+                                           jev      laya-english laya-multilinguallaya-typed-decisions
+----------------------------------------------------------------------------------------------------
+Choice accuracy                 98/116 = 0.845    71/116 = 0.612    57/116 = 0.491    71/116 = 0.612
+Noul accuracy                      5/6 = 0.833       3/6 = 0.500       4/6 = 0.667       5/6 = 0.833
+Score MAE (0..3)                  0.396 (n=12)      0.894 (n=12)      1.076 (n=12)      0.946 (n=12)
+Score level accuracy              8/12 = 0.667      4/12 = 0.333      2/12 = 0.167      2/12 = 0.167
+ECE (categorical)                        0.101             0.324             0.197             0.500
+accepted by accept()             85/122 = 0.70      5/122 = 0.04     27/122 = 0.22      0/122 = 0.00
+accuracy when accepted           77/85 = 0.906       4/5 = 0.800     15/27 = 0.556       0/0 = 0.000
+p50 latency (ms)                           109                19                16                20
+p95 latency (ms)                           210                24                20                25
+input tokens                             33068             10765             10688             10765
+missing answers                              0                 0                 0                 0
+
+Per-site Choice/Noul accuracy (hits/asked):
+  classify.execution_complexity            24/30       17/30       15/30       18/30
+  executor.failure_classification          11/12        8/12        3/12        9/12
+  explore.candidate_relevance                  -           -           -           -
+  explore.snippet_relevance                12/12        7/12        6/12        6/12
+  explore.subsystem_order                   9/10        7/10        6/10        9/10
+  explore.sufficiency                        8/8         4/8         4/8         4/8
+  gate.prd_required                        29/36       26/36       20/36       23/36
+  routing.delegation_worth                   3/6         3/6         3/6         3/6
+  routing.reasoning_effort                   7/8         2/8         4/8         4/8
+
+Every labelled question at least one provider got wrong:
+  failure-01     failure_category         expected=syntax         Y...  jev:syntax  laya:likely_logic_bug  laya:assertion  laya:likely_logic_bug
+  failure-03     failure_category         expected=environment    Y...  jev:environment  laya:likely_logic_bug  laya:likely_logic_bug  laya:assertion
+  failure-04     failure_category         expected=dependency     YY.Y  jev:dependency  laya:dependency  laya:likely_logic_bug  laya:dependency
+  failure-06     failure_category         expected=syntax         YY.Y  jev:syntax  laya:syntax  laya:likely_logic_bug  laya:syntax
+  failure-07     failure_category         expected=environment    Y..Y  jev:environment  laya:likely_logic_bug  laya:assertion  laya:environment
+  failure-08     failure_category         expected=dependency     YY.Y  jev:dependency  laya:dependency  laya:likely_logic_bug  laya:dependency
+  failure-09     failure_category         expected=likely_logic_bug .Y.Y  jev:assertion  laya:likely_logic_bug  laya:assertion  laya:likely_logic_bug
+  failure-11     failure_category         expected=environment    Y...  jev:environment  laya:likely_logic_bug  laya:likely_logic_bug  laya:likely_logic_bug
+  failure-12     failure_category         expected=likely_logic_bug YY.Y  jev:likely_logic_bug  laya:likely_logic_bug  laya:assertion  laya:likely_logic_bug
+  snippet-01     snippet                  expected=KEEP           YY.Y  jev:KEEP  laya:KEEP  laya:DROP  laya:KEEP
+  snippet-02     snippet                  expected=DROP           Y.Y.  jev:DROP  laya:KEEP  laya:DROP  laya:KEEP
+  snippet-03     snippet                  expected=KEEP           YY.Y  jev:KEEP  laya:KEEP  laya:DROP  laya:KEEP
+  snippet-04     snippet                  expected=DROP           Y.Y.  jev:DROP  laya:KEEP  laya:DROP  laya:KEEP
+  snippet-06     snippet                  expected=DROP           Y...  jev:DROP  laya:KEEP  laya:KEEP  laya:KEEP
+  snippet-09     snippet                  expected=KEEP           Y...  jev:KEEP  laya:DROP  laya:DROP  laya:DROP
+  snippet-10     snippet                  expected=DROP           YYY.  jev:DROP  laya:DROP  laya:DROP  laya:KEEP
+  snippet-11     snippet                  expected=KEEP           YY.Y  jev:KEEP  laya:KEEP  laya:DROP  laya:KEEP
+  snippet-12     snippet                  expected=DROP           Y...  jev:DROP  laya:KEEP  laya:KEEP  laya:KEEP
+  effort-01      effort                   expected=minimal        Y...  jev:minimal  laya:low  laya:low  laya:low
+  effort-02      effort                   expected=minimal        Y...  jev:minimal  laya:low  laya:low  laya:low
+  effort-03      effort                   expected=medium         Y.YY  jev:medium  laya:minimal  laya:medium  laya:medium
+  effort-04      effort                   expected=low            ....  jev:medium  laya:medium  laya:medium  laya:medium
+  effort-06      effort                   expected=high           Y.YY  jev:high  laya:medium  laya:high  laya:high
+  effort-07      effort                   expected=low            YY.Y  jev:low  laya:low  laya:minimal  laya:low
+  effort-08      effort                   expected=high           Y.Y.  jev:high  laya:low  laya:high  laya:medium
+  delegation-01  delegation               expected=inline         YY..  jev:inline  laya:inline  laya:delegate  laya:delegate
+  delegation-02  delegation               expected=delegate       ..YY  jev:inline  laya:inline  laya:delegate  laya:delegate
+  delegation-03  delegation               expected=inline         YY..  jev:inline  laya:inline  laya:delegate  laya:delegate
+  delegation-04  delegation               expected=delegate       ..YY  jev:inline  laya:inline  laya:delegate  laya:delegate
+  delegation-05  delegation               expected=inline         YY..  jev:inline  laya:inline  laya:delegate  laya:delegate
+  delegation-06  delegation               expected=delegate       ..YY  jev:inline  laya:inline  laya:delegate  laya:delegate
+  sufficiency-02 explore.sufficiency.stop expected=NEED_MORE      Y...  jev:NEED_MORE  laya:ENOUGH_EVIDENCE  laya:ENOUGH_EVIDENCE  laya:ENOUGH_EVIDENCE
+  sufficiency-03 explore.sufficiency.stop expected=NEED_MORE      Y...  jev:NEED_MORE  laya:ENOUGH_EVIDENCE  laya:ENOUGH_EVIDENCE  laya:ENOUGH_EVIDENCE
+  sufficiency-05 explore.sufficiency.stop expected=NEED_MORE      Y...  jev:NEED_MORE  laya:ENOUGH_EVIDENCE  laya:ENOUGH_EVIDENCE  laya:ENOUGH_EVIDENCE
+  sufficiency-07 explore.sufficiency.stop expected=NEED_MORE      Y...  jev:NEED_MORE  laya:ENOUGH_EVIDENCE  laya:ENOUGH_EVIDENCE  laya:ENOUGH_EVIDENCE
+  candidate-01   candidate:src/pagination expected=3              Y...  jev:2.99  laya:2.4228  laya:2.0701  laya:2.2642
+  candidate-02   candidate:src/logger.ts  expected=0              Y...  jev:0.45  laya:1.7363  laya:2.2038  laya:2.0789
+  candidate-03   candidate:src/pagination expected=3              ....  jev:2.47  laya:2.1902  laya:2.0366  laya:2.2276
+  candidate-04   candidate:src/retry.ts   expected=3              YY..  jev:2.96  laya:2.5336  laya:1.7029  laya:2.356
+  candidate-05   candidate:src/http.ts    expected=2              .YYY  jev:2.95  laya:2.4509  laya:1.9169  laya:2.2644
+  candidate-06   candidate:src/theme.ts   expected=0              Y...  jev:0.13  laya:2.4548  laya:1.9127  laya:2.3125
+  candidate-07   candidate:src/validate.t expected=3              YY..  jev:2.97  laya:2.5797  laya:1.8989  laya:2.4634
+  candidate-08   candidate:src/forms/help expected=1              ....  jev:1.55  laya:2.3864  laya:2.1171  laya:2.273
+  candidate-09   candidate:src/parser/pas expected=3              Y...  jev:2.98  laya:2.2333  laya:1.898  laya:2.2071
+  candidate-11   candidate:src/api.ts     expected=3              Y...  jev:2.99  laya:2.2976  laya:1.7635  laya:2.1325
+  candidate-12   candidate:docs/api.md    expected=1              ....  jev:2.54  laya:1.8703  laya:1.8087  laya:1.9305
+  subsystem-01   explore.subsystem.implic expected=1.0            Y.YY  jev:0.79  laya:0.4655  laya:0.873  laya:0.5533
+  subsystem-01   explore.subsystem.root   expected=src/api        YY.Y  jev:src/api  laya:src/api  laya:src/parser  laya:src/api
+  subsystem-03   explore.subsystem.root   expected=src/parser     YY.Y  jev:src/parser  laya:src/parser  laya:src/api  laya:src/parser
+  subsystem-04   explore.subsystem.implic expected=0.0            Y...  jev:0.13  laya:0.5498  laya:0.9544  laya:0.5442
+  subsystem-05   explore.subsystem.implic expected=0.0            ...Y  jev:0.53  laya:0.5542  laya:0.8296  laya:0.4937
+  complexity-01  explicit_result          expected=yes            YY.Y  jev:yes  laya:yes  laya:no  laya:yes
+  complexity-01  several_modules          expected=no             YY.Y  jev:no  laya:no  laya:yes  laya:no
+  complexity-02  mechanical               expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  complexity-02  explicit_result          expected=yes            .Y.Y  jev:no  laya:yes  laya:no  laya:yes
+  complexity-02  several_modules          expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  complexity-02  unfamiliar_coupled       expected=yes            ....  jev:no  laya:no  laya:no  laya:no
+  complexity-03  mechanical               expected=no             YY.Y  jev:no  laya:no  laya:yes  laya:no
+  complexity-03  concurrency_perf         expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  complexity-04  mechanical               expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  complexity-04  several_modules          expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  complexity-04  unfamiliar_coupled       expected=yes            ....  jev:no  laya:no  laya:no  laya:no
+  complexity-05  mechanical               expected=yes            Y.Y.  jev:yes  laya:no  laya:yes  laya:no
+  complexity-05  explicit_result          expected=yes            ....  jev:no  laya:no  laya:no  laya:no
+  complexity-05  several_modules          expected=no             ....  jev:yes  laya:yes  laya:yes  laya:yes
+  complexity-06  mechanical               expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  complexity-06  explicit_result          expected=yes            ...Y  jev:no  laya:no  laya:no  laya:yes
+  complexity-06  several_modules          expected=no             Y.Y.  jev:no  laya:yes  laya:no  laya:yes
+  gate-01        architecture             expected=no             YY.Y  jev:no  laya:no  laya:yes  laya:no
+  gate-01        multi_behavior           expected=no             YY.Y  jev:no  laya:no  laya:yes  laya:no
+  gate-01        ambiguous                expected=no             .YYY  jev:yes  laya:no  laya:no  laya:no
+  gate-01        multi_stage              expected=no             YY.Y  jev:no  laya:no  laya:yes  laya:no
+  gate-01        acceptance_helpful       expected=no             Y.Y.  jev:no  laya:yes  laya:no  laya:yes
+  gate-02        ambiguous                expected=no             .YYY  jev:yes  laya:no  laya:no  laya:no
+  gate-02        acceptance_helpful       expected=yes            YY.Y  jev:yes  laya:yes  laya:no  laya:yes
+  gate-02        localized                expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  gate-03        architecture             expected=no             YY..  jev:no  laya:no  laya:yes  laya:yes
+  gate-03        multi_behavior           expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  gate-03        ambiguous                expected=no             .YYY  jev:yes  laya:no  laya:no  laya:no
+  gate-03        multi_stage              expected=no             YY.Y  jev:no  laya:no  laya:yes  laya:no
+  gate-03        acceptance_helpful       expected=no             ..Y.  jev:yes  laya:yes  laya:no  laya:yes
+  gate-04        multi_behavior           expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  gate-04        ambiguous                expected=yes            Y.Y.  jev:yes  laya:no  laya:yes  laya:no
+  gate-04        multi_stage              expected=no             YY..  jev:no  laya:no  laya:yes  laya:yes
+  gate-04        acceptance_helpful       expected=yes            YY.Y  jev:yes  laya:yes  laya:no  laya:yes
+  gate-04        localized                expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  gate-05        architecture             expected=yes            .YYY  jev:no  laya:yes  laya:yes  laya:yes
+  gate-05        ambiguous                expected=no             .YYY  jev:yes  laya:no  laya:no  laya:no
+  gate-05        acceptance_helpful       expected=yes            YY.Y  jev:yes  laya:yes  laya:no  laya:yes
+  gate-05        localized                expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  gate-06        architecture             expected=no             YYY.  jev:no  laya:no  laya:no  laya:yes
+  gate-06        multi_behavior           expected=no             Y...  jev:no  laya:yes  laya:yes  laya:yes
+  gate-06        ambiguous                expected=no             .YYY  jev:yes  laya:no  laya:no  laya:no
+  gate-06        multi_stage              expected=no             YY.Y  jev:no  laya:no  laya:yes  laya:no
+  gate-06        acceptance_helpful       expected=no             Y.Y.  jev:no  laya:yes  laya:no  laya:yes

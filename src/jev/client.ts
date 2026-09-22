@@ -16,6 +16,7 @@ import { accept } from "./confidence.js";
 import { resolveCredential, type CredentialEnv, type CredentialSource } from "./credentials.js";
 import { createDecisionLog, type DecisionLog, type DecisionRow } from "./log.js";
 import { applyPrivacy, redactSecrets, serializeBody } from "./privacy.js";
+import type { ControlPlaneProvider, ControlPlaneTarget } from "./provider.js";
 import { emptyUsage, getSite, listSites, type DecisionSite } from "./registry.js";
 import { answerValue, decisiveness, type JevQuestion, type JevResult, type JevUsage, type QuestionKind } from "./types.js";
 
@@ -40,6 +41,8 @@ export type JevTransport = (request: JevTransportRequest) => Promise<JevTranspor
 export interface JevStatus {
 	configured: boolean;
 	source: CredentialSource;
+	/** Which implementation answers the sites (PRD-042). */
+	provider: string;
 	mode: JevMode;
 	modelVersion: string;
 	fallbackCount: number;
@@ -74,12 +77,18 @@ export interface JevClient {
 	answeredCount(): number;
 	getMode(): JevMode;
 	setMode(mode: JevMode): void;
+	/** Swap the implementation that answers the registered sites (PRD-042). */
+	setProvider(provider: ControlPlaneProvider): void;
+	/** The active provider's name, for `/jev` and the turn report. */
+	providerName(): string;
 	fallbackCount(): number;
 	credentialSource(): CredentialSource;
 	status(): Promise<JevStatus>;
 	/** Exactly one validation attempt — an invalid key yields one error, not a retry loop. */
 	validateKey(key: string): Promise<JevTestResult>;
 	test(): Promise<JevTestResult>;
+	/** Releases a provider that owns a process; a no-op for the hosted provider. */
+	dispose(): Promise<void>;
 }
 
 export interface JevClientOptions {
@@ -94,6 +103,12 @@ export interface JevClientOptions {
 	salt?: string;
 	/** Overrides credential resolution, e.g. to persist a key captured at first run. */
 	credential?: () => { key: string | null; source: CredentialSource };
+	/**
+	 * Where the requests go. Absent, the client resolves the TypeSafe path inline
+	 * exactly as PRD-002 shipped it; present, `ask()` awaits `resolve()` and the
+	 * provider owns endpoint, credential and model (PRD-042).
+	 */
+	provider?: ControlPlaneProvider;
 }
 
 interface WireAnswer {
@@ -186,6 +201,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 	const now = options.now ?? (() => new Date());
 	const currentCredential = options.credential ?? (() => resolveCredential(config, env, cwd));
 
+	let provider: ControlPlaneProvider | undefined = options.provider;
 	let lastUsage: JevUsage = emptyUsage();
 	let mode: JevMode = config.jev.mode;
 	let fallbackCount = 0;
@@ -231,19 +247,33 @@ export function createJevClient(options: JevClientOptions): JevClient {
 		return results;
 	}
 
-	async function send(key: string, questions: JevQuestion[], state: unknown): Promise<{ answers: Record<string, WireAnswer>; usage: JevUsage; model: string }> {
+	/**
+	 * Where this request goes. With a provider, the provider decides; without one,
+	 * the PRD-002 resolution runs unchanged. `keyOverride` is the candidate key
+	 * `/jev setup` validates before it is stored.
+	 */
+	async function targetFor(keyOverride?: string): Promise<ControlPlaneTarget> {
+		if (provider) {
+			const resolved = await provider.resolve();
+			return keyOverride === undefined ? resolved : { ...resolved, key: keyOverride };
+		}
+		const credential = currentCredential();
+		return { endpoint, key: keyOverride ?? credential.key, source: credential.source, model };
+	}
+
+	async function send(target: ControlPlaneTarget, questions: JevQuestion[], state: unknown): Promise<{ answers: Record<string, WireAnswer>; usage: JevUsage; model: string }> {
 		const body = applyPrivacy(
 			mode,
 			{
 				state,
-				model,
+				model: target.model,
 				questions: Object.fromEntries(questions.map((question) => [question.id, wireQuestion(question)])),
 			},
 			salt,
 		);
 		const response = await transport({
-			url: endpoint,
-			headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+			url: target.endpoint,
+			headers: { authorization: `Bearer ${target.key}`, "content-type": "application/json" },
 			body: serializeBody(body),
 		});
 		reachable = response.status >= 200 && response.status < 300;
@@ -260,7 +290,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 		return {
 			answers: parsed.answers ?? {},
 			usage: { inputTokens: parsed.usage?.input_tokens ?? 0, outputTokens: parsed.usage?.output_tokens ?? 0 },
-			model: parsed.model ?? model,
+			model: parsed.model ?? target.model,
 		};
 	}
 
@@ -278,12 +308,20 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			}
 
 			if (mode === "disabled") return resolveByFallback(site, questions, state, "privacy-mode-disabled");
-			const credential = currentCredential();
-			if (!credential.key) return resolveByFallback(site, questions, state, "no-credential");
+			let target: ControlPlaneTarget;
+			try {
+				target = await targetFor();
+			} catch (error) {
+				// A provider that cannot resolve (a local runtime that is missing or
+				// dead) is the same failure class as an unreachable service: the site
+				// takes its registered fallback and the turn continues (§49).
+				return resolveByFallback(site, questions, state, error instanceof Error ? error.message : "provider-error");
+			}
+			if (!target.key) return resolveByFallback(site, questions, state, "no-credential");
 
 			let response: { answers: Record<string, WireAnswer>; usage: JevUsage; model: string };
 			try {
-				response = await send(credential.key, questions, state);
+				response = await send(target, questions, state);
 			} catch (error) {
 				return resolveByFallback(site, questions, state, error instanceof Error ? error.message : "transport-error");
 			}
@@ -316,26 +354,40 @@ export function createJevClient(options: JevClientOptions): JevClient {
 		setMode(next) {
 			mode = next;
 		},
+		setProvider(next) {
+			provider = next;
+		},
+		providerName: () => provider?.name ?? "typesafe",
 		fallbackCount: () => fallbackCount,
 		answeredCount: () => answeredCount,
-		credentialSource: () => currentCredential().source,
+		credentialSource: () => (provider ? provider.source : currentCredential().source),
 		async status() {
-			const credential = currentCredential();
+			let target: ControlPlaneTarget | null = null;
+			try {
+				target = await targetFor();
+			} catch {
+				// A provider that cannot resolve reports as unconfigured rather than
+				// failing the status call: `/jev` is how the user finds out why.
+				target = null;
+			}
+			const configured = target !== null && target.key !== null;
 			return {
-				configured: credential.key !== null,
-				source: credential.source,
+				configured,
+				source: target?.source ?? (provider ? provider.source : currentCredential().source),
+				provider: provider?.name ?? "typesafe",
 				mode,
 				modelVersion,
 				fallbackCount,
 				reachable,
-				degraded: credential.key === null ? ["planning gate", "complexity classification", "skill disclosure", "proof sufficiency"] : [],
+				degraded: configured ? [] : ["planning gate", "complexity classification", "skill disclosure", "proof sufficiency"],
 			};
 		},
 
 		async validateKey(key) {
 			const started = now().getTime();
 			try {
-				const response = await send(key, [{ id: "jev_check", kind: "Noul", text: "Is this a valid request?" }], { probe: true });
+				const target = await targetFor(key);
+				const response = await send(target, [{ id: "jev_check", kind: "Noul", text: "Is this a valid request?" }], { probe: true });
 				const answer = mapAnswer({ id: "jev_check", kind: "Noul", text: "Is this a valid request?" }, response.answers.jev_check);
 				modelVersion = response.model;
 				return {
@@ -357,11 +409,20 @@ export function createJevClient(options: JevClientOptions): JevClient {
 		},
 
 		async test() {
-			const credential = currentCredential();
-			if (!credential.key) {
-				return { ok: false, modelVersion, latencyMs: 0, costUsd: 0, error: "no JEV credential configured" };
+			let target: ControlPlaneTarget;
+			try {
+				target = await targetFor();
+			} catch (error) {
+				return { ok: false, modelVersion, latencyMs: 0, costUsd: 0, error: error instanceof Error ? error.message : String(error) };
 			}
-			return this.validateKey(credential.key);
+			if (!target.key) {
+				return { ok: false, modelVersion, latencyMs: 0, costUsd: 0, error: "no control-plane credential configured" };
+			}
+			return this.validateKey(target.key);
+		},
+
+		async dispose() {
+			await provider?.dispose?.();
 		},
 	};
 }

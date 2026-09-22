@@ -304,6 +304,30 @@ describe("the JEV warning at session start", () => {
 	});
 });
 
+describe("Laya startup after provider switch", () => {
+	it("warms the current provider instead of the one captured at activation", async () => {
+		const { cwd, env } = project(NATIVE.replace("  mode: disabled", "  mode: enabled\n  laya: { endpoint: http://127.0.0.1:1/v1 }"));
+		const { pi, commands, handlers, notices, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, {
+			cwd,
+			config: loadConfig(cwd, {}, env),
+			env,
+			jevProvider: {
+				name: "typesafe",
+				source: "env",
+				async resolve() { throw new Error("stale provider"); },
+			},
+		});
+
+		await commands.get("jev")?.handler("provider laya", ctx);
+		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+		await expect.poll(() => notices.some((notice) => notice.includes("Laya control plane ready"))).toBe(true);
+		expect(notices.join("\n")).not.toContain("stale provider");
+		clearLanes();
+	});
+});
+
 describe("SURF-4: default skill roots respect project trust", () => {
 	/** A project and a separate user home, so the two skill sources cannot alias. */
 	function untrustedProject(): { cwd: string; env: NodeJS.ProcessEnv } {

@@ -120,6 +120,7 @@ describe("PRD-013 Phase 3 — limits and stop conditions", () => {
 		const evaluation = await evaluateGoal(newGoal("the browser_test passes"), {
 			workspaceHash: HASH,
 			jev,
+			cwd: fixtureCwd(),
 			todos: todos([{ id: "t1", text: "keep working" }]),
 		});
 

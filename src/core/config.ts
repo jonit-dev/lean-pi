@@ -21,6 +21,8 @@ import {
 	type CapabilityRoleSetting,
 	type CostBlockConfig,
 	type JevMode,
+	type JevProvider,
+	type LayaConfig,
 	type LeanPiConfig,
 	type ModelRole,
 	type ModelsConfig,
@@ -143,6 +145,34 @@ function parseModels(raw: unknown, backends: Record<string, BackendConfig>): Mod
 	return models;
 }
 
+function parseLaya(raw: unknown): LayaConfig {
+	if (raw === undefined) return {};
+	const record = asRecord(raw, "jev.laya");
+	if (record.device !== undefined && !["auto", "cuda", "cpu"].includes(record.device as string)) {
+		throw new ConfigError(`device must be one of auto | cuda | cpu`, "jev.laya.device");
+	}
+	if (record.autoSetup !== undefined && typeof record.autoSetup !== "boolean") {
+		throw new ConfigError(`autoSetup must be a boolean`, "jev.laya.autoSetup");
+	}
+	if (record.port !== undefined && (typeof record.port !== "number" || !Number.isInteger(record.port) || record.port < 0 || record.port > 65535)) {
+		throw new ConfigError(`port must be an integer in 0..65535`, "jev.laya.port");
+	}
+	const text = (key: string): string | undefined => {
+		const value = record[key];
+		if (value === undefined) return undefined;
+		if (typeof value !== "string" || value.length === 0) throw new ConfigError(`${key} must be a non-empty string`, `jev.laya.${key}`);
+		return value;
+	};
+	return {
+		endpoint: text("endpoint"),
+		home: text("home"),
+		device: record.device as LayaConfig["device"],
+		checkpoint: text("checkpoint"),
+		autoSetup: record.autoSetup as boolean | undefined,
+		port: record.port as number | undefined,
+	};
+}
+
 function parseJev(raw: unknown): LeanPiConfig["jev"] {
 	const record = raw === undefined ? {} : asRecord(raw, "jev");
 	const mode = record.mode;
@@ -151,6 +181,13 @@ function parseJev(raw: unknown): LeanPiConfig["jev"] {
 	}
 	if (record.enabled !== undefined && typeof record.enabled !== "boolean") {
 		throw new ConfigError(`enabled must be a boolean`, "jev.enabled");
+	}
+	// The provider is a separate axis from the mode: `provider` says who answers,
+	// `mode` says whether anything is sent at all. A typo must fail at load rather
+	// than silently keep the default and bill the wrong service.
+	const provider = record.provider;
+	if (provider !== undefined && provider !== "typesafe" && provider !== "laya") {
+		throw new ConfigError(`provider must be one of typesafe | laya`, "jev.provider");
 	}
 	// `jev.enabled: false` is the shorthand several PRDs use for a fully local
 	// project; it is the same switch as `mode: disabled`, not a second one.
@@ -165,6 +202,8 @@ function parseJev(raw: unknown): LeanPiConfig["jev"] {
 		model: typeof record.model === "string" ? record.model : "jev-latest",
 		mode: resolvedMode,
 		usd_per_mtok: (usdPerMtok as number | undefined) ?? 0,
+		provider: (provider as JevProvider | undefined) ?? "typesafe",
+		laya: parseLaya(record.laya),
 	};
 }
 

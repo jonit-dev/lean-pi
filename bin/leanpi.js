@@ -61,7 +61,14 @@ try {
 	}
 	// The key first: JEV allocates the roles the config is written with, so a run
 	// that has no control plane must stop before it writes anything.
-	const jev = requireJev({ allowMissing: flags.allowMissingJev, ...(flags.jevKey === undefined ? {} : { setKey: flags.jevKey }) });
+	const jev = requireJev({
+		allowMissing: flags.allowMissingJev,
+		...(flags.jevKey === undefined ? {} : { setKey: flags.jevKey }),
+		// `--laya` / `--jev` decide the control plane for the run, and the banner is
+		// the first thing the user reads: resolving the provider only inside the
+		// child would print the TypeSafe line above a session that never uses it.
+		...(flags.provider === undefined ? {} : { env: { ...process.env, LEANPI_LAYAY_PROVIDER: flags.provider } }),
+	});
 	if (jev.stored) process.stderr.write(`leanpi: JEV key stored at ${jev.stored}\n`);
 	const configured = await autoConfigure({ client: jevClientFor() });
 	// Printed when a config was written *and* when none could be: the

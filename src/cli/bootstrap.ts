@@ -25,7 +25,7 @@ import { detectVendors, type SubscriptionState } from "../backends/subscriptions
 import { allocateRoles, candidateKey, discoverInventory, ladderAllocation, VENDOR_DEFAULT, type Allocation, type DiscoveredModel, type ModelCandidate } from "./allocate.js";
 import { CONFIG_FILENAME, configPathFor, loadConfig, userConfigPath } from "../core/config.js";
 import { resolvePiCli } from "./launch.js";
-import { MODEL_ROLES, type LeanPiConfig, type ModelRole } from "../core/types.js";
+import { MODEL_ROLES, type JevProvider, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { createJevClient, type JevClient } from "../jev/client.js";
 import { LEANPI_VERSION } from "../core/package-info.js";
 import { describeCredential, resolveCredential, writeStoredKey } from "../jev/credentials.js";
@@ -306,6 +306,8 @@ export interface JevCheck {
 	/** How the key was found, for the startup line. */
 	source: string;
 	stored?: string;
+	/** Which implementation will answer the registered sites (PRD-042). */
+	provider: JevProvider;
 }
 
 /**
@@ -320,23 +322,31 @@ export interface JevCheck {
  */
 export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boolean; setKey?: string } = {}): JevCheck {
 	const { cwd, env, home } = environment(options);
+	// The launcher's `--laya` / `--jev` is the run-scoped override; the config key
+	// is the durable one. `--no-jev` is not a provider choice, so it is checked
+	// before either and never warns about the one it did not pick.
+	const config = bootstrapConfig({ cwd, env, home });
+	const forced = env.LEANPI_LAYAY_PROVIDER;
+	const provider: JevProvider = forced === "laya" || forced === "typesafe" ? forced : config.jev.provider;
 	if (options.setKey !== undefined && options.setKey.length > 0) {
 		const path = writeStoredKey(options.setKey, { ...env, HOME: home });
-		return { source: "credential store", stored: path };
+		return { source: "credential store", stored: path, provider };
 	}
 	// `jev.apiKey` in config, the credential store, `$JEV_API_KEY`, the project's
 	// `.env` — the same order the client resolves, so the check cannot disagree
 	// with the session it is about to start.
-	const config = bootstrapConfig({ cwd, env, home });
 	// An operator who wrote `jev.mode: disabled` has already answered this
 	// question: every site resolves by fallback, so a key would be read and never
 	// used. Demanding one was a refusal to start over a credential the configured
 	// session would ignore.
-	if (config.jev.mode === "disabled") return { source: "disabled (jev.mode)" };
+	if (config.jev.mode === "disabled") return { source: "disabled (jev.mode)", provider };
+	if (options.allowMissing === true) return { source: "not configured (--no-jev)", provider };
+	// A local provider needs no credential at all; the runtime is resolved (and
+	// installed) by the session itself. Startup neither probes nor downloads.
+	if (provider === "laya") return { source: "laya (local)", provider };
 	const credential = resolveCredential(config, { ...env, HOME: home }, cwd);
-	if (credential.key !== null) return { source: describeCredential(credential) };
-	if (options.allowMissing === true) return { source: "not configured (--no-jev)" };
-	return { source: "not configured" };
+	if (credential.key !== null) return { source: describeCredential(credential), provider };
+	return { source: "not configured", provider };
 }
 
 /**
@@ -375,7 +385,7 @@ function bootstrapConfig(options: BootstrapEnv): Parameters<typeof createJevClie
 			// Fall through: the key check is not the place to report a broken config.
 		}
 	}
-	return { jev: { mode: "enabled", apiKey: null } } as Parameters<typeof createJevClient>[0]["config"];
+	return { jev: { mode: "enabled", apiKey: null, provider: "typesafe", laya: {} } } as Parameters<typeof createJevClient>[0]["config"];
 }
 
 /** A JEV client for the one decision made before a session exists: the role map. */
@@ -391,7 +401,13 @@ export function jevClientFor(options: Partial<BootstrapEnv> = {}): JevClient {
  * `--print` run still yields clean stdout.
  */
 /** `JEV on (credential store)`, or why it is not deciding anything. */
-function jevLine(source: string): string {
+function jevLine(check: JevCheck): string {
+	const { source } = check;
+	if (check.provider === "laya") {
+		return source.startsWith("disabled") || source.startsWith("not configured")
+			? `JEV ${source} — decisions take their built-in defaults`
+			: "JEV on (laya, local — see /jev)";
+	}
 	if (source.startsWith("disabled") || source.startsWith("not configured")) {
 		return `JEV ${source} — decisions take their built-in defaults`;
 	}
@@ -453,7 +469,7 @@ export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?
 		`${paint(NAME, "leanpi")} ${paint(MUTED, `v${LEANPI_VERSION}`)}`,
 		// LeanPi picks the effort per task; naming a fixed level would be a lie.
 		paint(MUTED, `${running}${sessionModel === undefined ? "" : ", effort chosen per task"}`),
-		paint(MUTED, jevLine(jev.source)),
+		paint(MUTED, jevLine(jev)),
 		paint(MUTED, tildify(cwd, home)),
 	];
 	return MARK.map((row, index) => `${paint(MARK_COLOR, row)}  ${facts[index] ?? ""}`.trimEnd()).join("\n");
