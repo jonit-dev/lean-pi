@@ -1,6 +1,6 @@
 {
 	"name": "leanpi",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Cost-aware task compiler and coding runtime built on Pi",
 	"license": "MIT",
 	"author": "Joao Paulo Furtado <admin@coldstartlabs.ca>",
@@ -35,6 +35,8 @@
 	"files": [
 		"bin",
 		"dist",
+		"scripts/patch-pi-model-command.mjs",
+		"extensions",
 		"skills",
 		"themes",
 		"src/capability/models.json",
