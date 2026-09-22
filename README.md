@@ -195,6 +195,53 @@ Annotated example: [`leanpi.config.yaml`](leanpi.config.yaml).
 
 ---
 
+## Subagents
+
+LeanPi attaches [`pi-subagents`](https://pi.dev/packages/pi-subagents) (pinned
+`0.70.1`) through the same `attach` entry as everything else, so delegation is
+available without a second launcher flag or extension file. Whether the *model*
+can delegate depends on who answers the turn:
+
+| parent mode | who answers the turn | model can call `subagent` | supported delegation entrypoint |
+| --- | --- | --- | --- |
+| `leanpi` CLI / `createLeanPiSession`, native backends | Pi's loop | yes | the `subagent` tool |
+| external-harness parent (all roles `external_harness`) | the vendor CLI | no | host-owned `/run` and the upstream `/subagents*` commands |
+
+An external vendor CLI owns its own turn and never sees Pi's tools, so LeanPi
+does not claim a model-driven subagent call there; the host-owned `/run` command
+is the supported path and runs the same upstream workflow engine. No adapter or
+scheduler is invented to bridge the two.
+
+**Per-run limit.** LeanPi ships `globalConcurrencyLimit: 3`: at most three
+children of one delegation run (one workflow call) overlap. Upstream already
+enforces it per run with a fresh semaphore, so independent calls each get their
+own — this is a per-run ceiling, not a process-wide cap, and LeanPi does not
+claim otherwise.
+
+```
+/subagents-limit          # show the active and saved value
+/subagents-limit 4        # save 4; a lower per-call override still wins
+/subagents-limit reset    # back to the default 3
+```
+
+Upstream reads its config once when its extension starts, so a saved change
+applies after `/reload` or a restart; the command says so, and it never writes
+on invalid input or a config file it cannot safely round-trip. A config with no
+`asyncByDefault` is written as `false`: LeanPi's native providers are registered
+in-process, and an async child is a separate process that cannot see them. To
+run children asynchronously, name a child-visible `backend`/`model` in the
+child's agent config and set `asyncByDefault: true`; otherwise a child resolves
+`backend/model` only on the foreground path.
+
+**Cost.** `/subagent-cost` (upstream) reports parent and child usage from
+upstream's own accounting; `/cost` (LeanPi) reports LeanPi's ledger. They are
+separate numbers with separate scopes and neither is a billing framework.
+
+The package's agents, skills and prompt templates are the upstream ones LeanPi
+actually ships and loads; LeanPi adds no delegation agents of its own.
+
+---
+
 ## Benchmark TL;DR
 
 ### Four-way harness comparison — September 21, 2026

@@ -9,7 +9,7 @@
  * artifact is dead — hence a test against the real `npm pack` output.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -68,6 +68,15 @@ describe("the published package", () => {
 			// Named so a regression report says which file went missing.
 			expect(existsSync(join(pkg, "src", "cli", "fold-cache.ts"))).toBe(true);
 			expect(existsSync(join(pkg, "scripts", "patch-pi-model-command.mjs"))).toBe(true);
+
+			// PRD-041: the shipped manifest must declare the pinned delegation
+			// package, and the shipped default entry the CLI/SDK attach is a real
+			// factory. A tarball that lost the dependency or flattened the default
+			// export would install but never register `subagent`.
+			const manifest = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")) as { dependencies?: Record<string, string> };
+			expect(manifest.dependencies?.["pi-subagents"]).toBe("0.70.1");
+			const shipped = (await import(/* @vite-ignore */ pathToFileURL(join(pkg, "dist", "index.js")).href)) as { default?: unknown };
+			expect(typeof shipped.default).toBe("function");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
