@@ -6,11 +6,11 @@
  * the executor request path, and `createLeanPiSession()` is the programmatic
  * form of the same path so tests exercise production code rather than a fixture.
  *
- * `export default activate` is what `pi --extension ./dist/index.js` loads.
+ * The default export attaches LeanPi and its bundled delegation package.
  */
 import type { AgentSession, ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	getActivePrefix,
@@ -25,6 +25,7 @@ import {
 import { commandRegistry, type CommandContext, type CommandRegistry } from "./commands/registry.js";
 import { registerJevCommands } from "./commands/jev.js";
 import { registerThinkingFoldCommand } from "./commands/thinking-fold.js";
+import { registerSubagentsLimitCommand } from "./commands/subagents-limit.js";
 import { apiKeyFor, ConfigError, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
@@ -88,6 +89,7 @@ import { createJevClient, type JevClient } from "./jev/client.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
 import { isModelRole, type LeanPiConfig, type ModelRole } from "./core/types.js";
+import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
 
 /**
  * The host's `ask` channel for an isolated worktree, built from Pi's own UI.
@@ -141,6 +143,13 @@ export interface LeanPiActivation {
 	readonly workingStateSources: WorkingStateSources;
 	/** The JEV control plane, handed to lanes by reference — never a tool. */
 	readonly jev: JevClient;
+	/**
+	 * PRD-041: record the limit `subagentsFactory` captured for this session so
+	 * `/subagents-limit` shows the value this session attached with. Called by
+	 * the attach entries after `activate`; absent (bare activation) leaves the
+	 * command reading the agent dir alone.
+	 */
+	noteSubagentCapture?(captured: CapturedLimit): void;
 }
 
 /** Register one Pi provider per `native` backend; every role on it becomes selectable. */
@@ -652,6 +661,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		author: createPrdAuthor({ cwd, registry: surface.backends, env }),
 		defaultObjective: () => lastContext?.turn.text,
 	});
+	// The shared entry point captures upstream's limit after LeanPi registers.
+	let capturedSubagentLimit: CapturedLimit | undefined;
+	registerSubagentsLimitCommand(commands, () => capturedSubagentLimit);
 
 	// The run that is still open: a compiled turn's collector and context, held from
 	// `before_agent_start` until `agent_end` reports what the loop spent.
@@ -1057,14 +1069,25 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		registerLane(lane) {
 			registerTurnLane(lane);
 		},
+		noteSubagentCapture(captured) {
+			capturedSubagentLimit = captured;
+		},
 	};
 }
 
-export default activate;
+/** Both the interactive extension and SDK use this complete attachment. */
+export default function attach(pi: ExtensionAPI, options: ActivateOptions = {}): LeanPiActivation {
+	const activation = activate(pi, options);
+	const captured = subagentsFactory(pi);
+	if (captured) activation.noteSubagentCapture?.(captured);
+	return activation;
+}
 
 export interface CreateLeanPiSessionOptions {
 	cwd?: string;
 	agentDir?: string;
+	/** Reuse a SettingsManager so upstream resource discovery matches the session's own loader. */
+	settingsManager?: SettingsManager;
 	config?: LeanPiConfig;
 	sessionManager?: SessionManager;
 	env?: CredentialEnv;
@@ -1101,11 +1124,26 @@ export interface LeanPiSession {
  */
 export async function createLeanPiSession(options: CreateLeanPiSessionOptions = {}): Promise<LeanPiSession> {
 	const cwd = options.cwd ?? process.cwd();
+	// Upstream's global settings use getAgentDir independently of this SDK path.
+	const agentDir = options.agentDir ?? getAgentDir();
+	// One manager for resource discovery and the session's own loader: Pi's
+	// canonical-path merge then dedupes LeanPi's selected upstream entry against
+	// any copy the same settings already expose.
+	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	const subagents = await prepareSubagents({ cwd, agentDir, settingsManager });
 	let activation: LeanPiActivation | undefined;
+	// The session's extension API, kept so the active-tool set can be built from
+	// the tools that actually registered (the package's parent tools included)
+	// rather than a blanket activation of names the package may not expose.
+	let extensionApi: ExtensionAPI | undefined;
 	const services = await createAgentSessionServices({
 		cwd,
-		agentDir: options.agentDir,
+		agentDir,
+		settingsManager,
 		resourceLoaderOptions: {
+			// Upstream is attached as a real resource path, so Pi loads it once and
+			// dedupes it by canonical path against the operator's own copy.
+			additionalExtensionPaths: [subagents.entry],
 			// LeanPi owns skill disclosure (PRD-005): the contract's skill slots are
 			// filled by `selectSkills`, so Pi's blanket `<available_skills>` block is
 			// duplicate surface — and it is not small. Measured on this machine it
@@ -1116,7 +1154,8 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 			skillsOverride: (base) => ({ skills: [], diagnostics: base.diagnostics }),
 			extensionFactories: [
 				(pi: ExtensionAPI) => {
-					activation = activate(pi, {
+					extensionApi = pi;
+					activation = attach(pi, {
 						cwd,
 						config: options.config,
 						env: options.env,
@@ -1161,14 +1200,19 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 		sessionManager,
 		model,
 		noTools: "builtin",
-		// The allowlist admits the LSP tools to the registry; the mode, applied per
-		// turn by `runTurn`, decides which of them are active. They start inactive
-		// (§15), exactly as the LSP tool tests boot their session.
-		tools: [...BASELINE_TOOL_NAMES, ...LSP_TOOL_NAMES, ARTIFACT_TOOL_NAME],
+		// The allowlist admits the LSP tools and the pi-subagents parent tools to
+		// the registry; the mode, applied per turn by `runTurn`, decides which LSP
+		// tools are active, and the subagents factory decides which parent tools are.
+		// They start inactive (§15), exactly as the LSP tool tests boot their session.
+		tools: [...BASELINE_TOOL_NAMES, ...LSP_TOOL_NAMES, ARTIFACT_TOOL_NAME, ...SUBAGENT_PARENT_TOOL_NAMES],
 	});
-	// The five baseline names plus the expand affordance: the LSP tools stay
-	// inactive until a turn's mode selects its group.
-	session.setActiveToolsByName([...BASELINE_TOOL_NAMES, ARTIFACT_TOOL_NAME]);
+	// The five baseline names plus the expand affordance, plus the pi-subagents
+	// parent tools that are actually registered: a package tool absent from this
+	// session is never activated, and the LSP tools stay inactive until a turn's
+	// mode selects its group.
+	const registered = new Set((extensionApi?.getAllTools() ?? []).map((tool) => tool.name));
+	const activeSubagents = SUBAGENT_ACTIVE_TOOL_NAMES.filter((name) => registered.has(name));
+	session.setActiveToolsByName([...BASELINE_TOOL_NAMES, ARTIFACT_TOOL_NAME, ...activeSubagents]);
 
 	// One §52 record per turn that compiled a contract: the seam runs the real
 	// `runTurn()`, hands the context to the activation's fan-in, and prices the
