@@ -20,7 +20,9 @@ if (major < 22 || (major === 22 && minor < 19)) {
 import { autoConfigure, jevClientFor, jevWarning, unusableBackendKeys, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
 import { runOnboarding, shouldOnboard } from "../dist/cli/onboarding.js";
 import { loadConfig } from "../dist/core/config.js";
-import { isInformational, launchEnv, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
+import { isInformational, launchEnv, launchPlan, parseLeanPiFlags, shouldCheckForUpdate } from "../dist/cli/launch.js";
+import { defaultCachePath, refreshLatest, updateNotice } from "../dist/cli/update-check.js";
+import { LEANPI_VERSION } from "../dist/core/package-info.js";
 import { ensureGitIgnored } from "../dist/runtime/ignore.js";
 import { ensureCompactUiDefaults, thinkingFoldEnabled } from "../dist/cli/ui-settings.js";
 import { prepareCliSubagents } from "../dist/subagents/index.js";
@@ -93,6 +95,19 @@ try {
 		const yellow = process.stderr.isTTY === true;
 		process.stderr.write(`${yellow ? "\u001b[33m" : ""}${warning.join("\n")}${yellow ? "\u001b[0m" : ""}\n`);
 		jevWarned = true;
+	}
+	// A newer LeanPi, from the cache an earlier launch wrote — never from the
+	// network, which this launch does not wait on. Pi's own banner is off in this
+	// layout (`launchEnv`), so without this line an installed `leanpi` would never
+	// tell its user a release exists. Yellow on a TTY like the banner above, and
+	// the request that fills the cache for the *next* launch is not awaited.
+	// `defaultCachePath()` is inside the gate: `homedir()` throws on a machine
+	// with no home, and a source checkout or a CI run must never reach that.
+	if (shouldCheckForUpdate({ argv: flags.rest, env: process.env, isTTY: process.stderr.isTTY === true })) {
+		const updateCachePath = defaultCachePath();
+		const notice = updateNotice({ current: LEANPI_VERSION, cachePath: updateCachePath });
+		if (notice !== undefined) process.stderr.write(`\u001b[33m${notice}\u001b[0m\n`);
+		void refreshLatest({ cachePath: updateCachePath });
 	}
 	// A named credential the shell does not hold *and* Pi cannot cover from its
 	// own store: the provider would answer `401 Invalid API key` and the user

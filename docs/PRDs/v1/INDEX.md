@@ -60,6 +60,7 @@ PRDs added after the original 26-PRD slice are not in the table above. Status re
 | [040](./done/PRD-040-production-tdd-audit.md) | Production TDD Audit & Hardening | DONE (verified 2026-09-22) | `done/` |
 | [041](./done/PRD-041-subagents-integration.md) | Pi Subagents Integration | DONE (verified 2026-09-22) | `done/` |
 | [042](./done/PRD-042-laya-control-plane-provider.md) | Laya Control-Plane Provider | DONE (verified 2026-09-22) | `done/` |
+| [043](./done/PRD-043-leanpi-update-notice.md) | LeanPi Update Notice | DONE (verified 2026-09-22) | `done/` |
 
 ## Build order
 

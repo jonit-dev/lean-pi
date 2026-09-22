@@ -349,6 +349,28 @@ export function launchEnv(flags: LeanPiFlags, jevWarned: boolean, base: NodeJS.P
 	};
 }
 
+export interface UpdateCheckEnv {
+	root?: string;
+	argv?: readonly string[];
+	env?: NodeJS.ProcessEnv;
+	isTTY?: boolean;
+}
+
+/**
+ * Whether this launch should look for a newer LeanPi (PRD-043).
+ *
+ * Only the installed package: a source checkout has Pi's own banner as the
+ * maintainer's "bump the pin" cue and nothing to install from npm. The rest are
+ * the ways a notice would be wrong or unwelcome — `--help`/`--version` print and
+ * exit, a redirected stderr is being parsed by something, CI logs are not a
+ * terminal, and `LEANPI_NO_UPDATE_CHECK` is the user's own answer. This decides
+ * both the line and the request, so a launch that skips the notice also makes
+ * no registry call.
+ */
+export function shouldCheckForUpdate({ root = packageRoot(), argv = [], env = process.env, isTTY = false }: UpdateCheckEnv = {}): boolean {
+	return !sourceCheckout(root) && !isInformational(argv) && isTTY && !env.CI && !env.LEANPI_NO_UPDATE_CHECK;
+}
+
 /**
  * The command `leanpi <argv>` runs.
  *

@@ -22,6 +22,12 @@ flowchart LR
 
 "Done" means verified by artifacts, not by the model saying so.
 
+![LeanPi running in a terminal](docs/screenshots/main.png)
+
+| a session: roles, routing, proof | diffs you can read |
+| --- | --- |
+| ![LeanPi session with role routing and verification](docs/screenshots/session.png) | ![LeanPi clear diff output](docs/screenshots/clear-diffs.png) |
+
 ## Quick start
 
 ```sh

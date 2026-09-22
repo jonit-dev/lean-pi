@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { compactUiAttached } from "../../src/core/tools.js";
-import { bundledExtensions, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, sourceCheckout, spinnerExtension } from "../../src/cli/launch.js";
+import { bundledExtensions, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension } from "../../src/cli/launch.js";
 import { tempDir } from "../helpers/fixtures.js";
 
 describe("the leanpi launcher", () => {
@@ -190,6 +190,21 @@ describe("the leanpi launcher", () => {
 		const checkout = launchEnv(flags, true, { PATH: "/bin" }, PACKAGE_ROOT);
 		expect(checkout).toEqual({ PATH: "/bin", LEANPI_NO_JEV: "1", LEANPI_JEV_WARNED: "1", LEANPI_SAFETY: "high" });
 		expect(sourceCheckout(PACKAGE_ROOT)).toBe(true);
+	});
+
+	it("checks for a newer LeanPi only in an installed package, on a TTY, off CI and not opted out", () => {
+		// The installed layout (no `.git`) is where Pi's own banner is off and a
+		// newer LeanPi is something the user can actually install.
+		const installed = tempDir("leanpi-installed-");
+		expect(shouldCheckForUpdate({ root: installed, argv: ["--print", "hi"], env: {}, isTTY: true })).toBe(true);
+		// A source checkout has Pi's own banner as the maintainer's cue instead.
+		expect(shouldCheckForUpdate({ root: PACKAGE_ROOT, argv: [], env: {}, isTTY: true })).toBe(false);
+		// `--help`/`--version` print and exit; a redirected stderr is being parsed;
+		// CI logs are not a terminal; the opt-out is the user's own answer.
+		expect(shouldCheckForUpdate({ root: installed, argv: ["--version"], env: {}, isTTY: true })).toBe(false);
+		expect(shouldCheckForUpdate({ root: installed, argv: [], env: {}, isTTY: false })).toBe(false);
+		expect(shouldCheckForUpdate({ root: installed, argv: [], env: { CI: "1" }, isTTY: true })).toBe(false);
+		expect(shouldCheckForUpdate({ root: installed, argv: [], env: { LEANPI_NO_UPDATE_CHECK: "1" }, isTTY: true })).toBe(false);
 	});
 
 	it("attaches the bundled extensions after LeanPi's own, and none that duplicate a LeanPi subsystem", () => {
