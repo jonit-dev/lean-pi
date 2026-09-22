@@ -53,7 +53,7 @@
 		"release": "npm publish",
 		"leanpi": "node scripts/vendor-thinking-fold.mjs 2> /dev/null && tsc -b tsconfig.json && node ./bin/leanpi.js",
 		"vendor:thinking-fold": "node scripts/vendor-thinking-fold.mjs",
-		"refresh:bin": "pnpm install && mkdir -p ~/.local/bin && ln -sf \"$PWD/scripts/leanpi-local.sh\" ~/.local/bin/leanpi && ~/.local/bin/leanpi --version",
+		"link:bin": "pnpm install && mkdir -p ~/.local/bin && ln -sf \"$PWD/scripts/leanpi-local.sh\" ~/.local/bin/leanpi && ~/.local/bin/leanpi --version",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"lint": "oxlint src tests",
@@ -61,7 +61,8 @@
 		"bench:skills": "vitest run --config vitest.bench.config.ts",
 		"bench:cost-gate": "node bench/cost/gate.mjs",
 		"bench": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json && node dist/bench/lane.js",
-		"sync:skills": "node scripts/sync-skills.mjs"
+		"sync:skills": "node scripts/sync-skills.mjs",
+		"record:demo": "bash scripts/record-demo.sh"
 	},
 	"dependencies": {
 		"@99percentpeople/pi-thinking-fold": "^0.1.11",

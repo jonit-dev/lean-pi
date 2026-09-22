@@ -12,4 +12,4 @@
 
 **Docs**: Use mermaid if relevant.
 
-**Local bin**: `pnpm refresh:bin` links `~/.local/bin/leanpi` to this checkout and prints its version; restart running sessions to pick up changes.
+**Local bin**: `pnpm link:bin` links `~/.local/bin/leanpi` to this checkout and checks it starts; restart running sessions to pick up changes.

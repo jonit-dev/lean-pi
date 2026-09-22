@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version-independent launcher, linked into ~/.local/bin by `pnpm refresh:bin`:
+# Version-independent launcher, linked into ~/.local/bin by `pnpm link:bin`:
 # `npm link` binds `leanpi` to one nvm version's bin directory, so the command
 # vanishes the moment a project selects another. This runs the checkout it lives
 # in with the first Node that meets the package's >=22.19 requirement.

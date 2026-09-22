@@ -79,11 +79,6 @@ externally verified completion (2026-09-21):
 
 **All runs, methodology and caveats → [`docs/benchmarks/`](docs/benchmarks/README.md)**
 
-## See it in action
-
-![A LeanPi session: roles, routing, verification and cost](docs/screenshots/session.png)
-![A background async subagent (claude-code, fresh context) still running while the session stays interactive](docs/screenshots/subagent.png)
-
 ## JEV key (optional)
 
 JEV is the control plane that makes routing decisions. Without a key LeanPi
