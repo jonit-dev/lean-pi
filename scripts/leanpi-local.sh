@@ -11,9 +11,10 @@ for candidate in "$(command -v node)" "$HOME"/.nvm/versions/node/v*/bin/node; do
 	export PATH
 	# The `leanpi` package script's steps, run directly: `pnpm --dir` costs ~1s
 	# and runs the script inside the checkout, so the session opened there
-	# instead of in the caller's directory.
+	# instead of in the caller's directory. `dev-build.mjs` transpiles stale
+	# files only; a full `tsc -b` type check here would add ~6.5s per launch.
 	node "$root/scripts/vendor-thinking-fold.mjs" 2>/dev/null &&
-		"$root/node_modules/.bin/tsc" -b "$root/tsconfig.json" &&
+		node "$root/scripts/dev-build.mjs" &&
 		exec node "$root/bin/leanpi.js" "$@"
 	exit
 done

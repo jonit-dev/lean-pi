@@ -444,6 +444,20 @@ export interface BannerStyle {
 	color?: boolean;
 	cwd?: string;
 	home?: string;
+	/** Pi's own agent dir, where its `settings.json` lives. A test seam. */
+	agentDir?: string;
+}
+
+/** Pi's own default model from `<agentDir>/settings.json`, or undefined when unset. */
+function piDefaultModel(agentDir: string): string | undefined {
+	const path = join(agentDir, "settings.json");
+	if (!existsSync(path)) return undefined;
+	try {
+		const settings = JSON.parse(readFileSync(path, "utf8")) as { defaultModel?: unknown };
+		return typeof settings.defaultModel === "string" ? settings.defaultModel : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -458,12 +472,19 @@ export interface BannerStyle {
 export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?: string, style: BannerStyle = {}): string {
 	const cwd = style.cwd ?? process.cwd();
 	const home = style.home ?? homedir();
+	const agentDir = style.agentDir || process.env.PI_CODING_AGENT_DIR || join(home, ".pi", "agent");
 	const on = style.color === true;
 	const paint = (code: string, text: string): string => (on ? `${code}${text}${OFF}` : text);
 	// The model that answers the prompt. The roles are the workers LeanPi spawns
 	// *inside* a turn, and naming them here described something the user is not
 	// about to talk to.
-	const running = sessionModel === undefined ? "pi's own model — `pi auth login` gives it one" : sessionModel.slice(sessionModel.indexOf("/") + 1);
+	const piDefault = sessionModel === undefined ? piDefaultModel(agentDir) : undefined;
+	const running =
+		sessionModel !== undefined
+			? sessionModel.slice(sessionModel.indexOf("/") + 1)
+			: piDefault === undefined
+				? "pi's own model — `pi auth login` gives it one"
+				: `${piDefault} (pi default)`;
 	const facts = [
 		// The one bright thing, and its version muted beside it.
 		`${paint(NAME, "leanpi")} ${paint(MUTED, `v${LEANPI_VERSION}`)}`,

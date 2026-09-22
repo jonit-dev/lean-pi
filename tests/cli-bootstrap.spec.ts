@@ -277,7 +277,23 @@ describe("what Pi's own loop can run", () => {
 		} as never;
 
 		expect(sessionModelFor(config)).toBeUndefined();
-		expect(startupBanner(config, { source: "env" }, undefined)).toContain("pi's own model");
+		// No agent dir means Pi has no settings file of its own to name a default.
+		const agentDir = mkdtempSync(join(tmpdir(), "leanpi-agent-"));
+		expect(startupBanner(config, { source: "env" }, undefined, { agentDir })).toContain("pi's own model");
+	});
+
+	it("names Pi's own default model when the config names no native role", () => {
+		// With no native role Pi runs its global default from its own settings
+		// file, so `pi auth login` is only the whole story when that file names
+		// nothing either.
+		const agentDir = mkdtempSync(join(tmpdir(), "leanpi-agent-"));
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "opencode-go", defaultModel: "deepseek-v4.1-flash" }));
+		const config = {
+			backends: { "opencode-go": { type: "native", baseUrl: "https://example.test" } },
+			models: { balanced: { backend: "opencode-go", model: VENDOR_DEFAULT } },
+		} as never;
+
+		expect(startupBanner(config, { source: "env" }, undefined, { agentDir })).toContain("deepseek-v4.1-flash (pi default)");
 	});
 
 	it("passes that model to Pi, and never overrides a model the user asked for", () => {
