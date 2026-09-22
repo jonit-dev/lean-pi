@@ -18,7 +18,7 @@ jobs:
 
       # pnpm 11 and Node 22 in one step, from `packageManager` in package.json.
       # The suite needs no credential, no subscription and no network.
-      - uses: pnpm/setup@v1
+      - uses: pnpm/setup@v2
         with:
           runtime: node@22
           cache: true
