@@ -115,7 +115,7 @@ function fallbackConfig(): LeanPiConfig {
 		backends: {},
 		models: {},
 		instructions: { ponytail: true },
-		jev: { apiKey: null, endpoint: "", model: "", mode: "disabled" },
+		jev: { apiKey: null, endpoint: "", model: "", mode: "disabled", usd_per_mtok: 0 },
 		capabilities: { skillRoots: [], mcpConfigPaths: [] },
 		skills: { maxLoaded: 3, state: {} },
 		bench: { skills: { maxUnnecessaryLoadRate: 0.04 } },
@@ -123,6 +123,7 @@ function fallbackConfig(): LeanPiConfig {
 		lsp: { mode: "auto", servers: {} },
 		mcp: { maxTools: 6, state: {} },
 		capability: { rankingFile: null, stalenessDays: 90, roles: {} },
+		recap: { enabled: true, role: "quick" },
 		verify: { commands: {} },
 		permissions: resolvedDefaults(),
 		limits: { executionAttempts: 2, semanticReviewRounds: 1 },
@@ -147,14 +148,24 @@ export async function compileTask(
 	const config = active?.config ?? fallbackConfig();
 	const state = createTaskState();
 
-	const gate = await runGate({ client, request, packet, config });
+	// Two dependency chains, not four sequential round-trips: risk needs the
+	// gate's `elevateReview` and capability needs the complexity band, but the
+	// chains need nothing from each other. Run them side by side — every prompt
+	// waits on this, so the turn starts a full JEV round-trip sooner.
+	const [[gate, risk], [complexity, capability]] = await Promise.all([
+		(async () => {
+			const gate = await runGate({ client, request, packet, config });
+			return [gate, await classifyReviewRisk({ client, request, packet, elevateReview: gate.elevateReview })] as const;
+		})(),
+		(async () => {
+			const complexity = await classifyExecution({ client, request, packet, config });
+			return [complexity, await deriveRequiredCapability({ client, request, packet, config, band: complexity.band })] as const;
+		})(),
+	]);
 	// PRD-016's session pins decide the gate outcome and the two classes; the
 	// classifier and the §14 matrix stay the source of every unpinned value.
 	const pins = routePins();
 	const decision = pinnedDecision(gate.decision, pins);
-	const complexity = await classifyExecution({ client, request, packet, config });
-	const capability = await deriveRequiredCapability({ client, request, packet, config, band: complexity.band });
-	const risk = await classifyReviewRisk({ client, request, packet, elevateReview: gate.elevateReview });
 
 	const defaults = matrixDefault(decision === "PRD_REQUIRED", complexity.complexity, risk.review_risk);
 	const { routing: classified, deviation } = applyDeviations(defaults, deviations);

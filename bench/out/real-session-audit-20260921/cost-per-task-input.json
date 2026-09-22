@@ -1,0 +1,58 @@
+{
+  "parity_verified": false,
+  "parity_evidence": "AVA worker startup crashes before task assertions; applied-setting parity was not fully verified. Fourth trial was interrupted. All are invalid benchmark trials, not agent task failures. Model costs use recorded api_usd; JEV uses separately logged input at the repository rate. Interrupted cost coverage is unknown.",
+  "attempts": [
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 1,
+      "status": "invalid",
+      "cost_usd": {
+        "model": 0.017636,
+        "classifier": 0.0013163220000000002,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 125.869
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 2,
+      "status": "invalid",
+      "cost_usd": {
+        "model": 0.004763,
+        "classifier": null,
+        "delegated": 0,
+        "other": null
+      },
+      "seconds": 58.343
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "stock-pi",
+      "trial": 1,
+      "status": "invalid",
+      "cost_usd": {
+        "model": 0.018641,
+        "classifier": 0,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 111.153
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "stock-pi",
+      "trial": 2,
+      "status": "invalid",
+      "cost_usd": {
+        "model": 0.016384,
+        "classifier": 0,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 88.517
+    }
+  ]
+}

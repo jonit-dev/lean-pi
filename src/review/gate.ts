@@ -69,6 +69,8 @@ registerReviewLevelSite();
 export interface ReviewGateInputs {
 	/** The candidate change's files; empty means nothing changed and nothing to review. */
 	changedFiles?: readonly string[];
+	/** True when the change set could not be derived, so `changedFiles` empty is unknown, not "no diff". */
+	changedFilesUnknown?: boolean;
 	diffBytes?: number;
 	executionComplexity?: ExecutionComplexity;
 	reviewRisk?: ReviewRisk;
@@ -150,9 +152,10 @@ function reviewFloor(inputs: ReviewGateInputs): { level: ReviewLevel; reason: st
  * the floors can produce without asking the model — and only when nothing changed.
  */
 export async function classifyReview(inputs: ReviewGateInputs): Promise<ReviewGateResult> {
-	if ((inputs.changedFiles?.length ?? 0) === 0) {
+	if (!inputs.changedFilesUnknown && (inputs.changedFiles?.length ?? 0) === 0) {
 		// Nothing changed: there is no diff for a reviewer to read, so this is the
-		// one short-circuit the model never gets to overturn.
+		// one short-circuit the model never gets to overturn. An unknown change set
+		// is not "nothing changed" and must not take this path.
 		return {
 			level: "NO_SEMANTIC_REVIEW",
 			source: "floor",

@@ -70,8 +70,11 @@ describe("PRD-002 Phase 2 — registry and decision log", () => {
 
 		const session = await bootSession({ cwd, agentDir });
 		const sites = session.jev.sites();
-		expect(sites).toHaveLength(1);
-		const site = sites[0]!;
+		// Every registered site is enumerable and carries a fallback — that is the
+		// invariant, not the count: LeanPi registers its own sites at activation
+		// alongside whatever a fixture adds.
+		expect(sites.every((entry) => typeof entry.fallback === "function")).toBe(true);
+		const site = sites.find((entry) => entry.id === "fixture.gate")!;
 		expect(site.id).toBe("fixture.gate");
 		expect(site.questions.map((question) => question.id)).toEqual(["gate", "confidence"]);
 		expect(site.returnType).toEqual(["Choice", "Noul"]);
@@ -92,7 +95,10 @@ describe("PRD-002 Phase 2 — registry and decision log", () => {
 			}),
 		).toThrowError(/fixture\.no-fallback/);
 		expect(() => registerSite({ ...site })).toThrowError(/already registered/);
-		expect(listSites()).toHaveLength(1);
+		// Neither refusal left anything behind: the rejected site is absent, and the
+		// duplicate did not add a second copy of the one that is there.
+		expect(listSites().map((entry) => entry.id)).not.toContain("fixture.no-fallback");
+		expect(listSites().filter((entry) => entry.id === "fixture.gate")).toHaveLength(1);
 
 		// An unregistered id issues no request.
 		await expect(session.jev.ask("fixture.absent", QUESTIONS, {})).rejects.toBeInstanceOf(UnknownSiteError);

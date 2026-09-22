@@ -9,7 +9,6 @@
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { assemble } from "../context/prompt.js";
 import { buildWorkingState, stubSources, type WorkingStateSources } from "../context/working-state.js";
-import { buildStaticPrefix } from "../core/instructions/prefix.js";
 import { resolveRole } from "../core/roles.js";
 import type { BackendRef, LeanPiConfig, ModelRole, SelectedSkill } from "../core/types.js";
 import type { ExecutionContract } from "../compiler/contract.js";

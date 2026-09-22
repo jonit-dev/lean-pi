@@ -15,6 +15,7 @@ import type { ArtifactStore } from "../context/artifacts.js";
 import type { EvidenceRecord } from "../verify/evidence.js";
 import type { SelectedSkill } from "../core/types.js";
 import { readVendoredPonytail } from "../core/instructions/prefix.js";
+import { porcelainPaths } from "../runtime/git.js";
 import type { AcceptanceCriterion, ActiveReviewLevel, ReviewPacket } from "./schema.js";
 
 /** Above this many bytes the full diff goes to the artifact store and the packet keeps a head. */
@@ -40,18 +41,6 @@ function git(cwd: string, args: string[]): string {
 		const stdout = (error as { stdout?: string | Buffer }).stdout;
 		return typeof stdout === "string" ? stdout : "";
 	}
-}
-
-/** Porcelain lines are `XY <path>`, with `R  old -> new` for renames and quoted odd paths. */
-function porcelainPaths(porcelain: string): string[] {
-	const paths: string[] = [];
-	for (const line of porcelain.split("\n")) {
-		if (line.trim().length === 0) continue;
-		const body = line.slice(3);
-		const target = body.includes(" -> ") ? body.split(" -> ").pop()! : body;
-		paths.push(target.startsWith('"') && target.endsWith('"') ? target.slice(1, -1) : target);
-	}
-	return paths;
 }
 
 /**

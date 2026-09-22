@@ -15,7 +15,18 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ARTIFACT_TOOL_NAME, LEANPI_VERSION, LSP_TOOL_NAMES, PACKAGE_ROOT, clearLanes, listLanes, registerLane, writeUserDefault } from "../src/index.js";
+import {
+	ARTIFACT_TOOL_NAME,
+	LEANPI_VERSION,
+	LSP_TOOL_NAMES,
+	PACKAGE_ROOT,
+	TODO_ADD_TOOL_NAME,
+	TODO_UPDATE_TOOL_NAME,
+	clearLanes,
+	listLanes,
+	registerLane,
+	writeUserDefault,
+} from "../src/index.js";
 import { boundedCommand, COMMAND_TIMEOUT_SECONDS_DEFAULT } from "../src/core/tools.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
@@ -98,17 +109,21 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 			expect(loaded.extensions).toHaveLength(1);
 			expect(loaded.extensions[0]!.resolvedPath).toBe(entry);
 			// Registered is not active: PRD-018's seven LSP tools are in the registry
-			// so a turn's mode can expose its group, and the session boots with the
+			// so a turn's mode can expose its group, and PRD-025's `todo_add` /
+			// `todo_update` pair is registered for the session while the list they
+			// write costs bytes only once it has items. The session boots with the
 			// five baseline names active (asserted through `activation.tools` above
-			// and by the AC-2 turn below).
+			// and by AC-2 below).
 			expect([...loaded.extensions[0]!.tools.keys()].sort()).toEqual(
-				["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME, ...LSP_TOOL_NAMES].sort(),
+				["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME, TODO_ADD_TOOL_NAME, TODO_UPDATE_TOOL_NAME, ...LSP_TOOL_NAMES].sort(),
 			);
 		} finally {
 			delete process.env.LEANPI_CWD;
 		}
 		await stub.close();
-	});
+		// This test runs `tsc` itself, which on a cold, loaded CI runner exceeds the
+		// 30s default; the budget is for the build, not for a hang.
+	}, 120_000);
 
 	it("AC-1: a second boot of one configuration supersedes the first boot's lanes", async () => {
 		// The bench boots a fresh session per task in one process. Appended rather

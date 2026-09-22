@@ -104,6 +104,24 @@ export interface JevConfig {
 	endpoint?: string;
 	model?: string;
 	mode?: JevMode;
+	/** USD per million JEV tokens; absent prices JEV at 0. */
+	usd_per_mtok?: number;
+}
+
+/**
+ * The top-level `cost:` block (PRD-015), carried through `loadConfig` so
+ * `resolveCostConfig` reads the declared policy rather than an empty object.
+ * Per-backend rates stay under `backends.<name>.cost`.
+ */
+export interface CostBlockConfig {
+	/** Per-model override, keyed by model id. */
+	models?: Record<string, Partial<{ input: number; cachedInput: number; cacheWrite: number; output: number }>>;
+	/** USD charged per call of a quota class (PRD-020 reads this same key). */
+	quota_shadow_usd?: Record<string, number>;
+	local_usd_per_gpu_sec?: number;
+	latency_usd_per_sec?: number;
+	/** Store location override; `.leanpi/telemetry.jsonl` when absent. */
+	telemetry_path?: string;
 }
 
 /** A resolved skill body handed to the executor request; PRD-005 fills the slot. */
@@ -165,6 +183,12 @@ export interface LspConfig {
 	servers?: Record<string, string>;
 }
 
+/** Turn recap (PRD-036): whether to generate one, and which role pays for it. */
+export interface RecapConfig {
+	enabled?: boolean;
+	role?: ModelRole;
+}
+
 /** Context engine budgets (PRD-014): artifact threshold, compaction trigger, state ceiling. */
 export interface ContextConfig {
 	artifact_threshold_bytes: number;
@@ -191,6 +215,10 @@ export interface LeanPiConfig {
 	lsp: LspConfig;
 	mcp: McpConfig;
 	capability: CapabilitySetting;
+	/** The declared `cost:` block; PRD-015 reads it through `resolveCostConfig`. */
+	cost?: CostBlockConfig;
+	/** Turn recap (PRD-036): the one extra model call per turn, and the role it runs on. */
+	recap: Required<RecapConfig>;
 	/** Verifier command overrides and timeout; the table in `verify/descriptors.ts` is the default. */
 	verify?: VerifyConfig;
 	/** Effective permission state: built-in defaults merged with user scope, then project scope (PRD-017). */

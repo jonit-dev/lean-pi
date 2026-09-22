@@ -2,8 +2,10 @@
  * PRD-012 Phase 2 / AC-2, AC-5, AC-6 — criterion status, the satisfaction
  * decision and reopen.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/commands/registry.js";
+import { buildWorkingState, stubSources } from "../../src/context/working-state.js";
 import { createJevClient } from "../../src/jev/client.js";
 import { getSite } from "../../src/jev/registry.js";
 import { registerPrdCommands } from "../../src/prd/commands.js";
@@ -14,7 +16,7 @@ import {
 	registerPrdCriterionSite,
 	type PrdManager,
 } from "../../src/prd/manager.js";
-import { criterionOf, readPrdState, type PrdState } from "../../src/prd/state.js";
+import { criterionOf, prdStateDir, prdStatePath, readPrdState, type PrdState } from "../../src/prd/state.js";
 import type { EvidenceRecord } from "../../src/verify/evidence.js";
 import { fixtureRepo } from "../helpers/fixtures.js";
 import { startStubJev } from "../helpers/stub-jev.js";
@@ -33,6 +35,21 @@ import {
 } from "./helpers.js";
 
 const HASH = HASH_AT_READ;
+
+/** A2: a truncated write leaves invalid JSON, and every prompt then reads it. */
+describe("A2 — a corrupt PRD store degrades instead of killing every prompt", () => {
+	it("readPrdState returns null and the working state still assembles", () => {
+		const { cwd } = fixtureRepo();
+		mkdirSync(prdStateDir(cwd), { recursive: true });
+		writeFileSync(prdStatePath(cwd), "{ not json");
+
+		expect(readPrdState(cwd)).toBeNull();
+		const state = buildWorkingState(
+			stubSources({ acceptance: () => readPrdState(cwd)?.criteria.map((criterion) => `${criterion.id}: ${criterion.text}`) ?? [] }),
+		);
+		expect(state.acceptance).toEqual([]);
+	});
+});
 
 interface Fixture {
 	cwd: string;

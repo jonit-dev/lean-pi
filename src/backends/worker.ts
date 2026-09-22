@@ -43,8 +43,14 @@ export interface WorkerTaskPacket {
 /** The single result shape both `runNative` and `runHarness` return. */
 export interface WorkerResult {
 	status: "ok" | "blocked";
-	/** Files from `packet.files` whose content actually changed. */
+	/** Paths the worktree reports changed during this run; never `packet.files`. */
 	changedFiles: string[];
+	/**
+	 * True when the worktree change set could not be derived (git unavailable), so
+	 * `changedFiles` is empty because it is unknown, not because nothing changed.
+	 * A gate must treat it conservatively rather than as "no diff".
+	 */
+	changedFilesUnknown?: boolean;
 	summary: string;
 	sessionId?: string;
 	raw?: unknown;

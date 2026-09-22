@@ -339,6 +339,7 @@ export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorker
 				: await runNative(backend, attemptPacket, {
 						cwd,
 						...(options.agentDir ? { agentDir: options.agentDir } : {}),
+						...(options.env ? { env: options.env } : {}),
 						...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
 					});
 		const facts = outcomeFacts(outcome);

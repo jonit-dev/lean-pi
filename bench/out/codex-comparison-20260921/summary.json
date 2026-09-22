@@ -1,0 +1,44 @@
+{
+  "parity_verified": false,
+  "arms": {
+    "codex": {
+      "total_trials": 1,
+      "valid_trials": 1,
+      "status_counts": {
+        "timeout": 0,
+        "failed": 1,
+        "invalid": 0,
+        "error": 0,
+        "passed": 0
+      },
+      "verified": 0,
+      "passrate": 0.0,
+      "known_spend_usd": 0.009612,
+      "cost_complete": true,
+      "cost_per_verified_completion": null,
+      "elapsed_seconds": 68.015
+    },
+    "leanpi": {
+      "total_trials": 1,
+      "valid_trials": 1,
+      "status_counts": {
+        "timeout": 0,
+        "failed": 0,
+        "invalid": 0,
+        "error": 0,
+        "passed": 1
+      },
+      "verified": 1,
+      "passrate": 1.0,
+      "known_spend_usd": 0.006977,
+      "cost_complete": true,
+      "cost_per_verified_completion": 0.006977,
+      "elapsed_seconds": 34.092
+    }
+  },
+  "comparison_eligible": false,
+  "reasons": [
+    "capability parity not verified",
+    "not every arm has a verified completion"
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "arm": "codex",
+  "trial": 2,
+  "task": "slugify-counter-duplicate-slug",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "session_uuid": "codex-7a2fb5f6-5b75-425c-a6bd-1c474d0f6432",
+  "started_at": "2026-09-22T02:10:17.934Z",
+  "ceiling_ms": 300000,
+  "start_hashes": {
+    "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+    "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+  },
+  "usage": {
+    "input_tokens": 574061,
+    "cached_input_tokens": 560000,
+    "output_tokens": 23547,
+    "reasoning_output_tokens": 19403
+  },
+  "usage_dialect": "subset",
+  "model_cost_usd": 0.01791735,
+  "classifier_cost_usd": 0,
+  "delegated_cost_usd": 0,
+  "other_cost_usd": 0,
+  "harness": {
+    "turns": 1,
+    "items": 41,
+    "tool_calls": 30,
+    "errors": [
+      "Model metadata for `deepseek-v4.1-flash` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
+    ],
+    "invalid_counts": false,
+    "delegation_suspected": false,
+    "exit": 0,
+    "signal": null,
+    "timed_out": false,
+    "spawn_error": null,
+    "wall_ms": 148546
+  },
+  "protected_files_unchanged": true,
+  "external_golden": {
+    "status": 1,
+    "passed": null,
+    "failed": 1,
+    "verified": false,
+    "tail": "32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[1mslugifyWithCounter() never returns the same slug twice\u001b[22m\n\n  \u001b[90mtest.js:292\u001b[39m\n\n   \u001b[90m291:\u001b[39m   t.is(slugify('BAZ 2', {lowercase: false}), 'BAZ-2');\n  \u001b[41m\u001b[1m 292:   t.is(slugify('baz'), 'baz-3');                      \u001b[22m\u001b[49m\n   \u001b[90m293:\u001b[39m });                                                   \n\n  Difference (\u001b[31m-\u001b[39m \u001b[31mactual\u001b[39m, \u001b[32m+\u001b[39m \u001b[32mexpected\u001b[39m):\n\n  \u001b[31m-\u001b[39m \u001b[34m'\u001b[39m\u001b[34mbaz-\u001b[39m\u001b[41m\u001b[30m2\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n  \u001b[32m+\u001b[39m \u001b[34m'\u001b[39m\u001b[34mbaz-\u001b[39m\u001b[42m\u001b[30m3\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n\n  \u001b[90m› file://test.js:292:4\u001b[39m\n\n  \u001b[90m─\u001b[39m\n\n  \u001b[31m1 test failed\u001b[39m\n"
+  },
+  "status": "failed",
+  "wall_ms": 148546,
+  "finished_at": "2026-09-22T02:12:46.868Z",
+  "end_index_sha256": "354f6c5421d53ec44842b048e8d5e42147907069b46800f4cf85c611c11b3b54"
+}

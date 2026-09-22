@@ -1,32 +1,36 @@
 /**
- * `/models` — the model inventory by role (PRD-016 Phase 2, FR-141).
+ * `/model` — the model inventory by role (PRD-016 Phase 2, FR-141).
  *
- * `/models` annotates the configured role bindings from PRD-024's bundled
+ * `/model` annotates the configured role bindings from PRD-024's bundled
  * ranking: the file ships with the harness, so there is no refresh, no fetch and
  * no cache to invalidate — freshness moves by a maintainer PR, and a model the
  * ranking does not list renders `coding_score: unavailable` rather than being
  * dropped from the listing.
  *
- * There is deliberately no `/model` here. Pi already ships an interactive model
- * selector under that name, and LeanPi's own switch is per *role*, which is what
- * `/route executor|reviewer <class>` already writes — a second spelling of it
- * would only shadow Pi's command with a weaker one.
+ * It shadows Pi's own selector on purpose (Pi resolves extension commands
+ * first). Pi's `/model` lists only what its registry carries, which on a machine
+ * whose models live behind the codex and claude CLIs is none of them; this one
+ * lists what the machine actually has and binds it to a role. The binding is
+ * written as a pin, so the capability index stops re-picking that role — the
+ * statusline says `auto` for exactly the roles nobody has pinned.
  */
-import { MODEL_ROLES, type BackendRef, type ModelRole } from "../core/types.js";
-import { capabilityRows, loadRanking, roleResolutionsOf, type CapabilityRow } from "../capability/index.js";
-import type { CommandRegistry, CommandResult } from "./registry.js";
+import { MODEL_ROLES, isModelRole, type BackendRef, type ModelRole } from "../core/types.js";
+import { writeRoleBinding } from "../core/config.js";
+import { candidateKey, discoverInventory, modelFactsLine, type DiscoveredModel } from "../cli/allocate.js";
+import { modelPicker } from "../cli/model-picker.js";
+import { capabilityRows, loadRanking, roleResolutionsOf, type CapabilityGap, type CapabilityRow } from "../capability/index.js";
+import { matchModel } from "../capability/match.js";
+import type { CommandContext, CommandRegistry, CommandResult } from "./registry.js";
 import { probeBackends, type CommandSurface } from "./surface.js";
 
 function rowFor(rows: readonly CapabilityRow[], ref: BackendRef): CapabilityRow | undefined {
-	const model = ref.model.toLowerCase();
-	return rows.find(
-		(row) =>
-			row.model_id.toLowerCase() === model ||
-			(row.backend_binding !== null && row.backend_binding.backend === ref.backend && row.backend_binding.model === ref.model),
+	return (
+		rows.find((row) => row.backend_binding !== null && row.backend_binding.backend === ref.backend && row.backend_binding.model === ref.model) ??
+		matchModel(rows, ref.model)
 	);
 }
 
-function renderModelRow(surface: CommandSurface, role: ModelRole, rows: readonly CapabilityRow[]): string {
+function renderModelRow(surface: CommandSurface, role: ModelRole, rows: readonly CapabilityRow[], gap?: CapabilityGap): string {
 	const configured = surface.config.models[role];
 	const override = surface.bindings.get(role);
 	const resolved = surface.bindingFor(role);
@@ -55,30 +59,102 @@ function renderModelRow(surface: CommandSurface, role: ModelRole, rows: readonly
 		!override && resolved.ref !== null && (resolved.ref.backend !== shown.backend || resolved.ref.model !== shown.model)
 			? `  resolved: ${resolved.ref.backend}/${resolved.ref.model}`
 			: "";
-	return `${role.padEnd(14)} ${`${shown.backend}/${shown.model}`.padEnd(28)} ${score}  ${price}  ${fills}  ${evidence}  ${availability}${session}${differs}`;
+	// The role floor is not met by the resolved model: named here rather than
+	// swallowed, so an unmeasured CLI model is visibly unmeasured.
+	const gapLine = gap ? `  capability_gap: ${gap.reason}` : "";
+	return `${role.padEnd(14)} ${`${shown.backend}/${shown.model}`.padEnd(28)} ${score}  ${price}  ${fills}  ${evidence}  ${availability}${session}${differs}${gapLine}`;
 }
 
 export async function renderModels(surface: CommandSurface): Promise<string> {
 	const ranking = loadRanking(surface.config);
-	const rows = capabilityRows(ranking, roleResolutionsOf(ranking, surface.config));
+	const resolutions = roleResolutionsOf(ranking, surface.config);
+	const rows = capabilityRows(ranking, resolutions);
+	const gaps = new Map(resolutions.map((selection) => [selection.role, selection.model_id === null ? undefined : selection.capability_gap]));
 	if (surface.probes.size === 0) await probeBackends(surface);
 
 	const lines = [
 		`ranking revision ${ranking.revision} — oldest record ${ranking.oldest_updated_at} (${ranking.age_days} days old${ranking.stale ? ", stale" : ""})`,
 		...MODEL_ROLES.filter((role) => surface.config.models[role] !== undefined || surface.bindings.has(role)).map((role) =>
-			renderModelRow(surface, role, rows),
+			renderModelRow(surface, role, rows, gaps.get(role)),
 		),
 	];
+	// The role rows above are what is bound; the inventory is what the machine
+	// could bind. Without it a user with three subscriptions sees only the one
+	// model their config happens to name and concludes nothing was detected.
+	const inventory = discoverInventory({ env: surface.env });
+	lines.push("", `discovered on this machine (\`/model use <role> <backend>:<model>\`):`);
+	lines.push(...inventory.map((model) => `  ${candidateKey(model).padEnd(42)} ${modelFactsLine(model.facts)}  (${model.source})`));
 	return lines.join("\n");
+}
+
+/** Persist one role binding and make it effective now: the writer `surface.bindings` never had. */
+function applyBinding(surface: CommandSurface, role: ModelRole, chosen: DiscoveredModel): CommandResult {
+	// Discovery names backends after the vendor, which is exactly how the registry
+	// infers the vendor when the entry does not spell one out.
+	const backend = chosen.vendor;
+	writeRoleBinding(surface.cwd, role, backend, chosen.model);
+	// The running session holds its own copy of the config, so the write has to
+	// land in both or the binding only takes effect on the next start.
+	surface.config.backends[backend] ??= { type: "external_harness" };
+	surface.config.models[role] = { backend, model: chosen.model };
+	// The pin too, or the capability index keeps re-picking this role for the rest
+	// of the session and the operator's choice only holds after a restart.
+	surface.config.capability.roles ??= {};
+	surface.config.capability.roles[role] = { ...surface.config.capability.roles[role], pin: chosen.model };
+	surface.bindings.set(role, { backend, model: chosen.model, type: chosen.facts.execution });
+	return { ok: true, text: `${role} → ${backend}/${chosen.model} (written to the config; ${modelFactsLine(chosen.facts)})` };
+}
+
+/** The two panes, when Pi has a UI to draw them in. */
+async function pickModel(surface: CommandSurface, custom: NonNullable<CommandContext["custom"]>): Promise<CommandResult> {
+	const inventory = discoverInventory({ env: surface.env });
+	if (inventory.length === 0) return { ok: false, text: "no vendor CLI found on this machine — `/doctor` says what is missing" };
+	// The roles a model already serves, so the listing shows what is bound
+	// without the reader holding the role rows in their head.
+	const bound = new Map<string, ModelRole[]>();
+	for (const role of MODEL_ROLES) {
+		const binding = surface.config.models[role];
+		if (binding === undefined) continue;
+		const key = `${binding.backend}:${binding.model}`;
+		bound.set(key, [...(bound.get(key) ?? []), role]);
+	}
+	// Not an overlay: a floating overlay is centred in the viewport, so on a fresh
+	// session the panes sat in a field of blank rows well below the prompt. Pi's
+	// own selectors render in the editor's place instead, and so does this one.
+	const pick = await custom(modelPicker(inventory, bound));
+	if (pick === undefined) return { ok: true, text: "no change" };
+	return applyBinding(surface, pick.role, pick.model);
+}
+
+/** `/model use <role> <backend>:<model>` — the same binding, typed rather than picked. */
+function bindRole(surface: CommandSurface, args: string): CommandResult {
+	const [role, key] = args.split(/\s+/);
+	if (role === undefined || key === undefined || !isModelRole(role)) {
+		return { ok: false, text: `usage: /model use <${MODEL_ROLES.join("|")}> <backend>:<model>` };
+	}
+	const inventory = discoverInventory({ env: surface.env });
+	const chosen = inventory.find((model) => candidateKey(model) === key);
+	if (chosen === undefined) {
+		return { ok: false, text: `no discovered model \`${key}\` — run /model for the inventory` };
+	}
+	if (chosen.facts.availability !== "ready") {
+		return { ok: false, text: `${key} is ${chosen.facts.availability}: ${chosen.facts.evidence}` };
+	}
+	return applyBinding(surface, role, chosen);
 }
 
 export function registerModelCommands(registry: CommandRegistry, surface: CommandSurface): void {
 	registry.register({
-		name: "models",
+		name: "model",
 		summary: "list configured models by role with availability, coding score and price",
-		usage: "/models",
-		run: async (args): Promise<CommandResult> => {
-			if (args.trim().length > 0) {
+		usage: "/model [use <role> <backend>:<model>]",
+		run: async (args, context): Promise<CommandResult> => {
+			const rest = args.trim();
+			if (rest.startsWith("use ")) return bindRole(surface, rest.slice(4).trim());
+			// The picker is the interactive answer and the listing the printable
+			// one; neither is a lesser copy of the other.
+			if (rest.length === 0 && context.custom) return pickModel(surface, context.custom);
+			if (rest.length > 0) {
 				return {
 					ok: false,
 					text: `unknown flag \`${args.trim()}\` — the ranking ships with the harness and is never fetched; freshness moves by a maintainer PR`,

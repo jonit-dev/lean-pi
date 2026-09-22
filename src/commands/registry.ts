@@ -13,10 +13,20 @@
  * registry added the summary/usage fields without editing callers.
  */
 
+import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { RecapHost } from "../recap/index.js";
+
 export interface CommandContext {
 	cwd: string;
 	/** Interactive prompt; absent in non-interactive modes. */
 	prompt?: (message: string) => Promise<string | undefined>;
+	/**
+	 * Pi's overlay opener, passed straight through: a command that wants a real
+	 * selector renders it with Pi's TUI and theme rather than printing a list and
+	 * asking the user to retype one of its rows. Absent outside interactive mode,
+	 * where the printed list is the whole answer.
+	 */
+	custom?: ExtensionUIContext["custom"];
 	notify?: (message: string) => void;
 	/**
 	 * Pi's live session facts, present only when the command came from Pi's TUI.
@@ -32,11 +42,23 @@ export interface CommandContext {
 		model?: string;
 		thinkingLevel?: string;
 	};
+	/**
+	 * The live Pi UI a command may draw through, present only when the command
+	 * came from Pi's TUI. `/recap` is the one command whose whole output is a
+	 * widget, so it needs the host the widget is set on, not just a notify.
+	 */
+	recapHost?: RecapHost;
 }
 
 export interface CommandResult {
 	ok: boolean;
 	text: string;
+	/**
+	 * A prompt the bridge should send as a user message once the command's echo
+	 * is shown. `/goal <text>` sets *and* starts: without this the session sat
+	 * idle after the echo and only moved when the user typed again.
+	 */
+	start?: string;
 }
 
 export type CommandHandler = (args: string, context: CommandContext) => Promise<CommandResult> | CommandResult;

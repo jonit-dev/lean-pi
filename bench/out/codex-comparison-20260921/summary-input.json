@@ -1,0 +1,32 @@
+{
+  "parity_verified": false,
+  "parity_evidence": "Request-level match only (offline 400 listener): both arms observed reasoning enabled at medium (Codex reasoning.effort=medium; LeanPI thinking.type=enabled, reasoning_effort=medium). API conversion equivalence is unverified and there is no upstream attestation.",
+  "attempts": [
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "codex",
+      "trial": 1,
+      "status": "failed",
+      "cost_usd": {
+        "model": 0.009612312,
+        "classifier": 0,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 68.015
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 1,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.005637,
+        "classifier": 0.001339884,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 34.092
+    }
+  ]
+}

@@ -11,7 +11,7 @@
  *   Pi action and in tests is a pointer.
  * - **`CommandSurface`** is the mutable session state the handlers share: the
  *   session-scoped role bindings `/model` writes, the last compiled contract
- *   `/route` renders, and the backend probe cache `/doctor` fills and `/models`
+ *   `/route` renders, and the backend probe cache `/doctor` fills and `/model`
  *   reads. Nothing here recomputes a value another module already owns.
  */
 import { connect } from "node:net";
@@ -74,7 +74,7 @@ export interface CommandSurface {
 	readonly env: NodeJS.ProcessEnv;
 	/** Role bindings `/model` overrode this session; absent means config wins. */
 	readonly bindings: Map<ModelRole, BackendRef>;
-	/** Backend probes, keyed by backend name; `/doctor` fills it, `/models` reads it. */
+	/** Backend probes, keyed by backend name; `/doctor` fills it, `/model` reads it. */
 	readonly probes: Map<string, ProbeResult>;
 	/** The contract of the current or next task, when a compile has happened. */
 	contract: ExecutionContract | undefined;
@@ -97,6 +97,8 @@ export interface CommandSurfaceDeps {
 	backends?: BackendRegistry;
 	cost?: CostConfig;
 	env?: NodeJS.ProcessEnv;
+	/** PRD-036's recap controller; read lazily, because it is created after this surface. */
+	recap?: () => import("../recap/index.js").RecapController | undefined;
 }
 
 export function createCommandSurface(deps: CommandSurfaceDeps): CommandSurface {
@@ -132,7 +134,7 @@ export function createCommandSurface(deps: CommandSurfaceDeps): CommandSurface {
 	return surface;
 }
 
-/** One probe verdict; `/doctor` rows and `/models` availability both read it. */
+/** One probe verdict; `/doctor` rows and `/model` availability both read it. */
 export interface ProbeResult {
 	status: "ok" | "degraded" | "unavailable";
 	reason: string;

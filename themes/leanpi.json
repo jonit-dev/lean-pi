@@ -2,20 +2,23 @@
 	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
 	"name": "leanpi",
 	"vars": {
-		"ink": "#101619",
-		"panel": "#182126",
-		"raised": "#233139",
-		"border": "#455761",
-		"text": "#E2E8E9",
-		"muted": "#A6B3B8",
-		"dim": "#8C9DA5",
-		"teal": "#70C9BE",
-		"blue": "#9EBBE0",
-		"green": "#9ACB93",
-		"amber": "#E5BC77",
-		"red": "#ED9690",
-		"selected": "#2D4249",
-		"failure": "#352429"
+		"ink": "#0B1215",
+		"panel": "#141E23",
+		"raised": "#1E2C33",
+		"border": "#374B55",
+		"text": "#EDF3F4",
+		"muted": "#A9BAC1",
+		"dim": "#7E9199",
+		"teal": "#3DE0C8",
+		"blue": "#7FA9FF",
+		"violet": "#C792EA",
+		"green": "#5FE08A",
+		"amber": "#FFB454",
+		"red": "#FF6B6B",
+		"selected": "#24404A",
+		"failure": "#3A1F24",
+		"yellow": "#FFD24A",
+		"orange": "#FF9B42"
 	},
 	"colors": {
 		"accent": "teal",
@@ -29,7 +32,6 @@
 		"dim": "dim",
 		"text": "text",
 		"thinkingText": "muted",
-
 		"selectedBg": "selected",
 		"scrollbarTrack": "raised",
 		"scrollbarThumb": "muted",
@@ -40,14 +42,12 @@
 		"customMessageBg": "panel",
 		"customMessageText": "text",
 		"customMessageLabel": "teal",
-
 		"toolPendingBg": "panel",
 		"toolSuccessBg": "panel",
 		"toolErrorBg": "failure",
 		"toolTitle": "text",
 		"toolOutput": "muted",
-
-		"mdHeading": "text",
+		"mdHeading": "teal",
 		"mdLink": "teal",
 		"mdLinkUrl": "dim",
 		"mdCode": "teal",
@@ -56,35 +56,31 @@
 		"mdQuote": "muted",
 		"mdQuoteBorder": "border",
 		"mdHr": "border",
-		"mdListBullet": "teal",
-
+		"mdListBullet": "amber",
 		"toolDiffAdded": "green",
 		"toolDiffRemoved": "red",
 		"toolDiffContext": "muted",
-
 		"syntaxComment": "dim",
-		"syntaxKeyword": "blue",
+		"syntaxKeyword": "violet",
 		"syntaxFunction": "amber",
 		"syntaxVariable": "text",
 		"syntaxString": "green",
-		"syntaxNumber": "amber",
+		"syntaxNumber": "blue",
 		"syntaxType": "teal",
 		"syntaxOperator": "muted",
 		"syntaxPunctuation": "muted",
-
 		"thinkingOff": "dim",
 		"thinkingMinimal": "muted",
-		"thinkingLow": "teal",
-		"thinkingMedium": "blue",
-		"thinkingHigh": "amber",
-		"thinkingXhigh": "#E8AA7F",
-		"thinkingMax": "#EC9C82",
-
+		"thinkingLow": "green",
+		"thinkingMedium": "yellow",
+		"thinkingHigh": "orange",
+		"thinkingXhigh": "red",
+		"thinkingMax": "#FF3B3B",
 		"bashMode": "blue"
 	},
 	"export": {
-		"pageBg": "#101619",
-		"cardBg": "#182126",
-		"infoBg": "#233139"
+		"pageBg": "#0B1215",
+		"cardBg": "#141E23",
+		"infoBg": "#1E2C33"
 	}
 }

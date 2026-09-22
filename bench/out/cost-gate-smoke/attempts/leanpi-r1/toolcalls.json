@@ -1,0 +1,89 @@
+{
+  "arm": "leanpi",
+  "calls": [
+    {
+      "name": "execute",
+      "input": "{\"command\":\"ls -la\"}"
+    },
+    {
+      "name": "search",
+      "input": "{\"pattern\":\"slugifyWithCounter\"}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\",\"offset\":110,\"limit\":45}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"test.js\",\"offset\":224,\"limit\":50}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat package.json; git log --oneline -5; git status\"}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\",\"limit\":110}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  const s = slugifyWithCounter();\\n  console.log('foo bar ->', s('foo ba"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && npx ava test.js 2>&1 | tail -40\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  const inputs = ['foo','foo bar','foo 1','foo-1','foo-2','foo 2','_foo'"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  const inputs = [];\\n  for (const base of ['foo','bar','a','x','foo bar"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"readme.md\",\"offset\":245,\"limit\":80}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && ls node_modules/@sindresorhus/ 2>/dev/null; find node_modules -maxdepth 3 -name 'index.js' -path '*slugify*' 2>/dev/null | head\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && find .leanpi -type f | head -50 && echo '---' && cat .leanpi/* 2>/dev/null | head -100\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && git tag | tail; echo '---'; git log --oneline --all | head -20\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && git log -p --all -S'numberless' -- index.js | head -120\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && git show 6d97501\"}"
+    },
+    {
+      "name": "edit",
+      "input": "{\"path\":\"index.js\",\"edits\":[{\"oldText\":\"\\tconst occurrences = new Map();\\n\\n\\tconst countable = (string, options) => {\",\"newText\":\"\\tconst occurrences = new Map();\\n\\tconst returned = new Set();\\n\\n\\tconst countable = (string, options) => {"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && npx ava test.js 2>&1 | tail -6\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && node --input-type=module -e \\\"\\nimport assert from 'node:assert/strict';\\nimport {slugifyWithCounter} from './index.js';\\nlet slugify = slu"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && npx xo 2>&1 | tail -20; echo \\\"exit=$?\\\"\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/leanpi-r1/workspace && git diff --stat && git diff index.js\"}"
+    }
+  ]
+}

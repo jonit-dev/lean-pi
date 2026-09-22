@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { BackendRegistry, runHarness, runWorkerTurn } from "../../src/backends/index.js";
 import { loadConfig, createLeanPiSession } from "../../src/index.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { fixtureRepo, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
+import { fixtureRepo, gitInit, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
 import { installStubCli, RESULT_SCHEMA, setStubScript, type StubCli } from "./helpers.js";
 
@@ -53,6 +53,7 @@ describe("PRD-008 Phase 3 — external harness workers", () => {
 	it("AC-4: Claude runs non-interactively with a restricted tool set, a schema, and resumes its session", async () => {
 		const cli = installStubCli();
 		const { cwd } = fixtureRepo();
+		gitInit(cwd);
 		writeConfig(cwd, configFor(cli, "claude"));
 		const registry = new BackendRegistry(loadConfig(cwd));
 
@@ -116,6 +117,7 @@ describe("PRD-008 Phase 3 — external harness workers", () => {
 	it("AC-5: Codex runs with an explicit sandbox and output schema, and a schema violation is a worker failure", async () => {
 		const cli = installStubCli();
 		const { cwd } = fixtureRepo();
+		gitInit(cwd);
 		writeConfig(cwd, configFor(cli, "codex"));
 		const registry = new BackendRegistry(loadConfig(cwd));
 		const packet = {
@@ -162,6 +164,7 @@ describe("PRD-008 Phase 3 — external harness workers", () => {
 	it("AC-6: OpenCode runs with the configured model and agent, and continues its session", async () => {
 		const cli = installStubCli();
 		const { cwd } = fixtureRepo();
+		gitInit(cwd);
 		writeConfig(cwd, configFor(cli, "opencode"));
 		const registry = new BackendRegistry(loadConfig(cwd));
 		const packet = {

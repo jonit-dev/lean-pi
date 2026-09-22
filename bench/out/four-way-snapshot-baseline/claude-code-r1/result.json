@@ -1,0 +1,53 @@
+{
+  "arm": "claude-code",
+  "trial": 1,
+  "task": "slugify-counter-duplicate-slug",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "session_uuid": "claude-code-969f52f9-3cca-4245-9111-862fec034039",
+  "started_at": "2026-09-22T02:04:46.021Z",
+  "ceiling_ms": 300000,
+  "start_hashes": {
+    "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+    "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+  },
+  "usage": {
+    "input_tokens": 32733,
+    "cache_read_input_tokens": 616576,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 13623,
+    "reasoning_output_tokens": 0
+  },
+  "usage_dialect": "disjoint",
+  "model_cost_usd": 0.014933477999999998,
+  "classifier_cost_usd": 0,
+  "delegated_cost_usd": 0,
+  "other_cost_usd": 0,
+  "harness": {
+    "turns": 20,
+    "items": null,
+    "tool_calls": null,
+    "errors": [],
+    "invalid_counts": false,
+    "delegation_suspected": false,
+    "reported_cost_usd": 0.8125280000000001,
+    "terminal_reason": "completed",
+    "exit": 0,
+    "signal": null,
+    "timed_out": false,
+    "spawn_error": null,
+    "wall_ms": 96090
+  },
+  "protected_files_unchanged": true,
+  "external_golden": {
+    "status": 0,
+    "passed": 25,
+    "failed": null,
+    "verified": true,
+    "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+  },
+  "status": "passed",
+  "wall_ms": 96090,
+  "finished_at": "2026-09-22T02:06:22.486Z",
+  "end_index_sha256": "ad8cf9fdf77fc0c1c2d6a3791e9075d2db5a56d1f1b63581ee158d45ec6eef56"
+}

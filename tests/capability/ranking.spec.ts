@@ -15,6 +15,7 @@ import {
 	capabilityRows,
 	EVIDENCE_VALUES,
 	loadRanking,
+	matchModel,
 	parseRankingFile,
 	roleResolutionsOf,
 	selectCheapestClearing,
@@ -61,6 +62,40 @@ describe("PRD-024 Phase 1 — the shipped ranking", () => {
 		expect(ranking.path).toBe(BUNDLED_RANKING_PATH);
 		expect(ranking.revision).toBe(file.revision);
 		expect(ranking.models.map((model) => model.model_id)).toEqual(ids);
+	});
+
+	it("AC-4: the scraped ranking carries the models the vendor CLIs report, matched by their local spellings", () => {
+		const file = parseRankingFile(JSON.parse(readFileSync(BUNDLED_RANKING_PATH, "utf8")), BUNDLED_RANKING_PATH);
+
+		// The ranking is the leaderboard's, so its ids are the leaderboard's. What
+		// the machine reports is the vendor CLI's spelling of the same model, and
+		// the join is `matchModel`'s, not an alias hand-written per vendor.
+		const local = ["opus[1m]", "opus", "sonnet", "haiku", "gpt-6-astra", "gpt-5.6-sol", "opencode-go/deepseek-v4.1-flash", "muse-spark-1.3-contributor"];
+		for (const id of local) {
+			const matched = matchModel(file.models, id);
+			expect(matched, `no ranking record for ${id}`).toBeDefined();
+			// A model that ranks carries a real score and price — the whole point of
+			// scraping is that these stopped being null.
+			expect(matched!.coding_score).toBeGreaterThan(0);
+			expect(matched!.coding_score).toBeLessThanOrEqual(100);
+		}
+
+		// A moving vendor tier alias resolves to one generation's record, and the
+		// 1M-context spelling of it resolves to the same one.
+		expect(matchModel(file.models, "opus")?.model_id).toBe("claude-opus-5");
+		expect(matchModel(file.models, "opus[1m]")?.model_id).toBe("claude-opus-5");
+		expect(matchModel(file.models, "sonnet")?.model_id).toBe("claude-sonnet-5");
+		// The tier resolves to the best-ranked record of that family, not to a
+		// generation named in code: the leaderboard carries no Haiku 5 at all.
+		expect(matchModel(file.models, "haiku")?.model_id).toMatch(/haiku/);
+		// The provider prefix is the backend's business, not the model's identity.
+		expect(matchModel(file.models, "opencode-go/deepseek-v4.1-flash")?.model_id).toBe("deepseek-v4-1-flash");
+		// A model nothing ranks stays unmatched rather than landing on a neighbour.
+		expect(matchModel(file.models, "not-a-ranked-model")).toBeUndefined();
+
+		// No record's alias is another record's id: a spelling names one model.
+		const ids = new Set(file.models.map((model) => model.model_id));
+		for (const model of file.models) for (const alias of model.aliases) expect(ids.has(alias)).toBe(false);
 	});
 
 	it("AC-2: a validation failure names the record and the field", () => {

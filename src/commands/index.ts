@@ -6,18 +6,23 @@
  * Nothing else stands up a second dispatcher, which is why `/help` is complete
  * without knowing who registered what.
  *
- * Commands Pi already ships interactively (`/model`, `/new`, `/resume`,
- * `/tree`) are deliberately absent: bridged into Pi's slash-command surface
- * they would shadow Pi's own with weaker re-implementations. LeanPi's
+ * Commands Pi already ships interactively (`/new`, `/resume`, `/tree`) are
+ * deliberately absent: bridged into Pi's slash-command surface they would
+ * shadow Pi's own with weaker re-implementations. `/model` is the one
+ * exception, and shadowing is the point: Pi's lists only its own registry,
+ * LeanPi's lists the vendor CLIs the machine can actually run. LeanPi's
  * deterministic reduction survives under its own name, `/compact-refs`: it
  * rewrites repeated blocks to `artifact://` references and spends no tokens,
- * where Pi's `/compact` asks a model for a summary.
+ * where Pi's `/compact` asks a model for a summary. `/clear`, an alias for
+ * `/new`, is absent for the same reason and registered straight onto Pi by
+ * `registerClearAlias` (`src/index.ts`), not through this registry.
  */
 import { registerConfigCommand } from "./config.js";
 import { registerContextCommands } from "./context.js";
 import { registerDoctorCommand } from "./doctor.js";
 import { registerHelpCommand } from "./help.js";
 import { registerModelCommands } from "./model.js";
+import { registerRecapCommand } from "./recap.js";
 import type { CommandRegistry } from "./registry.js";
 import { registerRouteCommand } from "./route.js";
 import { registerStatusCommand } from "./status.js";
@@ -36,7 +41,7 @@ export { renderRoute, routeLines, jevLine } from "./route.js";
 export { contextReport, renderContextReport } from "./context.js";
 
 /** The commands PRD-016 owns, in the order `/help` lists them. */
-export const OWNED_COMMANDS = ["help", "status", "models", "route", "context", "compact-refs", "config", "doctor"] as const;
+export const OWNED_COMMANDS = ["help", "status", "model", "route", "context", "compact-refs", "config", "doctor", "recap"] as const;
 
 /**
  * The commands the other PRDs own and `activate()` registers: PRD-025's `/todo`,
@@ -62,5 +67,6 @@ export function registerCommandSurface(registry: CommandRegistry, deps: CommandS
 	registerContextCommands(registry, surface);
 	registerConfigCommand(registry, surface);
 	registerDoctorCommand(registry, surface);
+	registerRecapCommand(registry, deps.recap ? { recap: deps.recap } : {});
 	return surface;
 }

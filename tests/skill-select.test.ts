@@ -109,7 +109,11 @@ afterEach(async () => {
 });
 
 describe("PRD-005 Phase 2 — skill disclosure", () => {
-	it("AC-4: the assembled request carries exactly the selected bodies and nothing else", async () => {
+	// The same machine dependence as the registry spec: on a runner whose `$HOME`
+	// carries no installed skill library the disclosure is empty, and the
+	// assembled request is not the one this asserts on.
+	const realInstall = process.env.LEANPI_REAL_SKILLS === "1" ? it : it.skip;
+	realInstall("AC-4: the assembled request carries exactly the selected bodies and nothing else", async () => {
 		const { records, cwd } = corpus();
 		const active = await harness([skillResponder(["debugging"])]);
 		cleanups.push(active.close);
@@ -265,9 +269,10 @@ describe("PRD-005 Phase 2 — skill disclosure", () => {
 		});
 		expect(lexical.decision.fallbackUsed).toBe(true);
 		expect(lexical.decision.loaded).toContain("unrelated-skill");
-		// Two JEV requests for the enabled run (relevance, then fit) and none added
-		// by the disabled run.
-		expect(active.stub.requests).toHaveLength(2);
+		// Three JEV requests for the enabled run (the `any_skill` gate, then
+		// relevance, then fit) and none added by the disabled run. The gate is its
+		// own request so a "no" costs one question instead of the whole catalog.
+		expect(active.stub.requests).toHaveLength(3);
 		// The JEV answer, not the heuristic, decided the set.
 		expect(lexical.decision.loaded).not.toEqual(jevSelected.decision.loaded);
 

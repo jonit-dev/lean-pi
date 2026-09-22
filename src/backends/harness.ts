@@ -16,14 +16,9 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { changeSnapshot, changedPathsSince } from "../runtime/git.js";
 import type { RegisteredBackend } from "./registry.js";
-import {
-	changedFilesSince,
-	parseMaybeJson,
-	snapshotFiles,
-	type WorkerOutcome,
-	type WorkerTaskPacket,
-} from "./worker.js";
+import { parseMaybeJson, type WorkerOutcome, type WorkerTaskPacket } from "./worker.js";
 
 export const HARNESS_VENDORS = ["claude", "codex", "opencode"] as const;
 
@@ -417,8 +412,7 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 		packet = rest;
 	}
 	const spawnImpl = deps.spawn ?? spawnProcess;
-	const files = packet.files ?? [];
-	const before = snapshotFiles(deps.cwd, files);
+	const before = changeSnapshot(deps.cwd);
 	const prompt = packet.prompt ?? packet.objective;
 	const schema = packet.outputSchema;
 	const schemaJson = schema ? JSON.stringify(schema) : undefined;
@@ -517,10 +511,11 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 			}
 		}
 
-		const changed = changedFilesSince(before, deps.cwd, files);
+		const changed = before === null ? null : changedPathsSince(before, deps.cwd);
 		return {
 			status: "ok",
-			changedFiles: changed,
+			changedFiles: changed ?? [],
+			...(changed === null ? { changedFilesUnknown: true } : {}),
 			summary: envelope.summary.length > 0 ? envelope.summary : `${descriptor.vendor} completed without a summary`,
 			...(envelope.sessionId ? { sessionId: envelope.sessionId } : {}),
 			raw: { vendor: descriptor.vendor, argv: args, structured: envelope.structured },

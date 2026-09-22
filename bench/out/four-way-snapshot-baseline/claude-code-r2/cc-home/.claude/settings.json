@@ -1,0 +1,7 @@
+{
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "includeCoAuthoredBy": false,
+  "skipDangerousModePermissionPrompt": true
+}

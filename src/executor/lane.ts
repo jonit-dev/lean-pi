@@ -381,7 +381,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 				// B4: the verifier can only widen the regression scope when it is told
 				// what the diff touched; without it `regressionScopeRule(undefined)`
 				// answers `TARGETED_SUFFICIENT` by construction.
-				diff: { files: [...outcome.result.changedFiles] },
+				diff: { files: [...outcome.result.changedFiles], ...(outcome.result.changedFilesUnknown ? { unknown: true } : {}) },
 				...(deps.verifyCommands ? { commands: deps.verifyCommands } : {}),
 				...(deps.exec ? { exec: deps.exec } : {}),
 			});
@@ -393,6 +393,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 				const ranBackend = outcome.backend ? deps.registry.byName(outcome.backend) : undefined;
 				const reviewOutcome = await runReview(contract, deps, {
 					changedFiles: outcome.result.changedFiles,
+					changedFilesUnknown: outcome.result.changedFilesUnknown === true,
 					evidence: result.records,
 					failedAttempts: retryHistory.length,
 					// F4: the identity that actually ran, so the reviewer lane can prefer
@@ -594,6 +595,8 @@ export function strategyFor(category: FailureCategory): string {
 /** The change a review reads, plus the identity that ran it when the pool knows it. */
 interface ReviewChange {
 	changedFiles: readonly string[];
+	/** The change set could not be derived; the gate must not read it as "no diff". */
+	changedFilesUnknown?: boolean;
 	evidence: readonly EvidenceRecord[];
 	failedAttempts: number;
 	executor?: { backend: string; model: string | null };
@@ -607,6 +610,7 @@ async function runReview(contract: ExecutionContract, deps: ExecutorDeps, change
 	// deterministic floor protects.
 	const gate = await classifyReview({
 		changedFiles: change.changedFiles,
+		...(change.changedFilesUnknown ? { changedFilesUnknown: true } : {}),
 		executionComplexity: contract.task.execution_complexity,
 		reviewRisk: contract.task.review_risk,
 		reviewerClass: contract.routing.reviewer_class,
@@ -637,7 +641,9 @@ async function runReviewAt(
 		objective: contract.task.objective,
 		acceptanceCriteria: contract.task.acceptance_criteria,
 		cwd: deps.cwd,
-		changedFiles: change.changedFiles,
+		// An unknown set is omitted so the packet falls back to git's own listing
+		// instead of presenting an empty `changed_files` beside a real diff.
+		changedFiles: change.changedFilesUnknown ? undefined : change.changedFiles,
 		evidence: change.evidence,
 		executorSummary: change.summary ?? "the executor reports the change is complete and deterministically verified",
 		...(deps.artifacts ? { artifacts: deps.artifacts } : {}),

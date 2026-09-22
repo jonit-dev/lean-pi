@@ -1,24 +1,21 @@
 /**
- * Phase 4 / AC-4, AC-5, AC-6 — the bounded prompt block, the executor tool and
- * the `todo.needed` site.
+ * Phase 4 / AC-4, AC-6 — the bounded prompt block and the executor tool.
  *
  * The prompt comes from PRD-014's real `assemble()`; the block is composed into
  * its VOLATILE layer by `withTodo()`, which is the one line the assembler needs
- * to emit it. The JEV-off cases run a real client against a disabled config, so
- * the decision-log row this spec asserts is the one the client actually wrote.
+ * to emit it. The tool cases drive the registered `todo_add` definition, which
+ * is the surface the executor actually calls.
  */
 import { describe, expect, it } from "vitest";
+import { todoWidget } from "../../src/cli/todo-widget.js";
 import { createCommandRegistry, type CommandContext } from "../../src/commands/registry.js";
 import { assemble, type AssembledPrompt } from "../../src/context/prompt.js";
 import type { WorkingState } from "../../src/context/working-state.js";
-import { loadConfig } from "../../src/core/config.js";
 import type { LeanPiConfig } from "../../src/core/types.js";
-import { createJevClient } from "../../src/jev/client.js";
-import { readDecisions } from "../../src/jev/log.js";
 import { registerTodoCommands } from "../../src/todo/commands.js";
-import { decideTodoNeeded, TODO_NEEDED_SITE_ID } from "../../src/todo/goal.js";
-import { admitTodoAdd, invokeTodoAdd, renderTodo, TODO_ADD_TOOL, todoPromptBudgetBytes, withTodo } from "../../src/todo/render.js";
-import { createTodoList, type TodoCarrier, type TodoItem, type TodoStatus } from "../../src/todo/state.js";
+import { invokeTodoAdd, renderTodo, TODO_ADD_TOOL, todoPromptBudgetBytes, withTodo } from "../../src/todo/render.js";
+import { createTodoList, itemsOf, type TodoCarrier, type TodoItem, type TodoStatus } from "../../src/todo/state.js";
+import { todoToolDefinition, todoUpdateToolDefinition } from "../../src/todo/tool.js";
 import { tempDir } from "../helpers/fixtures.js";
 
 const PROMPT_CONFIG: Pick<LeanPiConfig, "instructions"> = { instructions: { ponytail: false } };
@@ -46,10 +43,6 @@ function workingStateWith(todo: TodoItem[]): WorkingState & TodoCarrier {
 function assembled(todo: TodoItem[], budget?: number): AssembledPrompt {
 	const workingState = workingStateWith(todo);
 	return withTodo(assemble({ config: PROMPT_CONFIG, workingState }), todo, budget);
-}
-
-function jevDisabledConfig(cwd: string): LeanPiConfig {
-	return loadConfig(cwd, { models: {}, jev: { apiKey: null, endpoint: "", model: "jev-latest", mode: "disabled" } });
 }
 
 describe("the bounded prompt block (AC-4)", () => {
@@ -86,62 +79,8 @@ describe("the bounded prompt block (AC-4)", () => {
 	});
 });
 
-describe("the todo.needed site and JEV-off operation (AC-5)", () => {
-	it("forms a list for a MEDIUM task through the fallback and logs fallback_used", async () => {
-		const cwd = tempDir("leanpi-todo-jev-");
-		const client = createJevClient({ config: jevDisabledConfig(cwd), cwd });
-
-		const decision = await decideTodoNeeded({ request: "refactor the cache lane", complexity: "MEDIUM", prdActive: false }, client);
-		expect(decision.needed).toBe(true);
-		expect(decision.fallbackUsed).toBe(true);
-		expect(readDecisions(cwd).find((row) => row.siteId === TODO_NEEDED_SITE_ID)?.fallbackUsed).toBe(true);
-		expect(admitTodoAdd({ request: "refactor the cache lane", complexity: "MEDIUM", prdActive: false }).admitted).toBe(true);
-
-		// The list that formed still drives the boundary to AC-3's outcomes.
-		const state: TodoCarrier = {};
-		const list = createTodoList(state);
-		list.add("first step");
-		list.add("second step");
-		expect(list.remainingWork().actionable.map((item) => item.id)).toEqual(["a", "b"]);
-		await list.complete("a");
-		await list.complete("b");
-		expect(list.remainingWork()).toEqual({ actionable: [], blocked: [] });
-		const blockedState: TodoCarrier = {};
-		const blockedList = createTodoList(blockedState);
-		blockedList.add("third step");
-		blockedList.block("a", "waiting on review");
-		expect(blockedList.remainingWork().blocked.map((item) => item.blockedReason)).toEqual(["waiting on review"]);
-	});
-
-	it("forms no list for a LOW task with no PRD, and admits no tool", async () => {
-		const cwd = tempDir("leanpi-todo-jev-low-");
-		const client = createJevClient({ config: jevDisabledConfig(cwd), cwd });
-
-		const decision = await decideTodoNeeded({ request: "fix the header typo", complexity: "LOW", prdActive: false }, client);
-		expect(decision.needed).toBe(false);
-		expect(decision.fallbackUsed).toBe(true);
-
-		const admission = admitTodoAdd({ request: "fix the header typo", complexity: "LOW", prdActive: false });
-		expect(admission.admitted).toBe(false);
-		expect(admission.tools).toEqual([]);
-		expect(admission.refusal?.message).toContain("todo_add");
-
-		const state: TodoCarrier = {};
-		const list = createTodoList(state);
-		const call = invokeTodoAdd({ admission, list, text: "a step the user never asked for" });
-		expect(call.ok).toBe(false);
-		expect(state.todo).toEqual([]);
-
-		const prompt = assembled([]);
-		expect(prompt.text).not.toContain("todo (");
-	});
-});
-
 describe("the executor's todo_add tool (AC-6)", () => {
-	it("appends through an admitted call and the item reaches /todo and the prompt", async () => {
-		const admission = admitTodoAdd({ request: "port the cache lane in three steps", complexity: "HIGH", prdActive: false });
-		expect(admission.admitted).toBe(true);
-		expect(admission.tools.map((tool) => tool.name)).toEqual(["todo_add"]);
+	it("appends whatever the executor calls it with, and the item reaches /todo and the prompt", async () => {
 		expect(TODO_ADD_TOOL.parameters).toMatchObject({ required: ["text"] });
 
 		const cwd = tempDir("leanpi-todo-tool-");
@@ -149,23 +88,50 @@ describe("the executor's todo_add tool (AC-6)", () => {
 		const registry = createCommandRegistry();
 		registerTodoCommands(registry, { cwd, state });
 
-		const added = invokeTodoAdd({ admission, list: createTodoList(state), text: "port the cache lane" });
-		expect(added.ok).toBe(true);
+		// The tool the executor calls, with no per-turn decision to consult: a
+		// HIGH-complexity turn and a LOW one are admitted identically.
+		const tool = todoToolDefinition({ state });
+		const added = await tool.execute("call-1", { text: "port the cache lane", phase: "cache" }, undefined, undefined, undefined as never);
+		expect(added.isError).toBeFalsy();
+
 		const context: CommandContext = { cwd };
 		expect((await registry.dispatch("/todo", context)).text).toContain("port the cache lane");
 		expect(assembled(state.todo!).text).toContain("port the cache lane");
+		expect(state.todo).toHaveLength(1);
 	});
 
-	it("refuses an unadmitted call instead of inventing a list", () => {
-		const admission = admitTodoAdd({ request: "rename one symbol", complexity: "LOW", prdActive: false });
+	it("refuses an empty step instead of appending a blank item", () => {
 		const state: TodoCarrier = {};
-		const list = createTodoList(state);
-
-		const refused = invokeTodoAdd({ admission, list, text: "rename the symbol" });
+		const refused = invokeTodoAdd({ list: createTodoList(state), text: "   " });
 		expect(refused.ok).toBe(false);
-		expect(refused.text).toContain("not admitted");
-		expect(admission.tools).toEqual([]);
 		expect(state.todo).toEqual([]);
-		expect(admission.refusal?.code).toBe("not_warranted");
+	});
+});
+
+/**
+ * The gap this closes: `todo_add` was the executor's only handle on the list, so
+ * a step it added could only ever be closed by the user typing `/todo done`. The
+ * widget then showed a list that never moved, and PRD-013's boundary — which
+ * reads `remainingWork()` — could never drain it.
+ */
+describe("the executor's todo_update tool", () => {
+	it("closes a step the executor added, so the list and the widget show it finished", async () => {
+		const state: TodoCarrier = {};
+		await todoToolDefinition({ state }).execute("call-1", { text: "port the cache lane" }, undefined, undefined, undefined as never);
+
+		const closed = await todoUpdateToolDefinition({ state }).execute("call-2", { id: "a", status: "done" }, undefined, undefined, undefined as never);
+		expect(closed.isError).toBeFalsy();
+		expect(itemsOf(state)).toMatchObject([{ id: "a", status: "done" }]);
+		expect(todoWidget(itemsOf(state))?.join("\n")).toContain("✔");
+	});
+
+	it("still refuses to complete a derived item the proof gate has not passed", async () => {
+		const state: TodoCarrier = {};
+		createTodoList(state).add("AC-3", { criterion: "AC-3" });
+		const gate = { verdict: () => ({ decision: "MISSING_PROOF" as const, missing: ["npm test"], reason: "no fresh evidence" }) };
+
+		const refused = await todoUpdateToolDefinition({ state, gate: () => gate }).execute("call-1", { id: "a", status: "done" }, undefined, undefined, undefined as never);
+		expect(refused.isError).toBe(true);
+		expect(itemsOf(state)[0]?.status).toBe("pending");
 	});
 });

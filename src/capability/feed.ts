@@ -1,10 +1,10 @@
 /**
- * The `/models` projection (PRD-024 Phase 3).
+ * The `/model` projection (PRD-024 Phase 3).
  *
  * A pure join of the ranking with the current role resolutions: one row per
  * ranked record, carrying the record's metrics, the roles it fills, and the
  * ranking's revision plus staleness. This module renders nothing and parses no
- * arguments — `/models` (PRD-016, `src/commands/model.ts`) owns the surface, and
+ * arguments — `/model` (PRD-016, `src/commands/model.ts`) owns the surface, and
  * there is no second list of models anywhere: adding a record to the ranking
  * adds exactly one row here.
  */
@@ -14,6 +14,8 @@ import type { Evidence, Ranking } from "./schema.js";
 
 export interface CapabilityRow {
 	model_id: string;
+	/** The record's other spellings, so a row can be matched against a local model id. */
+	aliases: string[];
 	/** Display only; never a routing input. */
 	provider: string;
 	coding_score: number | null;
@@ -48,6 +50,7 @@ export function capabilityRows(ranking: Ranking, roleResolutions: readonly RoleS
 			const roles = filledBy.get(record.model_id) ?? [];
 			return {
 				model_id: record.model_id,
+				aliases: [...record.aliases],
 				provider: record.provider,
 				coding_score: record.coding_score,
 				general_score: record.general_score,

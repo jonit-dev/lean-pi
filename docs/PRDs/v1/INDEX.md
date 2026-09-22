@@ -39,6 +39,24 @@ Every number in this document is derived from the PRD files on disk — phase co
 
 Totals: 88 phases, 216 required boxes, 3 owner-lane gates (PRD-002 live `/jev test` round trip, PRD-008 real subscription smoke, PRD-021 external baselines). Every other criterion is agent-runnable locally. PRD-024 has no owner gate: its ranking is a committed file with zero network access, so every one of its criteria is local.
 
+## Beyond the v1 slice (027+)
+
+PRDs added after the original 26-PRD slice are not in the table above. Status read from each file's header on 2026-09-22.
+
+| PRD | Title | Status | Location |
+|---|---|---|---|
+| [028](./done/PRD-028-production-readiness-audit.md) | Production Readiness Audit | DONE (audit; fresh 4×2 qualification not demonstrated) | `done/` |
+| [029](./PRD-029-provider-usage-and-model-ranking.md) | Provider Usage & Model Ranking | NOT STARTED | open |
+| [030](./done/PRD-030-cli-model-detection.md) | CLI Model Detection | DONE | `done/` |
+| [031](./PRD-031-npm-publish.md) | Publish LeanPi to npm | IN PROGRESS — AC-5 owner-gated | open |
+| [032](./done/PRD-032-jev-optional.md) | JEV Optional | DONE | `done/` (a stale `NOT STARTED` duplicate also sits in the open directory — see `prd-audit`) |
+| [033](./done/PRD-033-thinking-fold-default-collapse.md) | Thinking-Fold Default Collapse | DONE | `done/` |
+| [034](./done/PRD-034-pi-version-update-notice.md) | Pi Version Update Notice | DONE | `done/` |
+| [035](./done/PRD-035-codebase-audit.md) | Codebase Audit | DONE | `done/` |
+| [036](./done/PRD-036-session-recap.md) | Session Recap | DONE | `done/` |
+| [037](./PRD-037-reasoning-token-lever.md) | Reasoning-Token Cost Lever | NOT STARTED | open |
+| [038](./done/PRD-038-cost-regression-gate.md) | Pre-publish Cost-Regression Gate | DONE (verified 2026-09-22) | `done/` |
+
 ## Build order
 
 ```mermaid

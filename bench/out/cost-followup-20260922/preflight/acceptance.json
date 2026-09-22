@@ -1,0 +1,57 @@
+{
+  "mode": "preflight",
+  "generated_at": "2026-09-22T04:07:28.791Z",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "base_url": "https://opencode.ai/zen/go/v1",
+  "arms": [
+    "leanpi",
+    "stock-pi",
+    "codex",
+    "claude-code"
+  ],
+  "fixture": "/home/joao/projects/lean-pi/bench/out/real-session-audit-20260921/fixtures/slugify-counter-duplicate-slug",
+  "fixture_commit": "2acf5b3cadf7faed3928536d051104502ae2b667",
+  "fixture_commit_ok": true,
+  "acceptance_command": "node ./node_modules/ava/entrypoints/cli.mjs test.js",
+  "cli": {
+    "codex": true,
+    "claude": true,
+    "node": true,
+    "pi_module": true,
+    "dist_newer_than_src": true,
+    "api_key": true
+  },
+  "hashes": {
+    "gold_sha256": "980861781f5c5d735d3b7b6d78eec4f49e02164ed98fecf4e96a04e2756199ea",
+    "gold_sha256_ok": true,
+    "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+    "fixture_test_sha256": "01579c0761e712aa7568bbe7acc912a17d6e2a42e0c243fcb417e0a77e44600a",
+    "known_good_index_sha256": "65f19dcf087db337e168a80aa4258be749a690ccb6ff96f961156531815b8d74",
+    "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+  },
+  "base": {
+    "status": 1,
+    "passed": null,
+    "failed": 1,
+    "checks": {
+      "nonzero_exit": true,
+      "right_test_failed": true,
+      "right_location": true,
+      "exactly_one_failure": true
+    },
+    "tail": "ports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[31m✘ [fail]:\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[1mslugifyWithCounter() never returns the same slug twice\u001b[22m\n\n  \u001b[90mtest.js:270\u001b[39m\n\n   \u001b[90m269:\u001b[39m   t.is(slugify('foo'), 'foo-2');    \n  \u001b[41m\u001b[1m 270:   t.is(slugify('foo 2'), 'foo-2-2');\u001b[22m\u001b[49m\n   \u001b[90m271:\u001b[39m                                     \n\n  Difference (\u001b[31m-\u001b[39m \u001b[31mactual\u001b[39m, \u001b[32m+\u001b[39m \u001b[32mexpected\u001b[39m):\n\n  \u001b[31m-\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2\u001b[39m\u001b[34m'\u001b[39m\n  \u001b[32m+\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2\u001b[39m\u001b[42m\u001b[30m-2\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n\n  \u001b[90m› file://test.js:270:4\u001b[39m\n\n  \u001b[90m─\u001b[39m\n\n  \u001b[31m1 test failed\u001b[39m\n"
+  },
+  "good": {
+    "status": 0,
+    "passed": 25,
+    "failed": null,
+    "checks": {
+      "zero_exit": true,
+      "twenty_five_passed": true
+    },
+    "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+  },
+  "api_calls_made": 0,
+  "duration_ms": 2548
+}

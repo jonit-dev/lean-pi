@@ -5,8 +5,9 @@
  * half-applied config would make every downstream PRD debug the wrong layer.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { isAbsolute } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { CONFIG_FILENAME, configPathFor, userConfigPath } from "./config-path.js";
 import { assertTrusted, isProjectLocal, mergePermissions, readUserState, type PermissionEnv, type RawPermissionsBlock } from "../permissions/trust.js";
 import {
 	BACKEND_TYPES,
@@ -17,6 +18,7 @@ import {
 	type BackendConfig,
 	type BackendType,
 	type CapabilityRoleSetting,
+	type CostBlockConfig,
 	type JevMode,
 	type LeanPiConfig,
 	type ModelRole,
@@ -24,7 +26,7 @@ import {
 	type VerifyConfig,
 } from "./types.js";
 
-export const CONFIG_FILENAME = "leanpi.config.yaml";
+export { CONFIG_FILENAME, configPathFor, userConfigPath };
 
 export class ConfigError extends Error {
 	constructor(
@@ -38,41 +40,6 @@ export class ConfigError extends Error {
 
 const JEV_MODES: readonly JevMode[] = ["enabled", "disabled", "metadata-only", "redacted"];
 
-/**
- * Where a session's configuration comes from.
- *
- * `leanpi` is a command a user runs from wherever they happen to be, so the
- * file is looked up the way every other project tool looks one up: the working
- * directory, then its ancestors (a monorepo package inherits the repository's
- * config), then the machine's own `$XDG_CONFIG_HOME/leanpi/`. Without the walk,
- * running the command one directory deeper than the config is a hard failure
- * with no obvious cause; without the user-level fallback, it cannot run outside
- * a configured project at all. The returned path is the project-level one when
- * nothing exists, so a caller that writes config writes it where it looked.
- */
-/**
- * The machine-wide config, where a first run writes one and where discovery
- * looks after the walk-up. One definition: a writer that computed this path
- * differently from the reader would write a file the next line cannot find.
- */
-export function userConfigPath(env: { XDG_CONFIG_HOME?: string; HOME?: string } = process.env): string | undefined {
-	const base = env.XDG_CONFIG_HOME ?? (env.HOME === undefined ? undefined : join(env.HOME, ".config"));
-	return base === undefined ? undefined : join(base, "leanpi", CONFIG_FILENAME);
-}
-
-export function configPathFor(cwd: string, env: { XDG_CONFIG_HOME?: string; HOME?: string } = process.env): string {
-	const project = join(cwd, CONFIG_FILENAME);
-	let directory = cwd;
-	for (;;) {
-		const candidate = join(directory, CONFIG_FILENAME);
-		if (existsSync(candidate)) return candidate;
-		const parent = dirname(directory);
-		if (parent === directory) break;
-		directory = parent;
-	}
-	const user = userConfigPath(env);
-	return user !== undefined && existsSync(user) ? user : project;
-}
 
 function asRecord(value: unknown, path: string): Record<string, unknown> {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -167,11 +134,52 @@ function parseJev(raw: unknown): LeanPiConfig["jev"] {
 	// `jev.enabled: false` is the shorthand several PRDs use for a fully local
 	// project; it is the same switch as `mode: disabled`, not a second one.
 	const resolvedMode: JevMode = record.enabled === false ? "disabled" : ((mode as JevMode | undefined) ?? "enabled");
+	const usdPerMtok = record.usd_per_mtok;
+	if (usdPerMtok !== undefined && (typeof usdPerMtok !== "number" || !Number.isFinite(usdPerMtok))) {
+		throw new ConfigError(`usd_per_mtok must be a finite number`, "jev.usd_per_mtok");
+	}
 	return {
 		apiKey: typeof record.apiKey === "string" ? record.apiKey : null,
 		endpoint: typeof record.endpoint === "string" ? record.endpoint : "https://api.typesafe.ai/v1/systemone",
 		model: typeof record.model === "string" ? record.model : "jev-latest",
 		mode: resolvedMode,
+		usd_per_mtok: (usdPerMtok as number | undefined) ?? 0,
+	};
+}
+
+/**
+ * The top-level `cost:` block: retained verbatim (with numeric validation) so
+ * `resolveCostConfig` reads the declared policy. Per-backend rates keep their
+ * home under `backends.<name>.cost`; this block is the run-level policy.
+ */
+function parseCost(raw: unknown): CostBlockConfig | undefined {
+	if (raw === undefined) return undefined;
+	const record = asRecord(raw, "cost");
+	const finite = (key: string): number | undefined => {
+		const value = record[key];
+		if (value === undefined) return undefined;
+		if (typeof value !== "number" || !Number.isFinite(value)) {
+			throw new ConfigError(`must be a finite number`, `cost.${key}`);
+		}
+		return value;
+	};
+	const models = record.models === undefined ? undefined : (asRecord(record.models, "cost.models") as CostBlockConfig["models"]);
+	const quotaShadow =
+		record.quota_shadow_usd === undefined
+			? undefined
+			: (asRecord(record.quota_shadow_usd, "cost.quota_shadow_usd") as Record<string, number>);
+	const telemetryPath = record.telemetry_path;
+	if (telemetryPath !== undefined && (typeof telemetryPath !== "string" || telemetryPath.length === 0)) {
+		throw new ConfigError(`telemetry_path must be a non-empty string`, "cost.telemetry_path");
+	}
+	const local = finite("local_usd_per_gpu_sec");
+	const latency = finite("latency_usd_per_sec");
+	return {
+		...(models === undefined ? {} : { models }),
+		...(quotaShadow === undefined ? {} : { quota_shadow_usd: quotaShadow }),
+		...(local === undefined ? {} : { local_usd_per_gpu_sec: local }),
+		...(latency === undefined ? {} : { latency_usd_per_sec: latency }),
+		...(telemetryPath === undefined ? {} : { telemetry_path: telemetryPath }),
 	};
 }
 
@@ -253,6 +261,23 @@ function parseCapability(raw: unknown): LeanPiConfig["capability"] {
 	};
 }
 
+/**
+ * The `recap:` block (PRD-036): on by default, on the `quick` role. A role outside
+ * the six is a config error rather than a value that silently resolves nowhere.
+ */
+function parseRecap(raw: unknown): LeanPiConfig["recap"] {
+	const record = raw === undefined ? {} : asRecord(raw, "recap");
+	const enabled = record.enabled;
+	if (enabled !== undefined && typeof enabled !== "boolean") {
+		throw new ConfigError(`enabled must be a boolean`, "recap.enabled");
+	}
+	const role = record.role;
+	if (role !== undefined && (typeof role !== "string" || !isModelRole(role))) {
+		throw new ConfigError(`role must name a model role (${MODEL_ROLES.join(" | ")})`, "recap.role");
+	}
+	return { enabled: (enabled as boolean | undefined) ?? true, role: (role as ModelRole | undefined) ?? "quick" };
+}
+
 function parseMcp(raw: unknown): LeanPiConfig["mcp"] {
 	const record = raw === undefined ? {} : asRecord(raw, "mcp");
 	const maxTools = record.maxTools;
@@ -321,6 +346,34 @@ function parseVerify(raw: unknown): VerifyConfig {
 	return { commands, ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }) };
 }
 
+/**
+ * A command the project itself supplies: a path that resolves inside the
+ * checkout. A bare name (`claude`, `codex`) is a PATH lookup for an installed
+ * binary and an absolute path outside the tree is not something a clone can
+ * ship, so neither is a capability the repository granted itself.
+ */
+function projectSuppliedCommand(cwd: string, command: string): boolean {
+	return (command.includes("/") || isAbsolute(command)) && isProjectLocal(cwd, command);
+}
+
+/**
+ * T1: an untrusted project cannot contribute an executable. The backend entry
+ * survives (a `models:` binding still resolves), but a `command` the checkout
+ * ships is removed, so the registry cannot spawn it.
+ */
+function withoutProjectSuppliedCommands(cwd: string, backends: Record<string, BackendConfig>): Record<string, BackendConfig> {
+	const safe: Record<string, BackendConfig> = {};
+	for (const [name, entry] of Object.entries(backends)) {
+		if (entry.type !== "external_harness" || typeof entry.command !== "string" || !projectSuppliedCommand(cwd, entry.command)) {
+			safe[name] = entry;
+			continue;
+		}
+		const { command: _dropped, ...rest } = entry;
+		safe[name] = rest;
+	}
+	return safe;
+}
+
 /** The project-scope `permissions:` block; PRD-017 merges it asymmetrically. */
 function parsePermissions(raw: unknown): RawPermissionsBlock {
 	if (raw === undefined) return {};
@@ -354,19 +407,26 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 	// PRD-017: assertTrusted runs between load and use. An untrusted project keeps
 	// nothing executable and nothing project-local on the capability surface.
 	const capabilities = parseCapabilities(record.capabilities);
+	const configPath = existsSync(path) ? path : null;
 	const trust = assertTrusted(cwd, env, {
 		skillRoots: capabilities.skillRoots,
 		mcpConfigPaths: capabilities.mcpConfigPaths,
 	});
 	const skillRoots = trust.trusted ? capabilities.skillRoots : capabilities.skillRoots.filter((root) => !isProjectLocal(cwd, root));
+	// T1: until the project is trusted, it contributes no executable backend
+	// command and no shell verifier command; the parsed entries stay so a role
+	// binding still resolves.
+	const effectiveBackends = trust.trusted ? backends : withoutProjectSuppliedCommands(cwd, backends);
+	const parsedVerify = parseVerify(record.verify);
+	const effectiveVerify: VerifyConfig = trust.trusted ? parsedVerify : { ...parsedVerify, commands: {} };
 	const permissions = mergePermissions({
 		user: readUserState(env),
 		project: parsePermissions(record.permissions),
 		trust,
 	});
 	const config: LeanPiConfig = {
-		configPath: existsSync(path) ? path : null,
-		backends,
+		configPath,
+		backends: effectiveBackends,
 		models: parseModels(record.models, backends),
 		instructions: { ponytail: (instructionsRaw.ponytail as boolean | undefined) ?? true },
 		jev: parseJev(record.jev),
@@ -377,7 +437,9 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		lsp: parseLsp(record.lsp),
 		mcp: parseMcp(record.mcp),
 		capability: parseCapability(record.capability),
-		verify: parseVerify(record.verify),
+		cost: parseCost(record.cost),
+		recap: parseRecap(record.recap),
+		verify: effectiveVerify,
 		permissions,
 		thresholds: parseThresholds(record.thresholds),
 		limits: {
@@ -419,6 +481,24 @@ export function toPiConfigValue(value: string, env: Record<string, string | unde
 	return value;
 }
 
+/**
+ * The `apiKey` field for a provider registration, or nothing.
+ *
+ * A bare name in LeanPi's config means "the variable of that name". If the
+ * variable is absent, Pi reads the bare name as a *literal key* and the
+ * provider answers `401 Invalid API key` — indistinguishable, to a user who just
+ * configured the key, from a verdict on it. Registering nothing lets Pi fall
+ * back to its own stored credential for the provider. Every registration path
+ * (the interactive session and the native worker) goes through here, so a key
+ * cannot be resolved one way in one path and literally in the other.
+ */
+export function apiKeyFor(declared: unknown, env: Record<string, string | undefined> = process.env): { apiKey: string } | undefined {
+	if (typeof declared !== "string" || declared.length === 0) return undefined;
+	const bareName = /^[A-Za-z_][A-Za-z0-9_]*$/.test(declared);
+	if (bareName && (env[declared] === undefined || env[declared] === "")) return undefined;
+	return { apiKey: toPiConfigValue(declared, env) };
+}
+
 /** Persist `/skills` enable/disable/pin state without disturbing unrelated config keys. */
 export function writeSkillsState(cwd: string, state: LeanPiConfig["skills"]["state"]): void {
 	const path = configPathFor(cwd);
@@ -427,5 +507,34 @@ export function writeSkillsState(cwd: string, state: LeanPiConfig["skills"]["sta
 	const skills = (root.skills ?? {}) as Record<string, unknown>;
 	skills.state = state;
 	root.skills = skills;
+	writeFileSync(path, stringifyYaml(root));
+}
+
+/**
+ * Persist one `/model` binding: the role, the vendor backend entry when the
+ * config has none — named after the vendor, which is how the registry infers
+ * one — and the `capability.roles.<role>.pin` that makes the choice stick.
+ * Without the pin the capability index re-picks the role's model every turn and
+ * the operator's selection lasts one turn. Written key by key like
+ * `writeSkillsState`, so an operator's comments and unrelated blocks survive
+ * the edit.
+ */
+export function writeRoleBinding(cwd: string, role: ModelRole, backend: string, model: string): void {
+	const path = configPathFor(cwd);
+	const parsed = existsSync(path) ? (parseYaml(readFileSync(path, "utf8")) as unknown) : undefined;
+	const root = parsed === undefined || parsed === null ? {} : (parsed as Record<string, unknown>);
+	const backends = (root.backends ?? {}) as Record<string, unknown>;
+	// A discovered CLI model is unusable until its backend is declared; the
+	// vendor's own login stays in the vendor's CLI, so the entry is two keys.
+	if (backends[backend] === undefined) backends[backend] = { type: "external_harness" };
+	root.backends = backends;
+	const models = (root.models ?? {}) as Record<string, unknown>;
+	models[role] = { backend, model };
+	root.models = models;
+	const capability = (root.capability ?? {}) as Record<string, unknown>;
+	const roles = (capability.roles ?? {}) as Record<string, unknown>;
+	roles[role] = { ...((roles[role] ?? {}) as Record<string, unknown>), pin: model };
+	capability.roles = roles;
+	root.capability = capability;
 	writeFileSync(path, stringifyYaml(root));
 }

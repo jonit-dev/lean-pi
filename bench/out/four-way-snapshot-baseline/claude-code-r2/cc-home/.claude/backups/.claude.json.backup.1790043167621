@@ -1,0 +1,13 @@
+{
+  "hasCompletedOnboarding": true,
+  "bypassPermissionsModeAccepted": true,
+  "theme": "dark",
+  "autoUpdates": false,
+  "customApiKeyResponses": {
+    "approved": [
+      "Gnx2pKjR1rBD9_-kG10A"
+    ],
+    "rejected": []
+  },
+  "projects": {}
+}

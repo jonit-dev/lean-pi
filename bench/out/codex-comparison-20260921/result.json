@@ -1,0 +1,118 @@
+{
+  "generated_at": "2026-09-21T22:03:36.903Z",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "rates_usd_per_mtok": {
+    "input": 0.15,
+    "cached": 0.003,
+    "output": 0.6,
+    "jev": 0.042
+  },
+  "fixture": "/home/joao/projects/lean-pi/bench/out/real-session-audit-20260921/fixtures/slugify-counter-duplicate-slug",
+  "gold_sha256": "980861781f5c5d735d3b7b6d78eec4f49e02164ed98fecf4e96a04e2756199ea",
+  "summarize_input": "summary-input.json",
+  "parity_verified": false,
+  "parity_evidence": "Request-level match only (offline 400 listener): both arms observed reasoning enabled at medium (Codex reasoning.effort=medium; LeanPI thinking.type=enabled, reasoning_effort=medium). API conversion equivalence is unverified and there is no upstream attestation.",
+  "results": [
+    {
+      "arm": "codex",
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "codex-169b4ebd-d391-4d6d-9a76-1e994eaaede1",
+      "started_at": "2026-09-21T22:01:53.508Z",
+      "ceiling_ms": 180000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 160084,
+        "cached_input_tokens": 152704,
+        "output_tokens": 13412,
+        "reasoning_output_tokens": 11336
+      },
+      "model_cost_usd": 0.009612312,
+      "classifier_cost_usd": 0,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "codex": {
+        "turns": 1,
+        "items": 20,
+        "tool_calls": 11,
+        "errors": [
+          "Model metadata for `deepseek-v4.1-flash` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
+        ],
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 68015
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 1,
+        "passed": null,
+        "failed": 1,
+        "verified": false,
+        "tail": ":\u001b[39m   t.is(slugify('foo'), 'foo-2');    \n  \u001b[41m\u001b[1m 270:   t.is(slugify('foo 2'), 'foo-2-2');\u001b[22m\u001b[49m\n   \u001b[90m271:\u001b[39m                                     \n\n  Difference (\u001b[31m-\u001b[39m \u001b[31mactual\u001b[39m, \u001b[32m+\u001b[39m \u001b[32mexpected\u001b[39m):\n\n  \u001b[31m-\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2-\u001b[39m\u001b[41m\u001b[30m1\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n  \u001b[32m+\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2-\u001b[39m\u001b[42m\u001b[30m2\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n\n  \u001b[90m› file://test.js:270:4\u001b[39m\n\n  \u001b[90m─\u001b[39m\n\n  \u001b[31m1 test failed\u001b[39m\n(node:3758855) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:3758855) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      },
+      "status": "failed",
+      "wall_ms": 68015,
+      "finished_at": "2026-09-21T22:03:01.893Z",
+      "end_index_sha256": "055024def2b911e5e1d46a66707608aa7d803d8930068b019fef2140ba42c1a5"
+    },
+    {
+      "arm": "leanpi",
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "leanpi-888be3fb-02ca-4490-bcda-3397b1d33161",
+      "started_at": "2026-09-21T22:03:02.455Z",
+      "ceiling_ms": 180000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 15505,
+        "cached_input_tokens": 156928,
+        "output_tokens": 2450,
+        "reasoning_tokens": 2284,
+        "jev_tokens": 36931,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "model_cost_usd": 0.005637,
+      "classifier_cost_usd": 0.001339884,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "worker": {
+        "error": null,
+        "records": 1,
+        "tool_calls": 14
+      },
+      "classifier": {
+        "tokens": 31902,
+        "usd": 0.001339884,
+        "unknown": false,
+        "records": 5
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "s Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n(node:3760650) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:3760650) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      },
+      "status": "passed",
+      "wall_ms": 34092,
+      "finished_at": "2026-09-21T22:03:36.902Z",
+      "end_index_sha256": "65f19dcf087db337e168a80aa4258be749a690ccb6ff96f961156531815b8d74"
+    }
+  ]
+}

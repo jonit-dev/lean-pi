@@ -89,18 +89,24 @@ export function lexicalSelect(records: SkillRecord[], request: string, limit: nu
 		.map((entry) => entry.record);
 }
 
+/**
+ * The gate, asked on its own. It used to ride in the same batch as the sweep it
+ * gates, so a "no" answer arrived only after the whole catalog had been priced:
+ * 169 candidates cost 28,667 input tokens to be told no skill was needed.
+ */
+function gateQuestion(): JevQuestion {
+	return { id: "any_skill", kind: "Choice", text: "Does this task require any skill from the library?", options: { yes: "yes", no: "no" } };
+}
+
 function relevanceQuestions(records: SkillRecord[]): JevQuestion[] {
-	return [
-		{ id: "any_skill", kind: "Choice", text: "Does this task require any skill from the library?", options: { yes: "yes", no: "no" } },
-		...records.map(
-			(record): JevQuestion => ({
-				id: `relevance:${record.name}`,
-				kind: "Score",
-				text: `How relevant is this skill to the task? ${record.name}: ${record.description}`.slice(0, 400),
-				levels: ["irrelevant", "tangential", "relevant", "essential"],
-			}),
-		),
-	];
+	return records.map(
+		(record): JevQuestion => ({
+			id: `relevance:${record.name}`,
+			kind: "Score",
+			text: `How relevant is this skill to the task? ${record.name}: ${record.description}`.slice(0, 400),
+			levels: ["irrelevant", "tangential", "relevant", "essential"],
+		}),
+	);
 }
 
 function fitQuestions(records: SkillRecord[]): JevQuestion[] {
@@ -154,6 +160,27 @@ export async function selectSkills(input: SelectSkillsInput): Promise<SelectSkil
 	// without a request, resolves the site through its fallback and writes the
 	// telemetry row the decision log owes. No second code path to drift.
 	if (client) {
+		const beforeGate = client.fallbackCount();
+		let gate: JevResult[] | undefined;
+		try {
+			gate = await client.ask(SKILL_SITE_ID, [gateQuestion()], { request });
+		} catch {
+			gate = undefined;
+		}
+		const gateFellBack = gate === undefined || client.fallbackCount() > beforeGate;
+		const anySkill = gateFellBack ? undefined : gate!.find((result) => result.questionId === "any_skill");
+		// Anything but an accepted "yes" ends the turn with no skills, which is what
+		// this site's registered fallback already answers ("no skill", the safe
+		// direction). Routing a fallen-back gate to `lexicalSelect` instead looked
+		// like a safety net but is noise: its name match is a substring test, so
+		// "hands out" scores `nextjs-app-router-patterns` through "router", and the
+		// 2026-09-21 run disclosed three unrelated skills on every attempt and used
+		// none. The lexical path stays where §49 puts it -- JEV absent entirely.
+		if (!anySkill || !(anySkill.kind === "Choice" && anySkill.choice === "yes" && accept(anySkill, "normal"))) {
+			decision.fallbackUsed = gateFellBack;
+			decision.reason = gateFellBack ? "gate fell back: no skill required" : "JEV answered: no skill required";
+			return finish([]);
+		}
 		const before = client.fallbackCount();
 		let results: JevResult[] | undefined;
 		try {
@@ -166,12 +193,6 @@ export async function selectSkills(input: SelectSkillsInput): Promise<SelectSkil
 		}
 		const fellBack = results === undefined || client.fallbackCount() > before;
 		if (!fellBack) {
-			const anySkill = results!.find((result) => result.questionId === "any_skill");
-			const asked = anySkill && anySkill.kind === "Choice" && anySkill.choice === "yes" && accept(anySkill, "normal");
-			if (!anySkill || !asked) {
-				decision.reason = "JEV answered: no skill required";
-				return finish([]);
-			}
 			const scored = candidates
 				.map((record) => {
 					const answer = results!.find((result) => result.questionId === `relevance:${record.name}`);

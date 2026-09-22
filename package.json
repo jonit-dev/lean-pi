@@ -1,9 +1,26 @@
 {
 	"name": "leanpi",
-	"version": "0.1.0",
-	"private": true,
+	"version": "0.1.1",
 	"description": "Cost-aware task compiler and coding runtime built on Pi",
+	"license": "MIT",
+	"author": "Joao Paulo Furtado <admin@coldstartlabs.ca>",
+	"homepage": "https://github.com/jonit-dev/lean-pi#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/jonit-dev/lean-pi.git"
+	},
+	"bugs": {
+		"url": "https://github.com/jonit-dev/lean-pi/issues"
+	},
+	"keywords": [
+		"coding-agent",
+		"cost-optimization",
+		"llm",
+		"pi",
+		"task-compiler"
+	],
 	"type": "module",
+	"packageManager": "pnpm@11.25.0",
 	"engines": {
 		"node": ">=22.19.0"
 	},
@@ -21,31 +38,37 @@
 		"skills",
 		"themes",
 		"src/capability/models.json",
+		"src/cli/spinner.ts",
 		"src/core/instructions/ponytail.md",
-		"src/core/instructions/ponytail.lock.json"
+		"src/core/instructions/ponytail.lock.json",
+		"vendor"
 	],
 	"scripts": {
-		"build": "tsc -p tsconfig.json",
-		"leanpi": "tsc -p tsconfig.json && node ./bin/leanpi.js",
+		"build": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json",
+		"prepack": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json",
+		"prepublishOnly": "npm run build && npm run typecheck && npm run lint && npm test && npm run bench:cost-gate",
+		"release": "npm publish",
+		"leanpi": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json && node ./bin/leanpi.js",
+		"vendor:thinking-fold": "node scripts/vendor-thinking-fold.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"lint": "oxlint src tests",
 		"sync:ponytail": "node scripts/sync-ponytail.mjs",
 		"bench:skills": "vitest run --config vitest.bench.config.ts",
-		"bench": "tsc -p tsconfig.json && node dist/bench/lane.js",
+		"bench:cost-gate": "node bench/cost/gate.mjs",
+		"bench": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json && node dist/bench/lane.js",
 		"sync:skills": "node scripts/sync-skills.mjs"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^0.85.1",
-		"@earendil-works/pi-ai": "^0.85.1",
-		"@earendil-works/pi-coding-agent": "^0.85.1",
+		"@99percentpeople/pi-thinking-fold": "^0.1.11",
+		"@earendil-works/pi-agent-core": "^0.87.0",
+		"@earendil-works/pi-ai": "^0.87.0",
+		"@earendil-works/pi-coding-agent": "^0.87.0",
+		"@earendil-works/pi-tui": "^0.87.0",
+		"@hk_net/pi-usage-bars": "^0.6.0",
+		"pi-claude-code-ui": "^1.0.83",
 		"typebox": "^1.0.0",
 		"yaml": "^2.8.1"
-	},
-	"pnpm": {
-		"onlyBuiltDependencies": [
-			"esbuild"
-		]
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.0",

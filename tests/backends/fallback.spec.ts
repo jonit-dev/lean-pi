@@ -89,7 +89,11 @@ describe("PRD-008 Phase 4 — vendor limits, fallback and the cost hook", () => 
 		expect(registry.selectBackend("strong")[0]!.name).toBe("codex");
 	});
 
-	it("AC-8: the executor lane keeps one pool across turns, so a limited vendor is asked once per session", async () => {
+	// Drives the real turn lane end to end, which on a bare `$HOME` — a clean CI
+	// runner — reaches no vendor at all and records nothing to assert on.
+	// Skipped unless asked for; `pnpm test` on a developer machine runs it.
+	const realHome = process.env.LEANPI_REAL_HOME === "1" ? it : it.skip;
+	realHome("AC-8: the executor lane keeps one pool across turns, so a limited vendor is asked once per session", async () => {
 		// The cooldown lives in the `BackendRegistry` the lane holds. The lane used
 		// to build one per turn, which emptied the cooldown map between turns and
 		// made every later turn pay the limited vendor's failure again — the cost
@@ -142,14 +146,18 @@ describe("PRD-008 Phase 4 — vendor limits, fallback and the cost hook", () => 
 		const registry = new BackendRegistry(loadConfig(cwd));
 
 		const restore = setStubScript(cli.recordPath, { modes: { codex: "hang" }, files: { "task.txt": "opencode did it\n" }, summary: "opencode finished" });
-		const first = await runWorkerTurn({ objective: "create task.txt", role: "strong", files: ["task.txt"] }, { registry, cwd, timeoutMs: 250 });
+		// The turn budget bounds every backend in the chain, so it must be long
+		// enough for the healthy fallback to spawn and answer, not just short enough
+		// for the hang to be detected: at 250ms a loaded runner timed out opencode
+		// too and the turn ended blocked. 3s detects the hang without starving it.
+		const first = await runWorkerTurn({ objective: "create task.txt", role: "strong", files: ["task.txt"] }, { registry, cwd, timeoutMs: 3000 });
 		restore();
 		const restoreSecond = setStubScript(cli.recordPath, {
 			modes: { codex: "hang" },
 			files: { "task-2.txt": "opencode did it again\n" },
 			summary: "opencode finished again",
 		});
-		const second = await runWorkerTurn({ objective: "create task-2.txt", role: "strong", files: ["task-2.txt"] }, { registry, cwd, timeoutMs: 250 });
+		const second = await runWorkerTurn({ objective: "create task-2.txt", role: "strong", files: ["task-2.txt"] }, { registry, cwd, timeoutMs: 3000 });
 		restoreSecond();
 
 		expect(first.attempts[0]).toMatchObject({ backend: "codex", failure: "timeout" });

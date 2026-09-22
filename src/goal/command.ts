@@ -12,11 +12,12 @@ import type { CommandContext, CommandHandler, CommandRegistry, CommandResult } f
 import type { LeanPiConfig } from "../core/types.js";
 import type { PrdState } from "../prd/state.js";
 import { derivedCriterionClauses, derivedGoalText, prdGoalSource } from "./from-prd.js";
-import { costReader, formatGoal } from "./limits.js";
+import { costReader, formatGoal, money } from "./limits.js";
 import {
 	GOAL_USAGE,
 	createGoalStore,
 	defaultGoalLimits,
+	isRunningHere,
 	newGoalState,
 	parseGoalArgs,
 	type GoalStore,
@@ -47,6 +48,8 @@ export function createGoalHandler(deps: GoalCommandDeps): CommandHandler {
 		if (parsed.stop) {
 			const goal = store.load();
 			if (!goal || !goal.active) return { ok: false, text: "no active goal to stop" };
+			// A goal left active by an earlier session is still stoppable — clearing
+			// the record is exactly how a user gets rid of one they no longer want.
 			store.save({ ...goal, active: false });
 			return { ok: true, text: `USER_STOPPED: ${formatGoal({ ...goal, active: false }, costSoFar())}` };
 		}
@@ -60,16 +63,34 @@ export function createGoalHandler(deps: GoalCommandDeps): CommandHandler {
 					max_cost: parsed.maxCost ?? limits.max_cost,
 				},
 				now().toISOString(),
+				deps.sessionId,
 			);
 			store.save(goal);
-			return { ok: true, text: `goal set: ${formatGoal(goal, costSoFar())}` };
+			// Setting a goal starts it. `/goal execute PRD-021` is a task, not a
+			// setting: the echo used to say "send a task to begin" and the session
+			// then sat idle until the user typed again, which read as a hang.
+			const caps = [
+				goal.max_turns > 0 ? `${goal.max_turns} turns` : null,
+				goal.max_cost > 0 ? money(goal.max_cost) : null,
+			].filter((cap) => cap !== null);
+			return {
+				ok: true,
+				text: `✅ goal set — "${goal.text}"\n   starting now${caps.length > 0 ? `, up to ${caps.join(" or ")}` : " — no turn or cost cap"}\n   /goal to check it · /goal stop to drop it`,
+				start: goal.text,
+			};
 		}
 
 		// Inspection must not write. A bare `/goal` while a goal is running echoes
 		// it, so the limits and `turns_used` it is judged against survive the look;
 		// deriving from the PRD is the empty-state path only.
 		const running = store.load();
-		if (running?.active) return { ok: true, text: formatGoal(running, costSoFar()) };
+		if (isRunningHere(running, deps.sessionId)) return { ok: true, text: formatGoal(running as NonNullable<typeof running>, costSoFar()) };
+		// An active record from an earlier session is reported, never resumed: it no
+		// longer reaches any prompt, and the user is the one who decides it is still
+		// wanted. Without this line its disappearance would look like data loss.
+		if (running?.active === true) {
+			return { ok: true, text: `⚠️ a goal from an earlier session is not running here: "${running.text}"\n   /goal ${running.text} to set it again · /goal stop to drop it` };
+		}
 
 		const prd = deps.prd?.() ?? null;
 		if (!prd) {
@@ -82,7 +103,7 @@ export function createGoalHandler(deps: GoalCommandDeps): CommandHandler {
 				text: `the active PRD ${prd.prdId} has no remaining acceptance criteria; ${GOAL_USAGE}`,
 			};
 		}
-		const goal = newGoalState(derivedGoalText(clauses), defaultGoalLimits(deps.config), now().toISOString());
+		const goal = newGoalState(derivedGoalText(clauses), defaultGoalLimits(deps.config), now().toISOString(), deps.sessionId);
 		store.save(goal);
 		return {
 			ok: true,

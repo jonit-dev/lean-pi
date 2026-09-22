@@ -31,6 +31,7 @@ import {
 	type Scope,
 } from "./rules.js";
 import { BUILTIN_SECRETS_POLICY, type SecretsPolicy } from "./secrets.js";
+import { configPathFor } from "../core/config-path.js";
 
 export interface PermissionEnv {
 	XDG_CONFIG_HOME?: string;
@@ -151,6 +152,8 @@ export function writeUserRule(capability: string, decision: PermissionDecision, 
 export interface SurfaceDeclaration {
 	skillRoots?: string[];
 	mcpConfigPaths?: string[];
+	/** The project config file that was loaded, when one exists; part of the trusted surface. */
+	configPath?: string;
 }
 
 export interface ProjectSurface {
@@ -160,6 +163,8 @@ export interface ProjectSurface {
 	mcpConfigPaths: string[];
 	/** Project-local skill roots only: a root the user installed is user scope. */
 	skillRoots: string[];
+	/** The project's own `leanpi.config.yaml`, when it exists and is project-local. */
+	configPath?: string;
 }
 
 function contained(root: string, candidate: string): boolean {
@@ -201,6 +206,7 @@ export function surfaceFiles(surface: ProjectSurface): Map<string, string> {
 	hashTarget(surface.root, surface.extensionsDir, files);
 	for (const configPath of surface.mcpConfigPaths) hashTarget(surface.root, configPath, files);
 	for (const skillRoot of surface.skillRoots) hashTarget(surface.root, skillRoot, files);
+	if (surface.configPath !== undefined) hashTarget(surface.root, surface.configPath, files);
 	return files;
 }
 
@@ -219,11 +225,18 @@ export function projectSurface(root: string, declared: SurfaceDeclaration = {}):
 		if (!skillRoots.includes(candidate) && existsSync(candidate)) skillRoots.push(candidate);
 	}
 	const declaredMcp = (declared.mcpConfigPaths ?? []).filter((entry) => entry.length > 0);
+	// The config file is part of the executable surface: editing it revokes trust,
+	// so a trusted project cannot later add a `backends[].command` unchecked.
+	const configPath =
+		declared.configPath !== undefined && existsSync(declared.configPath) && isProjectLocal(absolute, declared.configPath)
+			? resolve(declared.configPath)
+			: undefined;
 	return {
 		root: absolute,
 		extensionsDir: join(absolute, ".leanpi", "extensions"),
 		mcpConfigPaths: (declaredMcp.length > 0 ? declaredMcp : [".leanpi/mcp.json"]).map((entry) => (isAbsolute(entry) ? resolve(entry) : resolve(absolute, entry))),
 		skillRoots,
+		...(configPath === undefined ? {} : { configPath }),
 	};
 }
 
@@ -266,6 +279,11 @@ function firstDifference(recorded: Record<string, string>, current: Map<string, 
 	return paths.find((path) => recorded[path] !== current.get(path));
 }
 
+/** Everything the project would contribute when trusted, for the "dropped" report. */
+function droppedSurface(surface: ProjectSurface): string[] {
+	return [...surface.mcpConfigPaths, surface.extensionsDir, ...surface.skillRoots, ...(surface.configPath === undefined ? [] : [surface.configPath])];
+}
+
 function extensionModules(directory: string): string[] {
 	let entries: string[];
 	try {
@@ -297,7 +315,7 @@ function mcpServers(configPath: string): McpServerDeclaration[] {
 
 /** The check the config path runs before anything project-supplied is registered. */
 export function assertTrusted(root: string, env: PermissionEnv = process.env, declared: SurfaceDeclaration = {}): ProjectTrustStatus {
-	const surface = projectSurface(root, declared);
+	const surface = projectSurface(root, { ...declared, configPath: declared.configPath ?? configPathFor(root, env) });
 	const files = surfaceFiles(surface);
 	const surfaceHash = projectSurfaceHash(surface);
 	const record = readUserState(env).trust[surface.root];
@@ -311,7 +329,7 @@ export function assertTrusted(root: string, env: PermissionEnv = process.env, de
 			reason: "no trust record for this project",
 			surface,
 			surfaceHash,
-			dropped: [...surface.mcpConfigPaths, surface.extensionsDir, ...surface.skillRoots],
+			dropped: droppedSurface(surface),
 			subset: untrustedSubset,
 		};
 	}
@@ -326,7 +344,7 @@ export function assertTrusted(root: string, env: PermissionEnv = process.env, de
 			surfaceHash,
 			grantedAt: record.grantedAt,
 			...(changedFile ? { changedFile } : {}),
-			dropped: [...surface.mcpConfigPaths, surface.extensionsDir, ...surface.skillRoots],
+			dropped: droppedSurface(surface),
 			subset: untrustedSubset,
 		};
 	}
@@ -350,7 +368,7 @@ export function assertTrusted(root: string, env: PermissionEnv = process.env, de
 
 /** `/permissions trust project`: record the surface hash that trust is bound to. */
 export function grantTrust(root: string, env: PermissionEnv = process.env, declared: SurfaceDeclaration = {}): ProjectTrustStatus {
-	const surface = projectSurface(root, declared);
+	const surface = projectSurface(root, { ...declared, configPath: declared.configPath ?? configPathFor(root, env) });
 	const state = readUserState(env);
 	state.trust[surface.root] = {
 		root: surface.root,

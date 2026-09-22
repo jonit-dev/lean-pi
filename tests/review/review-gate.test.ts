@@ -153,3 +153,18 @@ describe("review gate", () => {
 		}
 	});
 });
+
+describe("A1 — an unknown change set is not an empty change set", () => {
+	it("does not short-circuit to NO_SEMANTIC_REVIEW when the change set could not be derived", async () => {
+		// The worker reports no paths because git is unavailable, not because the
+		// turn changed nothing. The gate must fall to its conservative answer.
+		const gate = await classifyReview({ changedFiles: [], changedFilesUnknown: true });
+		expect(gate.level).not.toBe("NO_SEMANTIC_REVIEW");
+		expect(gate.level).toBe("QUICK_REVIEW");
+		expect(gate.source).toBe("unavailable");
+
+		// The genuine empty set still skips: the short-circuit is not removed.
+		const empty = await classifyReview({ changedFiles: [] });
+		expect(empty.level).toBe("NO_SEMANTIC_REVIEW");
+	});
+});

@@ -1,0 +1,136 @@
+{
+  "parity_verified": false,
+  "parity_evidence": "Same provider, same model id, same prompt bytes and same acceptance test for all four arms. Request-level reasoning settings are NOT normalised across harnesses (Codex reasoning.effort=medium; Claude Code MAX_THINKING_TOKENS=8000; LeanPi/stock Pi use their own defaults), and there is no upstream attestation that the gateway converts the OpenAI and Anthropic wire formats equivalently.",
+  "attempts": [
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 1,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.009554,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 132.073
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "stock-pi",
+      "trial": 1,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.009504,
+        "classifier": 0,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 45.62
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 2,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.010513,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 74.113
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "stock-pi",
+      "trial": 2,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.015043,
+        "classifier": 0,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 91.092
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 3,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.006673,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 53.876
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "stock-pi",
+      "trial": 3,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.01153,
+        "classifier": 0,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 104.369
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 4,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.006216,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 39.578
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "stock-pi",
+      "trial": 4,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.013288,
+        "classifier": 0,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 132.48
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 5,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.007028,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 51.68
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "stock-pi",
+      "trial": 5,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.01059,
+        "classifier": 0,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 106.187
+    }
+  ]
+}

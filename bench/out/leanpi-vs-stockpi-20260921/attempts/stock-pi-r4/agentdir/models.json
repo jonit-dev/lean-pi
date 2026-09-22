@@ -1,0 +1,72 @@
+{
+  "providers": {
+    "opencode-go": {
+      "baseUrl": "https://opencode.ai/zen/go/v1",
+      "api": "openai-completions",
+      "apiKey": "OPENCODE_API_KEY",
+      "headers": {
+        "x-opencode-session": "LEANPI_OPENCODE_SESSION"
+      },
+      "compat": {
+        "thinkingFormat": "deepseek"
+      },
+      "models": [
+        {
+          "id": "deepseek-v4.1-flash",
+          "reasoning": true,
+          "contextWindow": 1000000,
+          "maxTokens": 32000,
+          "cost": {
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.003
+          }
+        },
+        {
+          "id": "deepseek-v4.1-flash",
+          "reasoning": true,
+          "contextWindow": 1000000,
+          "maxTokens": 32000,
+          "cost": {
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.003
+          }
+        },
+        {
+          "id": "deepseek-v4.1-flash",
+          "reasoning": true,
+          "contextWindow": 1000000,
+          "maxTokens": 32000,
+          "cost": {
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.003
+          }
+        },
+        {
+          "id": "deepseek-v4.1-flash",
+          "reasoning": true,
+          "contextWindow": 1000000,
+          "maxTokens": 32000,
+          "cost": {
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.003
+          }
+        },
+        {
+          "id": "deepseek-v4.1-flash",
+          "reasoning": true,
+          "contextWindow": 1000000,
+          "maxTokens": 32000,
+          "cost": {
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.003
+          }
+        }
+      ]
+    }
+  }
+}

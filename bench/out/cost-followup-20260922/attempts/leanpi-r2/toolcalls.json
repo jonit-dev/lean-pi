@@ -1,0 +1,77 @@
+{
+  "arm": "leanpi",
+  "calls": [
+    {
+      "name": "execute",
+      "input": "{\"command\":\"ls -la\"}"
+    },
+    {
+      "name": "search",
+      "input": "{\"pattern\":\"slugifyWithCounter\"}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\",\"offset\":100,\"limit\":50}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"test.js\",\"offset\":225,\"limit\":60}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\",\"offset\":122,\"limit\":30}"
+    },
+    {
+      "name": "search",
+      "input": "{\"pattern\":\"removeCounterSuffix\",\"path\":\"index.js\",\"context\":6}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat package.json; echo ---; git log --oneline -5; echo ---; git status\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"npx ava 2>&1 | tail -40\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat > /tmp/probe.mjs <<'EOF'\\nimport {slugifyWithCounter} from './index.js';\\n\\n// Try many inputs, repeated, detect duplicate outputs\\nconst inputs = ['foo','foo bar','foo-1','foo-2','foo-3','foo 1','foo 2','foo-1-1','foo-1-2',"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"sed -i \\\"s#'./index.js'#'/home/joao/projects/lean-pi/bench/out/cost-followup-20260922/attempts/leanpi-r2/workspace/index.js'#\\\" /tmp/probe.mjs && node /tmp/probe.mjs\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-followup-20260922/attempts/leanpi-r2/workspace && git log --all --oneline | head -30; echo ---; git branch -a; echo ---; git tag | tail; echo ---; git stash list; echo ---; ls .leanp"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat > /tmp/fuzz.mjs <<'EOF'\\nimport {slugifyWithCounter} from '/home/joao/projects/lean-pi/bench/out/cost-followup-20260922/attempts/leanpi-r2/workspace/index.js';\\n\\nconst base = ['foo','bar','foo-1','foo-2','foo-3','foo 1','fo"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-followup-20260922/attempts/leanpi-r2/workspace && git show 6d97501 --stat && echo ===== && git show 6d97501 -- index.js\"}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\",\"offset\":144,\"limit\":12}"
+    },
+    {
+      "name": "edit",
+      "input": "{\"path\":\"index.js\",\"edits\":[{\"oldText\":\"\\tconst occurrences = new Map();\\n\",\"newText\":\"\\tconst occurrences = new Map();\\n\\tconst returned = new Set();\\n\"},{\"oldText\":\"\\t\\tconst counter = occurrences.get(stringLower);\\n\\t\\toccurrences.set(st"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-followup-20260922/attempts/leanpi-r2/workspace && npx ava 2>&1 | tail -6 && echo ===FUZZ=== && node /tmp/fuzz.mjs\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-followup-20260922/attempts/leanpi-r2/workspace && cat > /tmp/smoke.mjs <<'EOF'\\nimport {strict as assert} from 'node:assert';\\nimport {slugifyWithCounter} from '/home/joao/projects/l"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-followup-20260922/attempts/leanpi-r2/workspace && git diff --stat && git diff index.js\"}"
+    }
+  ]
+}

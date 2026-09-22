@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BackendRegistry, nativeStop, runNative, runWorkerTurn, type WorkerResult, type WorkerTaskPacket } from "../../src/backends/index.js";
 import { loadConfig } from "../../src/index.js";
-import { fixtureRepo, nativeBackend, writeConfig } from "../helpers/fixtures.js";
+import { fixtureRepo, gitInit, nativeBackend, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend, type StubStep } from "../helpers/stub-backend.js";
 import { installStubCli, setStubScript } from "./helpers.js";
 
@@ -29,6 +29,7 @@ describe("PRD-008 Phase 2 — native model backend", () => {
 			{ text: "created shared.txt" },
 		]);
 		const { cwd } = fixtureRepo();
+		gitInit(cwd);
 		writeConfig(cwd, {
 			backends: { local: nativeBackend(stub.baseUrl, { model: "local-code" }) },
 			models: { quick: { backend: "local", model: "local-code" } },
@@ -55,6 +56,8 @@ describe("PRD-008 Phase 2 — native model backend", () => {
 		const cli = installStubCli();
 		const cliDir = fixtureRepo();
 		const nativeDir = fixtureRepo();
+		gitInit(cliDir.cwd);
+		gitInit(nativeDir.cwd);
 		const stub: StubBackend = await startStubBackend([
 			{ toolCalls: [{ name: "write", args: { path: "shared.txt", content: "native\n" } }] },
 			{ text: "created shared.txt" },
@@ -179,5 +182,32 @@ describe("PRD-008 Phase 2 — native model backend", () => {
 		// A killed attempt has spent money, so it reports what the session counted.
 		const raw = outcome.raw;
 		expect(raw !== null && typeof raw === "object" && "tokens" in raw && typeof raw.tokens === "number").toBe(true);
+	});
+});
+
+describe("A3 — the native worker resolves a bare apiKey name through the environment", () => {
+	it("sends the resolved key, never the bare name, to the provider", async () => {
+		const stub: StubBackend = await startStubBackend([{ text: "ok" }]);
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend(stub.baseUrl, { model: "local-code", apiKey: "OPENCODE_API_KEY" }) },
+			models: { quick: { backend: "local", model: "local-code" } },
+		});
+		const registry = new BackendRegistry(loadConfig(cwd));
+
+		const previous = process.env.OPENCODE_API_KEY;
+		process.env.OPENCODE_API_KEY = "sk-dummy-native-key";
+		try {
+			const outcome = await runWorkerTurn({ objective: "say hi", role: "quick" }, { registry, cwd });
+			expect(outcome.status).toBe("completed");
+		} finally {
+			if (previous === undefined) delete process.env.OPENCODE_API_KEY;
+			else process.env.OPENCODE_API_KEY = previous;
+			await stub.close();
+		}
+
+		const authorization = String(stub.requests[0]?.headers.authorization ?? "");
+		expect(authorization).toContain("sk-dummy-native-key");
+		expect(authorization).not.toContain("OPENCODE_API_KEY");
 	});
 });

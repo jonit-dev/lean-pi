@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createCommandRegistry, loadConfig, type CommandRegistry, type CommandResult, type LeanPiConfig } from "../../src/index.js";
+import type { RecapController } from "../../src/recap/index.js";
 import {
 	createCommandSurface,
 	createSessionHost,
@@ -36,6 +37,8 @@ export interface SurfaceFixtureOptions {
 	name?: string;
 	/** Built from the loaded config, so a real client points at the fixture's endpoint. */
 	jev?: (config: LeanPiConfig, cwd: string) => CommandSurfaceDeps["jev"];
+	/** PRD-036's recap controller, for `/recap`. */
+	recap?: () => RecapController | undefined;
 }
 
 export interface SurfaceFixture {
@@ -95,6 +98,7 @@ export function surfaceFixture(options: SurfaceFixtureOptions): SurfaceFixture {
 		host,
 		env,
 		...(options.jev ? { jev: options.jev(config, cwd) } : {}),
+		...(options.recap ? { recap: options.recap } : {}),
 	});
 
 	const append: SurfaceFixture["append"] = (role, text, extra = {}) => {

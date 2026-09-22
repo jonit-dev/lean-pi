@@ -1,0 +1,62 @@
+{
+  "purpose": "compatibility smoke only; excluded from task attempts",
+  "status": {
+    "exit_code": 0,
+    "seconds": 2.098,
+    "model": "deepseek-v4.1-flash",
+    "provider": "https://opencode.ai/zen/go/v1",
+    "codex_version": "0.155.1"
+  },
+  "config_toml": "model = \"deepseek-v4.1-flash\"\nmodel_provider = \"opencode-go\"\n[model_providers.opencode-go]\nname = \"OpenCode Go Zen\"\nbase_url = \"https://opencode.ai/zen/go/v1\"\nenv_key = \"OPENCODE_API_KEY\"\nwire_api = \"responses\"\nenv_http_headers = { \"x-opencode-session\" = \"LEANPI_OPENCODE_SESSION\" }\nrequest_max_retries = 0\nstream_max_retries = 0\n",
+  "events": [
+    {
+      "type": "thread.started",
+      "thread_id": "01a0c5eb-7a07-7a11-bec9-24bce06d24ea"
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "item_0",
+        "type": "error",
+        "message": "Model metadata for `deepseek-v4.1-flash` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
+      }
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "item_1",
+        "type": "error",
+        "message": "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."
+      }
+    },
+    {
+      "type": "turn.started"
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "item_2",
+        "type": "agent_message",
+        "text": "PONG"
+      }
+    },
+    {
+      "type": "turn.completed",
+      "usage": {
+        "input_tokens": 13598,
+        "cached_input_tokens": 7040,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 3,
+        "reasoning_output_tokens": 0
+      }
+    }
+  ],
+  "usage_value_usd": 0.00100662,
+  "pricing_source": "https://opencode.ai/docs/go/#usage-limits",
+  "rate_checked": "2026-09-21",
+  "limitations": [
+    "No tool invocation or coding task in this probe",
+    "Unexpected personal skill catalog loaded despite isolated CODEX_HOME",
+    "Configured model identity; no independent upstream attestation"
+  ]
+}

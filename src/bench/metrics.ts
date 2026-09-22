@@ -14,7 +14,7 @@
  *   nobody reads a smoothed quantile into a ten-task seed suite.
  * - a rate with no observations prints `n/a (n observations)` rather than 0.
  */
-import { loadRanking, RankingUnavailableError, RankingValidationError } from "../capability/index.js";
+import { loadRanking, matchModel, RankingUnavailableError, RankingValidationError } from "../capability/index.js";
 import type { LeanPiConfig } from "../core/types.js";
 import type { RunTelemetry } from "../telemetry/record.js";
 import type { BenchConfigRow, BenchLedgerRow } from "./types.js";
@@ -61,7 +61,9 @@ export function capabilityOf(config: LeanPiConfig | null | undefined, modelId: s
 		if (error instanceof RankingUnavailableError || error instanceof RankingValidationError) return unavailable(error.message);
 		throw error;
 	}
-	const record = ranking.models.find((candidate) => candidate.model_id === modelId || candidate.aliases.includes(modelId));
+	// The same join `/model` and role resolution use: the ledger records the
+	// executor id the CLI was dialed with, not the leaderboard's spelling of it.
+	const record = matchModel(ranking.models, modelId);
 	if (!record) return unavailable(`model "${modelId}" is not listed in ${ranking.path}`);
 	return {
 		model_id: record.model_id,

@@ -1,0 +1,12 @@
+{
+  "status": "pilot_complete_interpretation_limited",
+  "task_attempts": 2,
+  "model": "deepseek-v4.1-flash",
+  "arms": [
+    "codex",
+    "leanpi"
+  ],
+  "comparison_eligible": false,
+  "reason": "One pair; hidden exact-numbering requirement absent from prompt; upstream inference equivalence unverified. Original golden scores retained; post-hoc uniqueness checks separate.",
+  "stock_pi_cleanup": "deferred at user request"
+}

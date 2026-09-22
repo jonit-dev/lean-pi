@@ -1,0 +1,623 @@
+{
+  "generated_at": "2026-09-22T02:53:08.780Z",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "base_url": "https://opencode.ai/zen/go/v1",
+  "leanpi_build": {
+    "dist": "/home/joao/projects/lean-pi/dist",
+    "git_sha": "81a723d5826940d61e81c0ae8aca3f9bfcd83014",
+    "worktree_dirty": true,
+    "dist_mtime": "2026-09-22T02:36:32.797Z",
+    "newest_src_mtime": "2026-09-22T02:35:48.225Z",
+    "dist_fresh": true
+  },
+  "rates_usd_per_mtok": {
+    "input": 0.15,
+    "cached": 0.003,
+    "output": 0.6,
+    "jev": 0.042
+  },
+  "arms": [
+    "leanpi",
+    "stock-pi"
+  ],
+  "trials": 5,
+  "fixture": "/home/joao/projects/lean-pi/bench/out/real-session-audit-20260921/fixtures/slugify-counter-duplicate-slug",
+  "gold_sha256": "980861781f5c5d735d3b7b6d78eec4f49e02164ed98fecf4e96a04e2756199ea",
+  "summarize_input": "summary-input.json",
+  "total_spend_usd": 0.11801229,
+  "parity_verified": false,
+  "parity_evidence": "Same provider, same model id, same prompt bytes and same acceptance test for all four arms. Request-level reasoning settings are NOT normalised across harnesses (Codex reasoning.effort=medium; Claude Code MAX_THINKING_TOKENS=8000; LeanPi/stock Pi use their own defaults), and there is no upstream attestation that the gateway converts the OpenAI and Anthropic wire formats equivalently.",
+  "results": [
+    {
+      "arm": "leanpi",
+      "trial": 1,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "leanpi-d8797a1a-283f-429f-8292-54e2402fd8cc",
+      "started_at": "2026-09-22T02:36:53.715Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 14053,
+        "cached_input_tokens": 246784,
+        "output_tokens": 2849,
+        "reasoning_tokens": 5174,
+        "jev_tokens": 4219,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-excludes-reasoning",
+      "model_cost_usd": 0.007662,
+      "classifier_cost_usd": 0.000153258,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 20,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 59607
+      },
+      "classifier": {
+        "tokens": 3649,
+        "usd": 0.000153258,
+        "unknown": false,
+        "records": 5
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+      },
+      "status": "passed",
+      "wall_ms": 59607,
+      "finished_at": "2026-09-22T02:37:53.661Z",
+      "end_index_sha256": "65f19dcf087db337e168a80aa4258be749a690ccb6ff96f961156531815b8d74"
+    },
+    {
+      "arm": "stock-pi",
+      "trial": 1,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "stock-pi-1e186773-a6e8-46e8-b2ee-59bbec7687c9",
+      "started_at": "2026-09-22T02:37:54.184Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 29901,
+        "cached_input_tokens": 366208,
+        "output_tokens": 5437,
+        "reasoning_tokens": 2680,
+        "jev_tokens": 0,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-includes-reasoning",
+      "model_cost_usd": 0.008846,
+      "classifier_cost_usd": 0,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 16,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 46250
+      },
+      "classifier": {
+        "tokens": 0,
+        "usd": 0,
+        "unknown": false,
+        "records": 0
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+      },
+      "status": "passed",
+      "wall_ms": 46250,
+      "finished_at": "2026-09-22T02:38:40.776Z",
+      "end_index_sha256": "65f19dcf087db337e168a80aa4258be749a690ccb6ff96f961156531815b8d74"
+    },
+    {
+      "arm": "leanpi",
+      "trial": 2,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "leanpi-ea3bf8e3-622f-47da-9d07-f01357ad21e9",
+      "started_at": "2026-09-22T02:38:41.305Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 18089,
+        "cached_input_tokens": 270336,
+        "output_tokens": 2951,
+        "reasoning_tokens": 5555,
+        "jev_tokens": 4219,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-excludes-reasoning",
+      "model_cost_usd": 0.00863,
+      "classifier_cost_usd": 0.000153258,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 19,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 71570
+      },
+      "classifier": {
+        "tokens": 3649,
+        "usd": 0.000153258,
+        "unknown": false,
+        "records": 5
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+      },
+      "status": "passed",
+      "wall_ms": 71570,
+      "finished_at": "2026-09-22T02:39:53.209Z",
+      "end_index_sha256": "32bd0a436c014b0e4fd5c8ff69f37c60cd07d3177b790959d46cf393d42a9418"
+    },
+    {
+      "arm": "stock-pi",
+      "trial": 2,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "stock-pi-077b5987-aa66-4486-ba24-828383506497",
+      "started_at": "2026-09-22T02:39:53.737Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 36011,
+        "cached_input_tokens": 852352,
+        "output_tokens": 18128,
+        "reasoning_tokens": 13518,
+        "jev_tokens": 0,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-includes-reasoning",
+      "model_cost_usd": 0.018836,
+      "classifier_cost_usd": 0,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 24,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 157573
+      },
+      "classifier": {
+        "tokens": 0,
+        "usd": 0,
+        "unknown": false,
+        "records": 0
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 1,
+        "passed": null,
+        "failed": 1,
+        "verified": false,
+        "tail": "thCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[1mslugifyWithCounter() never returns the same slug twice\u001b[22m\n\n  \u001b[90mtest.js:270\u001b[39m\n\n   \u001b[90m269:\u001b[39m   t.is(slugify('foo'), 'foo-2');    \n  \u001b[41m\u001b[1m 270:   t.is(slugify('foo 2'), 'foo-2-2');\u001b[22m\u001b[49m\n   \u001b[90m271:\u001b[39m                                     \n\n  Difference (\u001b[31m-\u001b[39m \u001b[31mactual\u001b[39m, \u001b[32m+\u001b[39m \u001b[32mexpected\u001b[39m):\n\n  \u001b[31m-\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2-\u001b[39m\u001b[41m\u001b[30m1\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n  \u001b[32m+\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2-\u001b[39m\u001b[42m\u001b[30m2\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n\n  \u001b[90m› file://test.js:270:4\u001b[39m\n\n  \u001b[90m─\u001b[39m\n\n  \u001b[31m1 test failed\u001b[39m\n"
+      },
+      "status": "failed",
+      "wall_ms": 157573,
+      "finished_at": "2026-09-22T02:42:31.677Z",
+      "end_index_sha256": "651ac993e9a4333e5fe4a9e07d7df66f36a7f81e540941d1f49bb410ca6099fa"
+    },
+    {
+      "arm": "leanpi",
+      "trial": 3,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "leanpi-2a916930-780b-4fca-97c1-43b046d011ef",
+      "started_at": "2026-09-22T02:42:32.219Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 13615,
+        "cached_input_tokens": 202752,
+        "output_tokens": 3459,
+        "reasoning_tokens": 4551,
+        "jev_tokens": 4219,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-excludes-reasoning",
+      "model_cost_usd": 0.007458,
+      "classifier_cost_usd": 0.000153258,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 21,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 57967
+      },
+      "classifier": {
+        "tokens": 3649,
+        "usd": 0.000153258,
+        "unknown": false,
+        "records": 5
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+      },
+      "status": "passed",
+      "wall_ms": 57967,
+      "finished_at": "2026-09-22T02:43:30.542Z",
+      "end_index_sha256": "65f19dcf087db337e168a80aa4258be749a690ccb6ff96f961156531815b8d74"
+    },
+    {
+      "arm": "stock-pi",
+      "trial": 3,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "stock-pi-01e6e620-a0da-477c-9d9b-b1b9fd248f61",
+      "started_at": "2026-09-22T02:43:31.076Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 31132,
+        "cached_input_tokens": 328960,
+        "output_tokens": 7362,
+        "reasoning_tokens": 4314,
+        "jev_tokens": 0,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-includes-reasoning",
+      "model_cost_usd": 0.010074,
+      "classifier_cost_usd": 0,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 16,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 75587
+      },
+      "classifier": {
+        "tokens": 0,
+        "usd": 0,
+        "unknown": false,
+        "records": 0
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+      },
+      "status": "passed",
+      "wall_ms": 75587,
+      "finished_at": "2026-09-22T02:44:47.002Z",
+      "end_index_sha256": "65f19dcf087db337e168a80aa4258be749a690ccb6ff96f961156531815b8d74"
+    },
+    {
+      "arm": "leanpi",
+      "trial": 4,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "leanpi-a943d91a-aa59-442c-b994-0c8df4334a13",
+      "started_at": "2026-09-22T02:44:47.533Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 19797,
+        "cached_input_tokens": 488832,
+        "output_tokens": 5015,
+        "reasoning_tokens": 11391,
+        "jev_tokens": 4219,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-excludes-reasoning",
+      "model_cost_usd": 0.014281,
+      "classifier_cost_usd": 0.000153258,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 28,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 224607
+      },
+      "classifier": {
+        "tokens": 3649,
+        "usd": 0.000153258,
+        "unknown": false,
+        "records": 5
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+      },
+      "status": "passed",
+      "wall_ms": 224607,
+      "finished_at": "2026-09-22T02:48:32.489Z",
+      "end_index_sha256": "c0d9c0c6e3c818d2c18275da0765c98a57cc3bae4d1b24cbc913056e147cead9"
+    },
+    {
+      "arm": "stock-pi",
+      "trial": 4,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "stock-pi-c9193327-545a-408f-84ef-a19e420023a5",
+      "started_at": "2026-09-22T02:48:33.020Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 31603,
+        "cached_input_tokens": 428800,
+        "output_tokens": 7586,
+        "reasoning_tokens": 4583,
+        "jev_tokens": 0,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-includes-reasoning",
+      "model_cost_usd": 0.010578,
+      "classifier_cost_usd": 0,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 18,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 53069
+      },
+      "classifier": {
+        "tokens": 0,
+        "usd": 0,
+        "unknown": false,
+        "records": 0
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+      },
+      "status": "passed",
+      "wall_ms": 53069,
+      "finished_at": "2026-09-22T02:49:26.493Z",
+      "end_index_sha256": "65f19dcf087db337e168a80aa4258be749a690ccb6ff96f961156531815b8d74"
+    },
+    {
+      "arm": "leanpi",
+      "trial": 5,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "leanpi-ec70771d-9366-450f-acd9-614cca9e4533",
+      "started_at": "2026-09-22T02:49:27.026Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 21182,
+        "cached_input_tokens": 631808,
+        "output_tokens": 4399,
+        "reasoning_tokens": 17822,
+        "jev_tokens": 4219,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-excludes-reasoning",
+      "model_cost_usd": 0.018405,
+      "classifier_cost_usd": 0.000153258,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 26,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 158211
+      },
+      "classifier": {
+        "tokens": 3649,
+        "usd": 0.000153258,
+        "unknown": false,
+        "records": 5
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 1,
+        "passed": null,
+        "failed": 1,
+        "verified": false,
+        "tail": "thCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[1mslugifyWithCounter() never returns the same slug twice\u001b[22m\n\n  \u001b[90mtest.js:270\u001b[39m\n\n   \u001b[90m269:\u001b[39m   t.is(slugify('foo'), 'foo-2');    \n  \u001b[41m\u001b[1m 270:   t.is(slugify('foo 2'), 'foo-2-2');\u001b[22m\u001b[49m\n   \u001b[90m271:\u001b[39m                                     \n\n  Difference (\u001b[31m-\u001b[39m \u001b[31mactual\u001b[39m, \u001b[32m+\u001b[39m \u001b[32mexpected\u001b[39m):\n\n  \u001b[31m-\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2-\u001b[39m\u001b[41m\u001b[30m1\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n  \u001b[32m+\u001b[39m \u001b[34m'\u001b[39m\u001b[34mfoo-2-\u001b[39m\u001b[42m\u001b[30m2\u001b[39m\u001b[49m\u001b[34m'\u001b[39m\n\n  \u001b[90m› file://test.js:270:4\u001b[39m\n\n  \u001b[90m─\u001b[39m\n\n  \u001b[31m1 test failed\u001b[39m\n"
+      },
+      "status": "failed",
+      "wall_ms": 158211,
+      "finished_at": "2026-09-22T02:52:05.606Z",
+      "end_index_sha256": "0ab167fd897fe0e8cc496227411c5f5680d36c4ac0865c000e4c032066376e0c"
+    },
+    {
+      "arm": "stock-pi",
+      "trial": 5,
+      "task": "slugify-counter-duplicate-slug",
+      "model": "deepseek-v4.1-flash",
+      "provider": "opencode-go",
+      "session_uuid": "stock-pi-26e116b8-8ec1-48aa-bd06-5f4f8e491b3e",
+      "started_at": "2026-09-22T02:52:06.134Z",
+      "ceiling_ms": 300000,
+      "start_hashes": {
+        "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+        "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+      },
+      "usage": {
+        "input_tokens": 33162,
+        "cached_input_tokens": 498304,
+        "output_tokens": 10011,
+        "reasoning_tokens": 6515,
+        "jev_tokens": 0,
+        "local_gpu_seconds": 0,
+        "external_harness_calls": 0,
+        "subscription_usage": 0
+      },
+      "usage_dialect": "pi-disjoint/output-includes-reasoning",
+      "model_cost_usd": 0.012476,
+      "classifier_cost_usd": 0,
+      "delegated_cost_usd": 0,
+      "other_cost_usd": 0,
+      "harness": {
+        "errors": [],
+        "records": 1,
+        "tool_calls": 17,
+        "invalid_counts": false,
+        "delegation_suspected": false,
+        "exit": 0,
+        "signal": null,
+        "timed_out": false,
+        "spawn_error": null,
+        "wall_ms": 62290
+      },
+      "classifier": {
+        "tokens": 0,
+        "usd": 0,
+        "unknown": false,
+        "records": 0
+      },
+      "protected_files_unchanged": true,
+      "external_golden": {
+        "status": 0,
+        "passed": 25,
+        "failed": null,
+        "verified": true,
+        "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+      },
+      "status": "passed",
+      "wall_ms": 62290,
+      "finished_at": "2026-09-22T02:53:08.779Z",
+      "end_index_sha256": "3fc33356f50e9fb593f8882a704f7d8df4d43382cb6a37307a75bc8f25f197f8"
+    }
+  ]
+}

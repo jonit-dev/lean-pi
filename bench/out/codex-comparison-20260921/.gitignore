@@ -1,0 +1,17 @@
+# Generated Codex home: installed skills/plugins, SQLite state, caches, credentials.
+codex-home/*
+!codex-home/config.toml
+# Local fixture/workspace copies (nested Git repos); per-arm index.js patches are kept alongside.
+attempts/*/workspace/
+attempts/*/agentdir/
+preflight/base/
+preflight/good/
+preflight/accept/
+preflight/parity/agentdir/
+# Credential stores and env files.
+auth.json
+models.json
+models-store.json
+.env
+.env.*
+*.sqlite

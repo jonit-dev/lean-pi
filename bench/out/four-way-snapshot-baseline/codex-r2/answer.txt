@@ -1,0 +1,13 @@
+Fixed. The counter only tracked raw slug strings, so a slug already handed out as another title's numbered variant wasn't recognized as taken.
+
+**What changed** (`index.js:126`)
+- Added a `usedSlugs` set recording every emitted slug.
+- After computing the candidate via the existing occurrence logic, if it was already emitted, the counter is bumped (`foo-2` → `foo-2-2`) until the slug is free.
+- `reset()` now clears `usedSlugs` too, preserving reset semantics.
+
+**Verification**
+- `npm test` (xo + ava): 24/24 pass, including the existing exact-string counter expectations and ReDoS test.
+- Collision before: `foo`, `foo`, `foo-1`, `foo-2` → `foo`, `foo-2`, `foo-1`, `foo-2` (duplicate). After: `foo`, `foo-2`, `foo-1`, `foo-2-2` (unique).
+- Exhaustive and randomized fuzzing over repeated/colliding titles found zero duplicate emissions.
+
+No test files, dependencies, or docs were modified.

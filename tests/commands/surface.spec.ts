@@ -36,7 +36,7 @@ describe("/help, /status and /config (PRD-016 Phase 1)", () => {
 
 		const help = await fixture.dispatch("/help");
 		expect(help.ok).toBe(true);
-		for (const name of ["help", "status", "models", "route", "context", "compact-refs", "config", "doctor"]) {
+		for (const name of ["help", "status", "model", "route", "context", "compact-refs", "config", "doctor"]) {
 			expect(help.text).toContain(`/${name}`);
 		}
 		// A command this PRD does not own, registered by another PRD's module.
@@ -79,7 +79,7 @@ describe("/help, /status and /config (PRD-016 Phase 1)", () => {
 
 				const help = await session.commands.dispatch("/help", { cwd });
 				expect(help.ok).toBe(true);
-				for (const name of ["help", "status", "models", "route", "context", "compact-refs", "config", "doctor"]) {
+				for (const name of ["help", "status", "model", "route", "context", "compact-refs", "config", "doctor"]) {
 					expect(help.text).toContain(`/${name}`);
 				}
 				// The commands other PRDs registered into the same map, with their own summaries.

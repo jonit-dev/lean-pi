@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "run_id": "audit-slugify-leanpi-r1-1790018482366",
+  "generated_at": "2026-09-21T19:23:28.852Z",
+  "suite_dir": "/home/joao/projects/lean-pi/bench/out/real-session-audit-20260921/suites/slugify",
+  "tasks": 1,
+  "telemetry_rows": 1,
+  "configs": [
+    {
+      "config_id": "leanpi-flash",
+      "label": "LeanPi (JEV enabled) on DeepSeek v4.1 Flash via opencode-go",
+      "adapter": "leanpi",
+      "operator": "leanpi",
+      "executor_model": "deepseek-v4.1-flash",
+      "loaded_extensions": [
+        "leanpi"
+      ],
+      "features": [
+        "jev",
+        "context-engine",
+        "skill-selection",
+        "mcp-disclosure",
+        "lsp",
+        "verification"
+      ],
+      "capability": {
+        "model_id": "opencode-go/deepseek-v4.1-flash",
+        "index": null,
+        "price_blended_per_mtok": null,
+        "speed_tier": "fast",
+        "source": "/home/joao/projects/lean-pi/src/capability/models.json",
+        "unavailable_reason": null
+      },
+      "attempts": 1,
+      "adjudicated_complete": 0,
+      "adjudicated_incomplete": 1,
+      "adjudication_errors": 0,
+      "reported_successes": 0,
+      "verified_solve_rate": 0,
+      "effective_cost_total": 0.017636,
+      "cost_per_verified_success": null,
+      "generator_tokens_total": 647505,
+      "generator_tokens_per_verified_success": null,
+      "time_to_verified_success_ms": {
+        "median": null,
+        "p95": null,
+        "n": 0
+      },
+      "false_completion_rate": null,
+      "false_completion_tasks": [],
+      "subscription_usage": 0,
+      "adjudicators": [
+        "npx ava test.js"
+      ],
+      "budget_usd": 1,
+      "note": null
+    }
+  ],
+  "pairing": [
+    {
+      "task_id": "slugify-counter-duplicate-slug",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "incomplete",
+          "reported_success": false,
+          "effective_cost": 0.017636,
+          "wall_ms": 124330
+        }
+      ]
+    }
+  ],
+  "section4": {
+    "relative_solve_rate": "90–95% or more of a contemporary Claude Code / Codex baseline",
+    "cost_ratio_of_baseline": 0.25,
+    "stretch_cost_ratio_of_baseline": 0.1,
+    "note": "ROADMAP §4 — product targets, not claims about current performance"
+  },
+  "section4_measured": [
+    {
+      "config_id": "leanpi-flash",
+      "cost_per_verified_success": null,
+      "verified_solve_rate": 0,
+      "relative_to_baseline": null
+    }
+  ],
+  "baseline_config_id": null,
+  "notes": [
+    "no baseline row ran in this invocation: the §4 comparison needs one of claude-code, codex or stock-pi"
+  ]
+}

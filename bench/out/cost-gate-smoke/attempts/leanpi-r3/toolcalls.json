@@ -1,0 +1,85 @@
+{
+  "arm": "leanpi",
+  "calls": [
+    {
+      "name": "execute",
+      "input": "{\"command\":\"ls -la && find . -type f -not -path './node_modules/*' -not -path './.git/*' | head -50\"}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat package.json && node -e \\\"\\nimport('./index.js').then(m => {\\n  const c = m.slugifyWithCounter();\\n  console.log(JSON.stringify([c('foo'), c('foo'), c('foo')]));\\n  const c2 = m.slugifyWithCounter();\\n  console.log(JSON.stri"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"test.js\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git log --oneline -5 && echo \\\"---STATUS---\\\" && git status && echo \\\"---DIFF---\\\" && git diff HEAD --stat\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"npx ava test.js 2>&1 | tail -40\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"node -e \\\"\\nimport('./index.js').then(m => {\\n  const s = m.slugifyWithCounter();\\n  const cases = ['foo','foo','foo 1','foo-1','foo-1','foo','foo','foo-1','foo-2','foo-2','foo-2-1','foo-2-1','foo-11','foo-111','foo-111-1'];\\n  "
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"node --input-type=module -e \\\"\\nimport slugify from './index.js';\\nconst occurrences = new Map();\\nconst removeCounterSuffix = s => { const p=s.split('-'); while(p.length>1 && /^\\\\d+\\\\$/.test(p.at(-1))) p.pop(); return p.join('-"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"node --input-type=module -e \\\"\\nimport {slugifyWithCounter} from './index.js';\\nconst inputs = ['foo','foo bar','foo-2','foo-3','a-1','a-2','test 1','test','unicorn','foo-1-2','x','y-9','abc-1','abc-2','abc-3','Title','Title 1']"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat .leanpi/decisions.jsonl; echo \\\"---\\\"; cat .gitignore; echo \\\"---leanpi---\\\"; ls -la .leanpi\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"node --input-type=module -e \\\"\\nimport {slugifyWithCounter} from './index.js';\\nconst s = slugifyWithCounter();\\nconsole.log(s('foo'), s('foo'), s('foo-2'));\\n\\\"\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"node --input-type=module -e \\\"\\nimport {slugifyWithCounter} from './index.js';\\nconst alphabet = ['foo','foo-1','foo-2','foo-3','foo-1-1','a','a-1','a-2','a-3','foo bar','foo 2','foo 3'];\\n// search sequences of length up to 5 f"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.d.ts\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"node --input-type=module -e \\\"\\nimport {slugifyWithCounter} from './index.js';\\nconst bases = ['foo','a','foo bar','x','test','foo-','_foo'];\\nconst suff = ['', ' 1',' 2',' 3','-1','-2','-3','-1-1','-2-1','-2-2','-3'];\\nconst op"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git log --all --oneline | head -20; echo \\\"---tags---\\\"; git tag; echo \\\"---branches---\\\"; git branch -a; echo \\\"---reflog---\\\"; git reflog | head; echo \\\"---remote---\\\"; git remote -v\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git show 6d97501 -- index.js index.d.ts test.js\"}"
+    },
+    {
+      "name": "edit",
+      "input": "{\"path\":\"index.js\",\"edits\":[{\"oldText\":\"export function slugifyWithCounter() {\\n\\tconst occurrences = new Map();\\n\\n\\tconst countable = (string, options) => {\\n\\t\\tstring = slugify(string, options);\\n\\n\\t\\tif (!string) {\\n\\t\\t\\treturn '';\\n"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"node --input-type=module -e \\\"\\nimport {slugifyWithCounter} from './index.js';\\nconst check = (input, expected, opts) => {\\n  const g = input.give; const got = input.run(opts);\\n  console.log(got === expected ? 'PASS' : 'FAIL', "
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"npx xo 2>&1 | tail -20; echo \\\"=== AVA ===\\\"; npx ava test.js 2>&1 | tail -8\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git diff index.js\"}"
+    }
+  ]
+}

@@ -18,6 +18,8 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { PACKAGE_ROOT } from "../core/package-info.js";
 import { isModelRole, MODEL_ROLES, type BackendRef, type LeanPiConfig, type ModelRole } from "../core/types.js";
+import { matchModel } from "./match.js";
+import type { CapabilityGap } from "./select.js";
 import { capabilityConfigOf, selectRoleModel, UnknownPinError, type RoleSelection } from "./roles.js";
 import { RankingUnavailableError, RankingValidationError, parseRankingFile, type ModelCapability, type RankedModel, type Ranking } from "./schema.js";
 
@@ -40,17 +42,33 @@ function ageDaysOf(isoDate: string, now: Date): number {
  * carries. `backend_hint` picks among declarations when the same model is
  * configured on several backends; it never invents one.
  */
-function bindingOf(record: ModelCapability, config: LeanPiConfig): BackendRef | null {
+function bindingOf(record: ModelCapability, config: LeanPiConfig, matched: ReadonlyMap<string, string>): BackendRef | null {
 	const bindings: BackendRef[] = [];
 	for (const [role, entry] of Object.entries(config.models)) {
 		// `models.specialists` (FR-047) is a language/task-type map, not a binding.
 		if (!isModelRole(role) || !entry) continue;
-		if (entry.model !== record.model_id && !record.aliases.includes(entry.model)) continue;
+		// Spelling is the CLI's, not the leaderboard's: `opencode-go/deepseek-v4.1-flash`
+		// and `deepseek-v4-1-flash` are the same model written by two parties. The
+		// join is resolved once against the whole file — matching a config entry
+		// against one record at a time would strip `matchModel`'s ambiguity checks,
+		// which are the only thing keeping a loose spelling off a neighbour.
+		if (matched.get(entry.model) !== record.model_id) continue;
 		const backend = config.backends[entry.backend];
 		if (!backend || backend.enabled === false) continue;
 		bindings.push({ backend: entry.backend, model: entry.model, type: backend.type });
 	}
 	return bindings.find((binding) => binding.backend === record.backend_hint) ?? bindings[0] ?? null;
+}
+
+/** Each configured model id, resolved to the one record it names. */
+function matchedRecords(file: { models: readonly ModelCapability[] }, config: LeanPiConfig): Map<string, string> {
+	const matched = new Map<string, string>();
+	for (const [role, entry] of Object.entries(config.models)) {
+		if (!isModelRole(role) || !entry || matched.has(entry.model)) continue;
+		const record = matchModel(file.models, entry.model);
+		if (record) matched.set(entry.model, record.model_id);
+	}
+	return matched;
 }
 
 function readRankingDocument(path: string): unknown {
@@ -77,7 +95,8 @@ export function loadRanking(config: LeanPiConfig, options: LoadRankingOptions = 
 	const setting = capabilityConfigOf(config);
 	const path = setting.rankingFile ?? BUNDLED_RANKING_PATH;
 	const file = parseRankingFile(readRankingDocument(path), path);
-	const models: RankedModel[] = file.models.map((record) => ({ ...record, backend_binding: bindingOf(record, config) }));
+	const matched = matchedRecords(file, config);
+	const models: RankedModel[] = file.models.map((record) => ({ ...record, backend_binding: bindingOf(record, config, matched) }));
 	const ranking: Ranking = {
 		revision: file.revision,
 		notes: file.notes,
@@ -116,6 +135,7 @@ export function loadRanking(config: LeanPiConfig, options: LoadRankingOptions = 
 
 let cached: { key: string; ranking: Ranking } | null = null;
 const reportedFallbacks = new Set<string>();
+const reportedGaps = new Set<string>();
 
 function rankingPathOf(config: LeanPiConfig): string {
 	return capabilityConfigOf(config).rankingFile ?? BUNDLED_RANKING_PATH;
@@ -131,8 +151,21 @@ function sourceKeyOf(path: string): string {
 	}
 }
 
+/**
+ * The config facts `loadRanking` bakes into each record's `backend_binding`. Two
+ * configs can share the bundled file and still resolve different bindings, so the
+ * role map and backend enablement are part of the cache identity, not just the
+ * file's mtime.
+ */
+function bindingKeyOf(config: LeanPiConfig): string {
+	return JSON.stringify([
+		config.models,
+		Object.entries(config.backends).map(([name, entry]) => [name, entry.type, entry.enabled !== false]),
+	]);
+}
+
 function rankingFor(config: LeanPiConfig): Ranking {
-	const key = sourceKeyOf(rankingPathOf(config));
+	const key = `${sourceKeyOf(rankingPathOf(config))}:${bindingKeyOf(config)}`;
 	if (cached?.key === key) return cached.ranking;
 	const ranking = loadRanking(config);
 	cached = { key, ranking };
@@ -145,6 +178,23 @@ function rankingFor(config: LeanPiConfig): Ranking {
  * throws for a ranking problem: PRD-001's static `models:` map remains the
  * fallback, and a stale ranking is still used.
  */
+/**
+ * What the statusline says about a role: who chose the model, and whether the
+ * chosen one actually clears the role's floor. Both answers come off the cached
+ * ranking, so it is a per-turn call and not a per-turn file read. A ranking that
+ * cannot be read is already reported by the path that routed the turn; the
+ * footer just says less rather than failing.
+ */
+export function roleStatus(config: LeanPiConfig, role: ModelRole): { pinned: boolean; gap?: CapabilityGap } {
+	const pinned = capabilityConfigOf(config).roles[role].pin !== undefined;
+	try {
+		const { capability_gap } = selectRoleModel(role, rankingFor(config), config);
+		return capability_gap ? { pinned, gap: capability_gap } : { pinned };
+	} catch {
+		return { pinned };
+	}
+}
+
 export function resolveRoleViaRanking(config: LeanPiConfig, role: ModelRole): BackendRef | null {
 	let ranking: Ranking;
 	try {
@@ -158,14 +208,25 @@ export function resolveRoleViaRanking(config: LeanPiConfig, role: ModelRole): Ba
 		}
 		return null;
 	}
-	return selectRoleModel(role, ranking, config).ref;
+	const selection = selectRoleModel(role, ranking, config);
+	// A gap is not a silent fallback: the resolved binding is returned either way,
+	// and the shortfall is named once per role so a machine running an unmeasured
+	// CLI model says so instead of looking like a clean selection. A config whose
+	// models the ranking does not carry at all (model_id null) is the ordinary
+	// static path, not a gap worth reporting.
+	if (selection.capability_gap && selection.model_id !== null && !reportedGaps.has(role)) {
+		reportedGaps.add(role);
+		process.stderr.write(`leanpi: capability gap (${role}): ${selection.capability_gap.reason}\n`);
+	}
+	return selection.ref;
 }
 
 export { capabilityConfigOf, DEFAULT_ROLE_SETTINGS, DEFAULT_STALENESS_DAYS, roleResolutionsOf, selectRoleModel, UnknownPinError } from "./roles.js";
 export type { CapabilityRoleSetting, CapabilitySetting, ResolvedCapabilitySetting, RoleSelection } from "./roles.js";
-export { boundCandidates, candidateRef, compareCandidates, findRankedModel, selectCheapestClearing } from "./select.js";
+export { boundCandidates, boundRecords, candidateRef, compareCandidates, findRankedModel, selectCheapestClearing } from "./select.js";
 export type { CapabilityCandidate, CapabilityGap, ClearingSelection } from "./select.js";
 export { EVIDENCE_VALUES, RankingUnavailableError, RankingValidationError, SPEED_TIERS, parseRankingFile } from "./schema.js";
 export type { Evidence, ModelCapability, RankedModel, Ranking, RankingFile, SpeedTier } from "./schema.js";
 export { capabilityRows } from "./feed.js";
 export type { CapabilityRow } from "./feed.js";
+export { idCandidates, matchModel } from "./match.js";

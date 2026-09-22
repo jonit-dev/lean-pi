@@ -137,9 +137,10 @@ interface UsageMessage {
 export function callsFromMessages(
 	messages: readonly unknown[],
 	ref: { backend: string; model: string },
-): { calls: BackendCall[]; toolCalls: number } {
+): { calls: BackendCall[]; toolCalls: number; fileReads: string[] } {
 	const calls: BackendCall[] = [];
 	let toolCalls = 0;
+	const fileReads: string[] = [];
 	for (const message of messages) {
 		// Pi's own `AgentMessage`, which this signature took as `unknown[]` before
 		// there was a Pi type to import; the field reads below check what they use.
@@ -175,10 +176,20 @@ export function callsFromMessages(
 		}
 		const content = assistant.content;
 		if (Array.isArray(content)) {
-			for (const part of content) if (part !== null && typeof part === "object" && "type" in part && part.type === "toolCall") toolCalls += 1;
+			for (const part of content) {
+				if (part === null || typeof part !== "object" || !("type" in part) || part.type !== "toolCall") continue;
+				toolCalls += 1;
+				// Only `read` counts as a file read: `search`/`execute` may touch a file
+				// without putting its bytes in context, and the counters exist to expose a
+				// re-read, not every path a command named.
+				if ("name" in part && part.name === "read" && "arguments" in part && typeof part.arguments === "object" && part.arguments !== null) {
+					const path = (part.arguments as { path?: unknown }).path;
+					if (typeof path === "string" && path.length > 0) fileReads.push(path);
+				}
+			}
 		}
 	}
-	return { calls, toolCalls };
+	return { calls, toolCalls, fileReads };
 }
 
 /** The executor/reviewer a run actually billed, read off its calls rather than restated. */

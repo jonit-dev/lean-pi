@@ -1,0 +1,19 @@
+{
+  "customApiKeyResponses": {
+    "approved": [
+      "Gnx2pKjR1rBD9_-kG10A"
+    ],
+    "rejected": []
+  },
+  "hasCompletedOnboarding": true,
+  "projects": {},
+  "firstStartTime": "2026-09-22T02:12:47.610Z",
+  "firstStartVersion": "2.1.267",
+  "machineID": "523945ba3b7a5e7817f53ed294bf7cd929a3417330515154cfdf10d20367df1f",
+  "opusProMigrationComplete": true,
+  "sonnet1m45MigrationComplete": true,
+  "seenNotifications": {},
+  "hasResetAutoModeOptInForDefaultOffer": true,
+  "migrationVersion": 14,
+  "userID": "19f6ec59f4a96385e54b31c5b5b068b72e60578a90f284c379045316748a963e"
+}

@@ -1,0 +1,54 @@
+diff --git a/index.js b/index.js
+index 7fb8db5..797c3de 100644
+--- a/index.js
++++ b/index.js
+@@ -125,28 +125,40 @@ export default function slugify(string, options) {
+ 
+ export function slugifyWithCounter() {
+ 	const occurrences = new Map();
++	const used = new Set();
+ 
+ 	const countable = (string, options) => {
+-		string = slugify(string, options);
++		const slug = slugify(string, options);
+ 
+-		if (!string) {
++		if (!slug) {
+ 			return '';
+ 		}
+ 
+-		const stringLower = string.toLowerCase();
++		const stringLower = slug.toLowerCase();
+ 		const numberless = occurrences.get(removeCounterSuffix(stringLower)) || 0;
+-		const counter = occurrences.get(stringLower);
+-		occurrences.set(stringLower, typeof counter === 'number' ? counter + 1 : 1);
+-		const newCounter = occurrences.get(stringLower) || 2;
+-		if (newCounter >= 2 || numberless > 2) {
+-			string = `${string}-${newCounter}`;
++		let counter = occurrences.get(stringLower) || 0;
++		let result;
++
++		// Hand out the plain slug only when it is this slug's first occurrence, the base slug has not already produced counter suffixes, and the plain slug itself is still free. Otherwise append a counter, skipping any value a previous call already handed out, so every emitted slug is distinct.
++		if (counter === 0 && numberless <= 2 && !used.has(stringLower)) {
++			counter = 1;
++			result = slug;
++		} else {
++			do {
++				counter += 1;
++				result = `${slug}-${counter}`;
++			} while (used.has(result.toLowerCase()));
+ 		}
+ 
+-		return string;
++		occurrences.set(stringLower, counter);
++		used.add(result.toLowerCase());
++
++		return result;
+ 	};
+ 
+ 	countable.reset = () => {
+ 		occurrences.clear();
++		used.clear();
+ 	};
+ 
+ 	return countable;

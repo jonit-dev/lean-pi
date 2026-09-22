@@ -63,6 +63,15 @@ export interface JevClient {
 	sites(): DecisionSite[];
 	/** Token usage of the most recently resolved site; zero when it fell back. */
 	lastUsage(): JevUsage;
+	/**
+	 * Decisions JEV itself answered this session, fallbacks excluded.
+	 *
+	 * JEV is the part of LeanPi a user cannot see working: it is never a tool, it
+	 * emits nothing, and a session where it answered every routing question looks
+	 * exactly like one where it was never configured. This is what lets the turn
+	 * report say which it was.
+	 */
+	answeredCount(): number;
 	getMode(): JevMode;
 	setMode(mode: JevMode): void;
 	fallbackCount(): number;
@@ -180,6 +189,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 	let lastUsage: JevUsage = emptyUsage();
 	let mode: JevMode = config.jev.mode;
 	let fallbackCount = 0;
+	let answeredCount = 0;
 	let reachable = false;
 	let modelVersion = model;
 
@@ -203,14 +213,21 @@ export function createJevClient(options: JevClientOptions): JevClient {
 		};
 	}
 
-	function resolveByFallback(site: DecisionSite, questions: JevQuestion[], state: unknown, reason: string): JevResult[] {
+	/**
+	 * `spent` is the usage of a request that already completed and was billed.
+	 * `below-threshold` rejects the answers but not the invoice, so recording
+	 * zero there under-reports the classifier and hides real spend from the cost
+	 * ledger. Paths that never reached the service (disabled, no-credential,
+	 * transport error) pass nothing and still record zero, which is accurate.
+	 */
+	function resolveByFallback(site: DecisionSite, questions: JevQuestion[], state: unknown, reason: string, spent?: JevUsage): JevResult[] {
 		const results = site.fallback({ siteId: site.id, reason, state, questions });
 		if (!Array.isArray(results) || results.length !== questions.length) {
 			throw new Error(`Fallback for site "${site.id}" returned ${Array.isArray(results) ? results.length : 0} results for ${questions.length} questions.`);
 		}
 		fallbackCount += 1;
-		lastUsage = emptyUsage();
-		log.append(rowFor(site, results, emptyUsage(), reason));
+		lastUsage = spent ?? emptyUsage();
+		log.append(rowFor(site, results, lastUsage, reason));
 		return results;
 	}
 
@@ -285,10 +302,11 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			// clears it does the whole site resolve through its fallback.
 			const accepted = results.filter((result) => accept(result, site.consequence));
 			if (accepted.length === 0) {
-				return resolveByFallback(site, questions, state, "below-threshold");
+				return resolveByFallback(site, questions, state, "below-threshold", response.usage);
 			}
 			log.append(rowFor(site, accepted, response.usage));
 			lastUsage = response.usage;
+			answeredCount += 1;
 			return accepted;
 		},
 
@@ -299,6 +317,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			mode = next;
 		},
 		fallbackCount: () => fallbackCount,
+		answeredCount: () => answeredCount,
 		credentialSource: () => currentCredential().source,
 		async status() {
 			const credential = currentCredential();

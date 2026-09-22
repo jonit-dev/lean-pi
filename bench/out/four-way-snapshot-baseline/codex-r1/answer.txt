@@ -1,0 +1,13 @@
+Fixed in `index.js:126`.
+
+**Root cause**
+The counter map is keyed on the *incoming* slug only, so it can't see slugs previously emitted by appending a counter to a *different* input. Example: `foo`, `foo`, then `foo 2` produced `foo-2` twice — the second `foo` consumed the counter for `foo`, but nothing recorded that `foo-2` was already handed out.
+
+**Fix**
+- Track every returned slug in a `Set` (case-insensitive, matching the counter's own lowercasing).
+- If the computed result was already returned, keep incrementing the counter until an unused slug is found, updating `occurrences` so subsequent calls stay consistent.
+- Clear the set in `reset()`.
+
+**Verification**
+- Collision scenarios now yield distinct slugs, e.g. `foo`/`foo`/`foo 2` → `foo`, `foo-2`, `foo-2-2`; `bar`/`bar 2`/`bar 3`/`bar` → `bar`, `bar-2`, `bar-3`, `bar-4`.
+- `npm test` (xo + ava) passes: 24 tests, lint clean. No test or dependency files were modified.

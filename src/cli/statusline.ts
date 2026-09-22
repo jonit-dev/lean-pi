@@ -3,29 +3,70 @@
  *
  * "Tell me your goal, I figure out the rest" only works if the figuring is
  * visible: the harness silently picking a model, an effort and a lane is
- * indistinguishable from a harness doing nothing. This renders exactly the
- * decisions the compiler made for the turn in flight — what is executing, how
- * hard it was told to think, what the task was classified as, and which lane is
- * running — so an operator can see a cheap model on a mechanical task and a
- * strong one on a risky change.
+ * indistinguishable from a harness doing nothing. This renders the decisions
+ * the compiler made for the turn in flight — but only the ones an operator can
+ * read at a glance and act on.
+ *
+ * What it deliberately does NOT say: which internal lane ran. "Pi loop" and
+ * "Executor lane" name LeanPi's own plumbing, and an operator who cannot change
+ * the lane cannot use the word.
  */
 import type { ExecutionContract } from "../compiler/contract.js";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ExecutionComplexity } from "../compiler/contract.js";
 import type { LeanPiConfig, ModelRole } from "../core/types.js";
 import { resolveRole } from "../core/roles.js";
+import { roleStatus } from "../capability/index.js";
 
 /** The footer slot LeanPi owns; one key, replaced each turn. */
 export const LEANPI_STATUS_KEY = "leanpi";
 
-/** Every level Pi can be set to: the compiler decides three, an operator's ceiling can name any. */
-const EFFORT_LABEL: Record<ThinkingLevel, string> = {
-	off: "Off",
-	minimal: "Minimal",
-	low: "Low",
-	medium: "Medium",
-	high: "High",
-	xhigh: "X-High",
-	max: "Max",
+/** The separator between chips; spaced so each chip reads as its own word. */
+const SEP = "  \u00b7  ";
+
+/**
+ * SGR colour for the status slot.
+ *
+ * Pi's `setStatus` takes a plain string and passes it to the TUI verbatim —
+ * measured, not assumed: a bold sequence written into the slot reaches the
+ * terminal intact. The theme cannot reach here (it colours Pi's own chrome, not
+ * an extension's status text), so these are ordinary escapes and the palette
+ * they resolve against is the terminal's.
+ */
+const RESET = "\u001b[0m";
+const BOLD = "\u001b[1m";
+const DIM = "\u001b[38;5;244m";
+/** The one colour that means "act on this": the two warning chips and nothing else. */
+const WARN = "\u001b[38;5;208m";
+
+/**
+ * Effort as a temperature, matching the theme's `thinking*` ramp: cheap and safe
+ * is green, costly is red. A scale is readable at a glance in a way that four
+ * unrelated hues are not.
+ */
+const EFFORT_COLOR: Record<ThinkingLevel, string> = {
+	off: DIM,
+	minimal: "\u001b[38;5;247m",
+	low: "\u001b[38;5;77m",
+	medium: "\u001b[38;5;221m",
+	high: "\u001b[38;5;208m",
+	xhigh: "\u001b[38;5;203m",
+	max: "\u001b[38;5;196m",
+};
+
+/** Pi's level names are already English; only the squashed one needs a hyphen. */
+function effortLabel(level: ThinkingLevel): string {
+	return level === "xhigh" ? "x-high" : level;
+}
+
+/**
+ * The compiler's LOW/MEDIUM/HIGH, said the way an operator would say it. The
+ * raw enum told the user the harness had an enum, not what it decided.
+ */
+const COMPLEXITY_LABEL: Record<ExecutionComplexity, string> = {
+	LOW: "simple task",
+	MEDIUM: "normal task",
+	HIGH: "hard task",
 };
 
 /** Model ids are vendor strings; this is the name a human recognises. */
@@ -42,7 +83,6 @@ export type Lane = "pi_loop" | "executor";
 export interface StatusInput {
 	config: LeanPiConfig;
 	contract: ExecutionContract;
-	lane: Lane;
 	/** The role actually dispatched, when it differs from the contract's class. */
 	role?: ModelRole;
 	/** The model actually running, when it is not the one the role resolves to. */
@@ -53,46 +93,87 @@ export interface StatusInput {
 	 * runs, and the footer named the pre-ceiling number.
 	 */
 	effort?: ThinkingLevel;
-	/** The compiler wants a PRD and none is open; the user opens one. */
-	prdWanted?: boolean;
+	/** Accumulated session spend in USD. Omitted when nothing has been priced yet. */
+	cost?: number;
+	/**
+	 * Pi's own context usage for the running model, 0–100. Omitted when Pi does
+	 * not know it yet (right after a compaction it does not) — a measured number
+	 * or nothing, never a plausible one.
+	 */
+	contextPercent?: number;
+	/**
+	 * A backend the last probe found unusable, as `codex signed-out`. The probe
+	 * cache is `/doctor`'s and is only filled once something has probed, so this
+	 * is absent on a session where nobody asked.
+	 */
+	degraded?: string;
+	/** The active goal's text, when one is running. */
+	goal?: string;
+	/**
+	 * Emit SGR escapes: the model bold, the effort on the green-to-red ramp.
+	 * Off by default so a caller comparing the line as text gets text.
+	 */
+	color?: boolean;
 }
 
-const LANE_LABEL: Record<Lane, string> = {
-	// Who is actually running the turn. With subscription backends LeanPi's own
-	// executor lane spawns the vendor; with a native provider Pi's loop does the
-	// work and LeanPi has set its model and effort — saying "Executor lane" there
-	// would name a lane that did not run.
-	pi_loop: "Pi loop",
-	executor: "Executor lane",
-};
-
-/** `Auto: claude opus (1m) (Medium) — MEDIUM complexity — Executor lane` */
-export function statusLine({ config, contract, lane, role, model: running, effort: applied, prdWanted }: StatusInput): string {
+/** `deepseek-v4.1-flash  ·  opencode-go  ·  auto  ·  thinking: medium  ·  hard task  ·  $0.42` */
+export function statusLine({ config, contract, role, model: running, effort: applied, cost, goal, contextPercent, degraded, color }: StatusInput): string {
 	const resolvedRole = role ?? contract.routing.executor_class;
 	let model: string;
+	// The same model id is served by several providers at different prices and
+	// context windows, so the name alone does not say which one the turn is on.
+	let provider: string | undefined;
+	// Which model runs is the harness's call until the operator makes it theirs:
+	// the capability index picks one per turn, and only a `/model` pin stops it.
+	let auto = false;
+	// The role asked for a floor the running model does not clear. Reported once
+	// to stderr at session start, which in the TUI is nowhere, so a hard task
+	// quietly running on the cheap model looked exactly like one that was not.
+	// Only a *measured* shortfall: an unmeasured model (every CLI model is one)
+	// would fire this on every turn and the chip would stop meaning anything.
+	let shortfall: string | undefined;
 	if (running !== undefined) {
 		// The caller knows what is executing and it is not the role's model — Pi
 		// kept the session model because the class has no entry in its registry.
-		model = running.includes("/") ? prettyModel(...(running.split("/", 2) as [string, string])) : running;
+		const split = running.includes("/") ? (running.split("/", 2) as [string, string]) : undefined;
+		model = split ? prettyModel(...split) : running;
+		provider = split?.[0];
 	} else {
+		const status = roleStatus(config, resolvedRole);
+		auto = !status.pinned;
+		if (status.gap !== undefined && status.gap.best_available !== null) shortfall = `⚠ below ${resolvedRole} floor`;
 		try {
 			const ref = resolveRole(config, resolvedRole);
 			model = prettyModel(ref.backend, ref.model);
+			provider = ref.backend;
 		} catch {
 			// An unconfigured role is a real state (the config names fewer roles than
 			// the compiler uses); the line says which role rather than throwing.
 			model = resolvedRole;
 		}
 	}
-	const effort = EFFORT_LABEL[applied ?? contract.reasoning.effort];
-	const parts = [`Auto: ${model} (${effort}) — ${contract.task.execution_complexity} complexity — ${LANE_LABEL[lane]}`];
-	// The turn the user is about to get is unverified, and saying so is the
-	// difference between "evidence-driven completion" and a slogan: on the Pi
-	// loop LeanPi's executor lane never runs, so PRD-009's verification and
-	// PRD-010's gate never run either. `/verify` is where the user can ask for
-	// them against the workspace the turn leaves behind.
-	if (lane === "pi_loop" && contract.verification.required.length > 0) parts.push("unverified — /verify");
-	// The one decision LeanPi cannot make for the user: the PRD document itself.
-	if (prdWanted === true) parts.push("/prd create to open the PRD lane");
-	return parts.join(" — ");
+	const level = applied ?? contract.reasoning.effort;
+	const effort = `thinking: ${effortLabel(level)}`;
+	const parts = [
+		color === true ? `${BOLD}${model}${RESET}` : model,
+		// `default` renders as the backend name already; a second copy of it is noise.
+		...(provider !== undefined && provider !== model ? [color === true ? `${DIM}${provider}${RESET}` : provider] : []),
+		...(auto ? [color === true ? `${DIM}auto${RESET}` : "auto"] : []),
+		color === true ? `${EFFORT_COLOR[level]}${effort}${RESET}` : effort,
+		COMPLEXITY_LABEL[contract.task.execution_complexity],
+	];
+	// Spend is the one number an operator steers on, and a harness that routes
+	// for cost without ever showing the bill is asking to be trusted on it.
+	if (cost !== undefined) parts.push(`$${cost.toFixed(2)}`);
+	// The number that decides whether to run `/compact-refs`, and the only one on
+	// the line the user acts on *before* the turn goes wrong rather than after.
+	if (contextPercent !== undefined) parts.push(`ctx ${Math.round(contextPercent)}%`);
+	// A goal runs across turns, so nothing else on screen says one is live —
+	// which is how a leftover goal gets mistaken for the harness acting on its own.
+	if (goal !== undefined && goal.length > 0) parts.push(`goal: ${goal.length > 32 ? `${goal.slice(0, 31)}…` : goal}`);
+	// Last, and only when true: both warnings are the operator's next action, and
+	// a line that ends in one is read even when the rest of it is not.
+	if (shortfall !== undefined) parts.push(color === true ? `${WARN}${shortfall}${RESET}` : shortfall);
+	if (degraded !== undefined) parts.push(color === true ? `${WARN}⚠ ${degraded}${RESET}` : `⚠ ${degraded}`);
+	return parts.join(SEP);
 }

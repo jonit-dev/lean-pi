@@ -1,0 +1,59 @@
+{
+  "arm": "leanpi",
+  "trial": 2,
+  "task": "slugify-counter-duplicate-slug",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "session_uuid": "leanpi-54c1a737-09bb-4bdf-bcff-b24559b5341d",
+  "started_at": "2026-09-22T03:42:02.386Z",
+  "ceiling_ms": 300000,
+  "start_hashes": {
+    "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+    "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+  },
+  "usage": {
+    "input_tokens": 15081,
+    "cached_input_tokens": 154752,
+    "output_tokens": 2979,
+    "reasoning_tokens": 3973,
+    "jev_tokens": 4219,
+    "local_gpu_seconds": 0,
+    "external_harness_calls": 0,
+    "subscription_usage": 0
+  },
+  "usage_dialect": "pi-disjoint/output-excludes-reasoning",
+  "model_cost_usd": 0.006896,
+  "classifier_cost_usd": 0.000153258,
+  "delegated_cost_usd": 0,
+  "other_cost_usd": 0,
+  "harness": {
+    "errors": [],
+    "records": 1,
+    "tool_calls": 17,
+    "invalid_counts": false,
+    "delegation_suspected": false,
+    "exit": 0,
+    "signal": null,
+    "timed_out": false,
+    "spawn_error": null,
+    "wall_ms": 46497
+  },
+  "classifier": {
+    "tokens": 3649,
+    "usd": 0.000153258,
+    "unknown": false,
+    "records": 5
+  },
+  "protected_files_unchanged": true,
+  "external_golden": {
+    "status": 0,
+    "passed": 25,
+    "failed": null,
+    "verified": true,
+    "tail": "stom separator\n  \u001b[32m✔\u001b[39m custom replacements\n  \u001b[32m✔\u001b[39m lowercase option\n  \u001b[32m✔\u001b[39m decamelize option\n  \u001b[32m✔\u001b[39m supports German umlauts\n  \u001b[32m✔\u001b[39m supports Vietnamese\n  \u001b[32m✔\u001b[39m supports Arabic\n  \u001b[32m✔\u001b[39m supports Persian / Farsi\n  \u001b[32m✔\u001b[39m supports Urdu\n  \u001b[32m✔\u001b[39m supports Pashto\n  \u001b[32m✔\u001b[39m supports Russian\n  \u001b[32m✔\u001b[39m supports Romanian\n  \u001b[32m✔\u001b[39m supports Turkish\n  \u001b[32m✔\u001b[39m supports Armenian\n  \u001b[32m✔\u001b[39m leading underscore\n  \u001b[32m✔\u001b[39m trailing dash\n  \u001b[32m✔\u001b[39m counter\n  \u001b[32m✔\u001b[39m slugifyWithCounter() never returns the same slug twice\n  \u001b[32m✔\u001b[39m preserve characters\n  \u001b[32m✔\u001b[39m locale option\n  \u001b[32m✔\u001b[39m transliterate option disabled\n  \u001b[32m✔\u001b[39m slugifyWithCounter() is not vulnerable to ReDoS\n  \u001b[90m─\u001b[39m\n\n  \u001b[32m25 tests passed\u001b[39m\n"
+  },
+  "status": "passed",
+  "wall_ms": 46497,
+  "finished_at": "2026-09-22T03:42:49.272Z",
+  "end_index_sha256": "65f19dcf087db337e168a80aa4258be749a690ccb6ff96f961156531815b8d74"
+}

@@ -1,0 +1,42 @@
+{
+  "scope": "Post-hoc diagnostic: uniqueness and reset over finite input sequences; not a replacement for upstream acceptance",
+  "alphabet": [
+    "foo",
+    "foo 2",
+    "foo-2",
+    "foo-2-1",
+    "foo-3",
+    "Foo"
+  ],
+  "maxLength": 4,
+  "outcomes": {
+    "baseline": {
+      "sequences": 1554,
+      "failed": 384,
+      "firstFailure": {
+        "input": [
+          "foo",
+          "foo",
+          "foo 2"
+        ],
+        "output": [
+          "foo",
+          "foo-2",
+          "foo-2"
+        ],
+        "unique": false,
+        "resetMatches": true
+      }
+    },
+    "codex": {
+      "sequences": 1554,
+      "failed": 0,
+      "firstFailure": null
+    },
+    "leanpi": {
+      "sequences": 1554,
+      "failed": 0,
+      "firstFailure": null
+    }
+  }
+}

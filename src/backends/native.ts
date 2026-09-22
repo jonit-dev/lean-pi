@@ -9,9 +9,11 @@
  */
 import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@earendil-works/pi-coding-agent";
+import { apiKeyFor } from "../core/config.js";
 import { BASELINE_TOOL_NAMES, registerBaselineTools } from "../core/tools.js";
+import { changeSnapshot, changedPathsSince } from "../runtime/git.js";
 import type { RegisteredBackend } from "./registry.js";
-import { changedFilesSince, modelFor, snapshotFiles, type WorkerOutcome, type WorkerTaskPacket } from "./worker.js";
+import { modelFor, type WorkerOutcome, type WorkerTaskPacket } from "./worker.js";
 
 /** Default loop ceiling when the packet carries no budget. */
 export const DEFAULT_NATIVE_BUDGET = 8;
@@ -21,6 +23,8 @@ export interface RunNativeDeps {
 	agentDir?: string;
 	/** Wall-clock ceiling for the whole loop; absent means no ceiling. */
 	timeoutMs?: number;
+	/** Environment the provider credential is resolved from; `process.env` when absent. */
+	env?: NodeJS.ProcessEnv;
 }
 
 /** Why a native loop stopped. The order of the checks is the priority order. */
@@ -81,8 +85,12 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 	if (!modelId) {
 		return { status: "failed", failure: "model", reason: `backend "${backend.name}" declares no model for role "${packet.role}"` };
 	}
-	const files = packet.files ?? [];
-	const before = snapshotFiles(deps.cwd, files);
+	const before = changeSnapshot(deps.cwd);
+	/** The turn's own change set from worktree state; unknown when git cannot answer. */
+	const changeFields = (): { changedFiles: string[]; changedFilesUnknown?: boolean } => {
+		const paths = before === null ? null : changedPathsSince(before, deps.cwd);
+		return paths === null ? { changedFiles: [], changedFilesUnknown: true } : { changedFiles: paths };
+	};
 	const budget = packet.budget ?? DEFAULT_NATIVE_BUDGET;
 
 	let services;
@@ -100,7 +108,9 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 							pi.registerProvider(backend.provider, {
 								name: backend.displayName,
 								baseUrl: backend.baseUrl,
-								apiKey: backend.apiKey ?? "LEANPI_BACKEND_API_KEY",
+								// A bare env-var name is resolved (or omitted) the same way the
+								// interactive session resolves it; never sent as a literal key.
+								...(apiKeyFor(backend.apiKey, deps.env ?? process.env) ?? {}),
 								api: backend.api ?? "openai-completions",
 								models: [
 									{
@@ -211,7 +221,7 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 		return {
 			status: "blocked",
 			summary: `wall-clock ceiling of ${Math.round((deadlineMs ?? 0) / 1000)} s reached before the task completed`,
-			changedFiles: changedFilesSince(before, deps.cwd, files),
+			...changeFields(),
 			sessionId: stats.sessionId,
 			raw,
 		};
@@ -220,7 +230,7 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 		return {
 			status: "blocked",
 			summary: `budget of ${budget} turns exhausted before the task completed`,
-			changedFiles: changedFilesSince(before, deps.cwd, files),
+			...changeFields(),
 			sessionId: stats.sessionId,
 			raw,
 		};
@@ -228,7 +238,7 @@ export async function runNative(backend: RegisteredBackend, packet: WorkerTaskPa
 	return {
 		status: "ok",
 		summary: summary.length > 0 ? summary : `native run on ${backend.name}`,
-		changedFiles: changedFilesSince(before, deps.cwd, files),
+		...changeFields(),
 		sessionId: stats.sessionId,
 		raw,
 	};

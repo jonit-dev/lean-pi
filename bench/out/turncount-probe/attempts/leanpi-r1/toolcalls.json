@@ -1,0 +1,89 @@
+{
+  "arm": "leanpi",
+  "calls": [
+    {
+      "name": "execute",
+      "input": "{\"command\":\"ls -la\"}"
+    },
+    {
+      "name": "search",
+      "input": "{\"pattern\":\"slugifyWithCounter\"}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\",\"offset\":110,\"limit\":40}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"test.js\",\"offset\":225,\"limit\":50}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat package.json && node --test test.js 2>&1 | tail -40\"}"
+    },
+    {
+      "name": "search",
+      "input": "{\"pattern\":\"removeCounterSuffix\",\"path\":\"index.js\",\"context\":6}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"./node_modules/.bin/ava test.js 2>&1 | tail -60\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git log --oneline -10 && echo \\\"---STATUS---\\\" && git status && echo \\\"---DIFF---\\\" && git diff HEAD\"}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\",\"limit\":40,\"offset\":125}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"index.js\",\"limit\":45}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat > /tmp/fuzz.mjs <<'EOF'\\nimport {slugifyWithCounter} from './index.js';\\nconst inputs = ['foo bar','foo bar','foo','foo','foo 1','foo-1','foo-2','foo','foo','hello world','Hello World','hello-world','test','test','test 1','t"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat > /tmp/fuzz.mjs <<'EOF'\\nimport {slugifyWithCounter} from '/home/joao/projects/lean-pi/bench/out/turncount-probe/attempts/leanpi-r1/workspace/index.js';\\nconst inputs = ['foo bar','foo bar','foo','foo','foo 1','foo-1','foo-2"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat > /tmp/fuzz2.mjs <<'EOF'\\nimport {slugifyWithCounter} from '/home/joao/projects/lean-pi/bench/out/turncount-probe/attempts/leanpi-r1/workspace/index.js';\\n// for each single input, fresh counter, call 5 times, look for dupli"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git show --stat HEAD && echo \\\"=== index.js diff ===\\\" && git show HEAD -- index.js | head -120\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git log --oneline -15 -- index.js && echo \\\"=== 9071a26 ===\\\" && git show 9071a26 -- index.js | head -200\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat > /tmp/fuzz3.mjs <<'EOF'\\nimport {slugifyWithCounter} from '/home/joao/projects/lean-pi/bench/out/turncount-probe/attempts/leanpi-r1/workspace/index.js';\\nconst pool = [];\\nfor (const b of ['foo','bar','a','x','test','hello'"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git branch -a && git tag && git log --all --oneline | head -30 && echo \\\"---\\\" && git log --oneline --all --source | head -5\"}"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"git show 6d97501 --stat && echo \\\"=====DIFF=====\\\" && git show 6d97501\"}"
+    },
+    {
+      "name": "edit",
+      "input": "{\"path\":\"index.js\",\"edits\":[{\"oldText\":\"export function slugifyWithCounter() {\\n\\tconst occurrences = new Map();\\n\",\"newText\":\"export function slugifyWithCounter() {\\n\\tconst occurrences = new Map();\\n\\tconst returned = new Set();\\n\"},{\"old"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"cat > /tmp/verify.mjs <<'EOF'\\nimport {slugifyWithCounter} from '/home/joao/projects/lean-pi/bench/out/turncount-probe/attempts/leanpi-r1/workspace/index.js';\\nconst eq=(a,b,m)=>{if(a!==b)throw new Error(`${m}: expected ${JSON.s"
+    },
+    {
+      "name": "execute",
+      "input": "{\"command\":\"./node_modules/.bin/xo index.js 2>&1 | tail -20; echo \\\"xo exit: $?\\\"; git diff --stat\"}"
+    }
+  ]
+}

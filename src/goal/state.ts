@@ -7,15 +7,27 @@
  * existing `.leanpi/` directory — no new store, no schema, no migration logic
  * for a format that has never shipped.
  *
- * `--max-turns` / `--max-cost` are optional *flags*, never optional limits: an
- * absent flag takes `goal.default_max_turns` / `goal.default_max_cost` at goal
- * creation, so an auto-continuing loop is always bounded on both axes.
+ * `--max-turns` / `--max-cost` are optional flags over optional limits: an
+ * absent flag takes `goal.default_max_turns` / `goal.default_max_cost`, and
+ * with neither the goal runs uncapped. A cap the user did not ask for stopped
+ * real work mid-task, so the bound is opt-in — `0` on either axis means "no
+ * cap" everywhere it is read.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { LeanPiConfig } from "../core/types.js";
 
-/** ROADMAP §42's record plus `turns_used`; exactly these six keys, in this order. */
+/**
+ * ROADMAP §42's record plus `turns_used`, and the session that set it.
+ *
+ * `session_id` is what stops a goal outliving the conversation that asked for
+ * it. The record is a file on disk, so before this field an `active` goal from
+ * last week was still injected into the working state of every later session —
+ * a user who typed "hi" in a fresh conversation got a harness pursuing a goal
+ * they had forgotten setting, with nothing on screen saying why. It is optional
+ * because records written before this field exist; a record without one is read
+ * as belonging to no live session, which is the safe reading.
+ */
 export interface GoalState {
 	text: string;
 	active: boolean;
@@ -23,13 +35,14 @@ export interface GoalState {
 	max_cost: number;
 	started_at: string;
 	turns_used: number;
+	session_id?: string;
 }
 
 export const GOAL_STATE_PATH_DEFAULT = ".leanpi/goal.json";
 
-/** The concrete, non-zero limits a flagless `/goal` takes when config says nothing. */
-export const DEFAULT_MAX_TURNS = 5;
-export const DEFAULT_MAX_COST = 2;
+/** No cap unless asked for: `0` on either axis disables that limit. */
+export const DEFAULT_MAX_TURNS = 0;
+export const DEFAULT_MAX_COST = 0;
 
 export const GOAL_USAGE = "usage: /goal <text> [--max-turns <n>] [--max-cost <usd>] | /goal | /goal stop";
 
@@ -44,8 +57,7 @@ function positive(value: unknown, fallback: number): number {
 /**
  * The `goal:` config block, read structurally: PRD-001's loader passes unknown
  * keys through `overrides` untouched and this PRD owns the defaults rather than
- * the key declaration. An absent or unusable value takes the documented default
- * — a flagless goal is never unbounded.
+ * the key declaration. An absent or unusable value means no cap on that axis.
  */
 export function defaultGoalLimits(config?: LeanPiConfig): { max_turns: number; max_cost: number } {
 	const goal = (config as { goal?: { default_max_turns?: unknown; default_max_cost?: unknown } } | undefined)?.goal;
@@ -70,6 +82,7 @@ function toGoalState(raw: unknown): GoalState | null {
 		max_cost: record.max_cost,
 		started_at: record.started_at,
 		turns_used: record.turns_used,
+		...(typeof record.session_id === "string" ? { session_id: record.session_id } : {}),
 	};
 }
 
@@ -160,7 +173,12 @@ export function parseGoalArgs(args: string): GoalArgs {
 	return parsed;
 }
 
-export function newGoalState(text: string, limits: { max_turns: number; max_cost: number }, startedAt: string): GoalState {
+export function newGoalState(
+	text: string,
+	limits: { max_turns: number; max_cost: number },
+	startedAt: string,
+	sessionId?: string,
+): GoalState {
 	return {
 		text,
 		active: true,
@@ -168,16 +186,32 @@ export function newGoalState(text: string, limits: { max_turns: number; max_cost
 		max_cost: limits.max_cost,
 		started_at: startedAt,
 		turns_used: 0,
+		...(sessionId === undefined ? {} : { session_id: sessionId }),
 	};
 }
 
 /**
- * PRD-014's `WorkingStateSources.goal()` slot: the active goal's text, and an
- * empty string when no goal is running.
+ * Whether this record is the goal of the session asking. A goal set in another
+ * session — or by a build that did not record one — is history, not an
+ * instruction: it is shown when asked for and never injected into a turn.
  */
-export function goalTextSource(store: GoalStore): () => string {
+export function isRunningHere(state: GoalState | null, sessionId?: string): boolean {
+	if (state === null || !state.active) return false;
+	// Plain equality, `undefined` included: a caller with no session (a test, an
+	// SDK embedding) matches a record with no session, while a real session never
+	// matches a record written before this field existed — which is the stale
+	// goal this check exists to keep out of the prompt.
+	return state.session_id === sessionId;
+}
+
+/**
+ * PRD-014's `WorkingStateSources.goal()` slot: the active goal's text, and an
+ * empty string when no goal is running *in this session*. This is the one place
+ * a goal reaches a prompt, so it is the one place the session check has to hold.
+ */
+export function goalTextSource(store: GoalStore, sessionId?: string): () => string {
 	return () => {
 		const state = store.load();
-		return state !== null && state.active ? state.text : "";
+		return isRunningHere(state, sessionId) ? (state as GoalState).text : "";
 	};
 }

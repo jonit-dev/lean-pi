@@ -7,17 +7,20 @@
  * one that failed. The failed run must not enter the denominator, which is what
  * distinguishes the printed figure from the wrong one.
  */
+import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { commandRegistry } from "../../src/commands/registry.js";
+import { loadConfig } from "../../src/core/config.js";
 import type { LeanPiConfig } from "../../src/core/types.js";
 import { readDecisions } from "../../src/jev/log.js";
 import { aggregateTelemetry } from "../../src/telemetry/aggregate.js";
 import { callsFromMessages } from "../../src/telemetry/collect.js";
 import { registerCostCommand } from "../../src/telemetry/cost.js";
-import { priceCall, resolveCostConfig } from "../../src/telemetry/pricing.js";
+import { priceCall, priceRun, resolveCostConfig } from "../../src/telemetry/pricing.js";
 import { appendRun, readRuns, telemetryPath } from "../../src/telemetry/store.js";
 import { startStubJev, typedAnswers, type StubJev, type StubJevResponder } from "../helpers/stub-jev.js";
 import { fixtureConfig, fixtureCwd, registerFixtureSites, runFixtureTask } from "./fixture.js";
+import { fixtureRepo, writeConfig } from "../helpers/fixtures.js";
 
 const responder: StubJevResponder = (body) => {
 	const ids = Object.keys((body.questions ?? {}) as Record<string, unknown>);
@@ -156,6 +159,30 @@ describe("/cost (PRD-015)", () => {
 		expect(priceCall(calls[1]!, cost)).toBe(0);
 	});
 
+	it("reports the paths a Pi-driven turn read, so re-reads are countable (4a)", () => {
+		// `execution.file_reads`/`repeated_reads` were structurally always 0: the
+		// collector's `noteFileRead` had no production caller, so the only two
+		// counters that could show a re-read never moved. The paths come off the
+		// same message list the tool count does.
+		const { fileReads } = callsFromMessages(
+			[
+				{ role: "assistant", content: [{ type: "toolCall", name: "read", arguments: { path: "src/a.ts" } }] },
+				{
+					role: "assistant",
+					content: [
+						{ type: "toolCall", name: "read", arguments: { path: "src/a.ts", offset: 40 } },
+						{ type: "toolCall", name: "execute", arguments: { command: "ls" } },
+					],
+				},
+				{ role: "assistant", content: [{ type: "toolCall", name: "read", arguments: { path: "src/b.ts" } }] },
+			],
+			{ backend: "api", model: "claude-sonnet-4" },
+		);
+		// Order and repeats are kept: the collector is what collapses a repeat into
+		// `repeated_reads`, and it can only do that if it sees the second read.
+		expect(fileReads).toEqual(["src/a.ts", "src/a.ts", "src/b.ts"]);
+	});
+
 	it("names the unpriced calls and the population it totalled (F3)", async () => {
 		const cwd = fixtureCwd();
 		registerFixtureSites();
@@ -187,5 +214,56 @@ describe("/cost (PRD-015)", () => {
 		const scoped = await commandRegistry.dispatch("/cost", { cwd });
 		expect(scoped.text).toContain("runs: 1");
 		expect(scoped.text).toContain("session total:");
+	});
+});
+
+/**
+ * A4 + COST-1: the operator's declared cost surface must survive `loadConfig`.
+ * The fixture above injects `jev.usd_per_mtok` and `cost:` onto the config
+ * object, which is exactly why the drop went unnoticed — this reads a real file.
+ */
+describe("A4 + COST-1 — the declared cost surface round-trips through loadConfig", () => {
+	it("keeps jev.usd_per_mtok and carries the top-level cost: block into pricing", () => {
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { api: { type: "native", baseUrl: "http://127.0.0.1:9/v1", cost: { input: 3, output: 15 } } },
+			models: { balanced: { backend: "api", model: "claude-sonnet-4" } },
+			jev: { usd_per_mtok: 0.2 },
+			cost: {
+				quota_shadow_usd: { "scarce-premium": 0.05 },
+				local_usd_per_gpu_sec: 0.001,
+				latency_usd_per_sec: 0.002,
+			},
+		});
+
+		const config = loadConfig(cwd, {}, { XDG_CONFIG_HOME: join(agentDir, "xdg") });
+		const cost = resolveCostConfig(config);
+		expect(cost.jev_usd_per_mtok).toBe(0.2);
+		expect(cost.quota_shadow_usd?.["scarce-premium"]).toBe(0.05);
+		expect(cost.local_usd_per_gpu_sec).toBe(0.001);
+		expect(cost.latency_usd_per_sec).toBe(0.002);
+		// The per-backend Pi `cost` block still wins its own home.
+		expect(cost.backends?.api).toMatchObject({ input: 3, output: 15 });
+
+		// 1M JEV tokens at the declared $0.2/Mtok is $0.2, not the old $0.
+		const priced = priceRun(
+			{
+				calls: [],
+				usage: {
+					input_tokens: 0,
+					cached_input_tokens: 0,
+					output_tokens: 0,
+					reasoning_tokens: 0,
+					jev_tokens: 1_000_000,
+					local_gpu_seconds: 0,
+					external_harness_calls: 0,
+					subscription_usage: 0,
+				},
+				wallMs: 1000,
+			},
+			cost,
+		);
+		expect(priced.jev_usd).toBe(0.2);
+		expect(priced.effective_cost).toBe(0.202);
 	});
 });

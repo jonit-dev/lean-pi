@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_FILENAME, ConfigError, configPathFor, loadConfig, resolveRole, type ModelRole } from "../src/index.js";
+import { grantTrust } from "../src/permissions/index.js";
 import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "./helpers/stub-backend.js";
 
@@ -195,13 +196,19 @@ describe("FR-047 / PRD-009 — `models.specialists` and `verify:` are read from 
 		expect(fromFile({ backends, models: { specialists: { rust: "strong" } } })).toThrow("no model roles configured");
 	});
 
-	it("carries the `verify:` block, and an empty one when the file declares none", () => {
-		const declared = fromFile({
+	it("drops the `verify:` commands of an untrusted file, and carries them once the project is trusted", () => {
+		const cwd = tempDir("leanpi-config-verify-");
+		const env = { XDG_CONFIG_HOME: tempDir("leanpi-config-xdg-") };
+		writeConfig(cwd, {
 			backends,
 			models: { quick: { backend: "local", model: "m" } },
 			verify: { commands: { targeted_test: "npx vitest run tests/" }, timeoutMs: 1000 },
-		})();
-		expect(declared.verify).toEqual({ commands: { targeted_test: "npx vitest run tests/" }, timeoutMs: 1000 });
+		});
+		// T1: an untrusted project contributes no shell verifier command.
+		expect(loadConfig(cwd, {}, env).verify).toEqual({ commands: {}, timeoutMs: 1000 });
+
+		grantTrust(cwd, env);
+		expect(loadConfig(cwd, {}, env).verify).toEqual({ commands: { targeted_test: "npx vitest run tests/" }, timeoutMs: 1000 });
 
 		const silent = fromFile({ backends, models: { quick: { backend: "local", model: "m" } } })();
 		expect(silent.verify).toEqual({ commands: {} });

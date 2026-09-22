@@ -1,0 +1,46 @@
+{
+  "parity_verified": false,
+  "arms": {
+    "leanpi": {
+      "total_trials": 2,
+      "valid_trials": 0,
+      "status_counts": {
+        "invalid": 2,
+        "timeout": 0,
+        "passed": 0,
+        "error": 0,
+        "failed": 0
+      },
+      "verified": 0,
+      "passrate": null,
+      "known_spend_usd": 0.023715,
+      "cost_complete": false,
+      "cost_per_verified_completion": null,
+      "elapsed_seconds": 184.212
+    },
+    "stock-pi": {
+      "total_trials": 2,
+      "valid_trials": 0,
+      "status_counts": {
+        "invalid": 2,
+        "timeout": 0,
+        "passed": 0,
+        "error": 0,
+        "failed": 0
+      },
+      "verified": 0,
+      "passrate": null,
+      "known_spend_usd": 0.035025,
+      "cost_complete": true,
+      "cost_per_verified_completion": null,
+      "elapsed_seconds": 199.67
+    }
+  },
+  "comparison_eligible": false,
+  "reasons": [
+    "capability parity not verified",
+    "invalid trials present",
+    "not every arm has a verified completion",
+    "cost incomplete (null component present)"
+  ]
+}

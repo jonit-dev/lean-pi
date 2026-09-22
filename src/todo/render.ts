@@ -11,8 +11,7 @@
  * defeat the prefix caching §22 buys.
  */
 import type { AssembledPrompt } from "../context/prompt.js";
-import { todoNeededFallback, type TodoNeededInput } from "./goal.js";
-import type { TodoItem, TodoList } from "./state.js";
+import type { TodoItem, TodoList, TransitionResult } from "./state.js";
 
 export const TODO_PROMPT_BUDGET_BYTES = 2048;
 
@@ -34,7 +33,9 @@ function clip(text: string): string {
 }
 
 function line(item: TodoItem, marker: string, suffix = ""): string {
-	return `  ${marker} ${clip(item.text)}${item.criterion === undefined ? "" : `  ${item.criterion}`}${suffix}`;
+	// The id leads every row: it is the only handle `todo_update` accepts, and the
+	// transcript that first learned it is gone once the session compacts.
+	return `  ${marker} ${item.id} ${clip(item.text)}${item.criterion === undefined ? "" : `  ${item.criterion}`}${suffix}`;
 }
 
 /**
@@ -108,47 +109,76 @@ export const TODO_ADD_TOOL: TodoAddTool = {
 	},
 };
 
-export interface TodoAddRefusal {
-	code: "not_warranted";
-	message: string;
-}
-
-export interface TodoAddAdmission {
-	admitted: boolean;
-	/** The executor's todo tool set: empty unless the task warrants a list. */
-	tools: TodoAddTool[];
-	refusal: TodoAddRefusal | null;
-}
-
-/**
- * The deterministic admission rule for `todo_add`, so a single-step task pays
- * nothing: no tool schema in context, no list, no block in the prompt. The
- * capability router owns the tool set; this owns the rule it admits by.
- */
-export function admitTodoAdd(input: TodoNeededInput): TodoAddAdmission {
-	if (todoNeededFallback(input)) return { admitted: true, tools: [TODO_ADD_TOOL], refusal: null };
-	return {
-		admitted: false,
-		tools: [],
-		refusal: {
-			code: "not_warranted",
-			message: `todo_add is not admitted for a ${input.complexity} task with no active PRD; the list is not part of this task`,
-		},
-	};
-}
-
 export interface TodoAddCall {
-	admission: TodoAddAdmission;
 	list: TodoList;
 	text: string;
 	phase?: string;
 }
 
-/** One appended item. A call that was not admitted is refused, never turned into a list. */
+/** One appended item. Whether the task warrants a list is the executor's call, not a gate's. */
 export function invokeTodoAdd(call: TodoAddCall): { ok: boolean; text: string } {
-	if (!call.admission.admitted) return { ok: false, text: call.admission.refusal?.message ?? "todo_add is not admitted for this task" };
 	const text = call.text.trim();
 	if (text.length === 0) return { ok: false, text: "todo_add needs text" };
 	const item = call.list.add(text, call.phase === undefined ? {} : { phase: call.phase });
 	return { ok: true, text: `added ${item.id}: ${item.text}` };
+}
+
+export const TODO_UPDATE_TOOL_NAME = "todo_update";
+
+/** The statuses the executor may set. `pending` is `unblock`, the only way out of `blocked`. */
+export const TODO_UPDATE_STATUSES = ["in_progress", "done", "blocked", "dropped", "pending"] as const;
+
+export interface TodoUpdateTool {
+	name: string;
+	description: string;
+	parameters: Record<string, unknown>;
+}
+
+/**
+ * The completion half of the surface. `todo_add` alone left the executor able to
+ * open steps and never close them — the list only moved when the user typed
+ * `/todo done`. The description is the steering: the executor is told the widget
+ * and the next turn's prompt read this list, so it closes a step when it ends
+ * rather than narrating progress in prose.
+ */
+export const TODO_UPDATE_TOOL: TodoUpdateTool = {
+	name: TODO_UPDATE_TOOL_NAME,
+	description:
+		"Set one todo item's status as you work. Call it the moment a step ends — `done` when its work is finished, `blocked` with a reason when something stops it. The session's widget and the next turn's prompt read this list, so a step left open reads as unfinished work.",
+	parameters: {
+		type: "object",
+		properties: {
+			id: { type: "string", description: "the item's id, as shown at the start of its row in the todo block" },
+			status: { type: "string", enum: TODO_UPDATE_STATUSES, description: "the item's new status" },
+			reason: { type: "string", description: "why it is blocked; only used with `blocked`" },
+		},
+		required: ["id", "status"],
+		additionalProperties: false,
+	},
+};
+
+export interface TodoUpdateCall {
+	list: TodoList;
+	id: string;
+	status: (typeof TODO_UPDATE_STATUSES)[number];
+	reason?: string;
+}
+
+/**
+ * One status change, routed through the same transitions `/todo` drives — so a
+ * derived item still meets PRD-010's gate and is refused without a `PASS`.
+ */
+export function invokeTodoUpdate(call: TodoUpdateCall): Promise<TransitionResult> {
+	switch (call.status) {
+		case "in_progress":
+			return Promise.resolve(call.list.start(call.id));
+		case "done":
+			return call.list.complete(call.id);
+		case "blocked":
+			return Promise.resolve(call.list.block(call.id, call.reason));
+		case "dropped":
+			return Promise.resolve(call.list.drop(call.id));
+		case "pending":
+			return Promise.resolve(call.list.unblock(call.id));
+	}
 }

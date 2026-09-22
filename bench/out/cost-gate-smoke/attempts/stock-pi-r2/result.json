@@ -1,0 +1,46 @@
+{
+  "arm": "stock-pi",
+  "trial": 2,
+  "task": "slugify-counter-duplicate-slug",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "session_uuid": "stock-pi-1d77805d-7075-4ba6-9a95-9725bb6148ac",
+  "started_at": "2026-09-22T05:16:22.175Z",
+  "ceiling_ms": 300000,
+  "start_hashes": {
+    "fixture_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d",
+    "prompt_sha256": "326ede713a9fe31d32a0f3bae1bc5778dff17d9b5b797ca8fd8abd77d9b629d3"
+  },
+  "usage": null,
+  "usage_dialect": "pi-disjoint/output-includes-reasoning",
+  "model_cost_usd": null,
+  "classifier_cost_usd": 0,
+  "delegated_cost_usd": 0,
+  "other_cost_usd": 0,
+  "harness": {
+    "errors": [
+      "timed out"
+    ],
+    "records": 0,
+    "tool_calls": null,
+    "invalid_counts": false,
+    "delegation_suspected": false,
+    "exit": null,
+    "signal": "SIGKILL",
+    "timed_out": true,
+    "spawn_error": null,
+    "wall_ms": 300134
+  },
+  "classifier": {
+    "tokens": 0,
+    "usd": 0,
+    "unknown": false,
+    "records": 0
+  },
+  "protected_files_unchanged": true,
+  "external_golden": null,
+  "status": "timeout",
+  "wall_ms": 300134,
+  "finished_at": "2026-09-22T05:21:22.316Z",
+  "end_index_sha256": "7fd5e0a1c24215ae93fde482c3b384da8c5ac9d43e761f3ca716be4a6ab27d7d"
+}

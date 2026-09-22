@@ -6,6 +6,8 @@
 
 **Surgical.** Every changed line traces to the request. Don't improve adjacent code, reformat, or refactor what isn't broken. Match existing style. Unrelated dead code → mention it, don't delete it. Do delete what your own change orphaned.
 
-**Verify.** Turn the task into a check before coding: "fix the bug" → failing test first. State multi-step plans as `step → verify`. Run `pnpm test`, `pnpm typecheck`, `pnpm lint`.
+**Don't trust, verify.** Nothing is done until a command proved it. Before coding, turn the task into a check; state multi-step plans as `step → verify`. Changed code → run the tests covering what you touched, plus `pnpm test`, `pnpm typecheck`, `pnpm lint`, to prove no regression. Fixed a bug → red/green: a test that fails before the fix and passes after, both halves shown. "It should work" is not evidence; the command output is.
 
 **PRDs.** Plan with the `prd-creator` skill, not freehand. Ask `prd-manager` where PRDs stand instead of reading them. Finished PRD → `git mv` into `docs/PRDs/v1/done/` in the same commit that finishes it; never left in flight.
+
+**Docs**: Use mermaid if relevant.

@@ -1,0 +1,109 @@
+{
+  "arm": "stock-pi",
+  "calls": [
+    {
+      "name": "bash",
+      "input": "{\"command\":\"ls -la && find . -path ./node_modules -prune -o -type f -name \\\"*.js\\\" -print -o -type f -name \\\"*.ts\\\" -print | head -50\",\"timeout\":30}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace/index.js\",\"offset\":1,\"limit\":250}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"grep -n \\\"slugifyWithCounter\\\\|slugify\\\" /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace/test.js | head -40\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"grep -n \\\"slugifyWithCounter\\\\|counter\\\" /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace/test.js\",\"timeout\":30}"
+    },
+    {
+      "name": "read",
+      "input": "{\"limit\":120,\"offset\":229,\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace/test.js\"}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && cat package.json && node --test test.js 2>&1 | tail -40\",\"timeout\":120}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && git log --oneline -10 && echo \\\"---STATUS---\\\" && git status && echo \\\"---DIFF---\\\" && git diff HEAD~3 -- index.js 2>/dev/null | head -80"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  const s = slugifyWithCounter();\\n  for (let i=0;i<6;i++) console.log"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  const alphabet = 'ab1-  _';\\n  function rand() {\\n    let n = 1 + Ma"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  const alphabet = 'ab12-';\\n  function rand() {\\n    let n = 1 + Math"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && ls node_modules | grep -i slug; find node_modules -name \\\"index.js\\\" -path \\\"*slug*\\\" 2>/dev/null | head; echo \\\"---\\\"; ls /home/joao/pro"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke && find . -maxdepth 4 -type f | grep -v node_modules | head -80\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && ls node_modules/.bin | grep -E \\\"ava|xo\\\" && ./node_modules/.bin/ava test.js 2>&1 | tail -40\",\"timeout\":180}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  const alphabet = ['a','1','-',' ','_','B','2'];\\n  let bad = 0;\\n  f"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && grep -n -A25 -i \\\"counter\\\" readme.md\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && git log --oneline -S \\\"numberless\\\" -- index.js && echo \\\"===\\\" && git log --oneline -S \\\"occurrences\\\" -- index.js | head\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && git show 9e1ec95 -- index.js | head -120\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke && diff -u preflight/accept/base/index.js attempts/stock-pi-r5/workspace/index.js && echo \\\"IDENTICAL to base\\\"; echo \\\"exit=$?\\\"\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  const s = slugifyWithCounter();\\n  for (const x of ['foo','foo','foo"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && git log --oneline -S \\\"removeCounterSuffix\\\" -- index.js && echo \\\"===\\\" && git log --oneline -5 --all | head\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && git show 6d97501 -- index.js | head -120\",\"timeout\":30}"
+    },
+    {
+      "name": "edit",
+      "input": "{\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace/index.js\",\"edits\":[{\"oldText\":\"\\tconst occurrences = new Map();\\n\\n\\tconst countable = (string, options) => {\\n\\t\\tstring = slugify(string, option"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && ./node_modules/.bin/ava test.js 2>&1 | tail -35\",\"timeout\":180}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && node -e \\\"\\nimport('./index.js').then(({slugifyWithCounter}) => {\\n  console.log('repro foo/foo/foo 2:');\\n  const r = slugifyWithCounter"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && ./node_modules/.bin/xo 2>&1 | tail -30; echo \\\"xo exit=$?\\\"\",\"timeout\":180}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r5/workspace && git diff -- index.js\",\"timeout\":30}"
+    }
+  ]
+}

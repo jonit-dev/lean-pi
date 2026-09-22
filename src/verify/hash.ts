@@ -7,41 +7,10 @@
  * single byte of change in any tracked or touched file changes the hash. That
  * equality is what `EvidenceStore.view()` compares to call a record fresh.
  */
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-
-/**
- * The dirty/tracked file set as git reports it, or `null` when git cannot run
- * (not a repository, git absent) or does not answer within the timeout — on a
- * very large repository this degrades to the touched paths alone rather than
- * blocking the turn. The hash then covers less; it never throws.
- */
-function gitPorcelain(root: string): string | null {
-	try {
-		return execFileSync("git", ["status", "--porcelain"], {
-			cwd: root,
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "ignore"],
-			timeout: 5_000,
-		});
-	} catch {
-		return null;
-	}
-}
-
-/** Porcelain lines are `XY <path>` with `R  old -> new` for renames and quoted odd paths. */
-function porcelainPaths(porcelain: string): string[] {
-	const paths: string[] = [];
-	for (const line of porcelain.split("\n")) {
-		if (line.trim().length === 0) continue;
-		const body = line.slice(3);
-		const target = body.includes(" -> ") ? body.split(" -> ").pop()! : body;
-		paths.push(target.startsWith('"') && target.endsWith('"') ? target.slice(1, -1) : target);
-	}
-	return paths;
-}
+import { porcelainPaths, readPorcelain } from "../runtime/git.js";
 
 /**
  * Deterministic hash of the tracked+dirty workspace state plus the given touched
@@ -52,7 +21,7 @@ function porcelainPaths(porcelain: string): string[] {
  * `verifyTask` turns that into an `error` record rather than a thrown turn.
  */
 export function workspaceHash(root: string, touchedPaths: readonly string[] = []): string {
-	const porcelain = gitPorcelain(root);
+	const porcelain = readPorcelain(root);
 	const dirty = porcelain === null ? [] : porcelainPaths(porcelain);
 	const paths = [...new Set([...touchedPaths, ...dirty])].map((path) => path.trim()).filter((path) => path.length > 0).sort();
 

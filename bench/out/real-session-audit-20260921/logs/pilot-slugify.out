@@ -1,0 +1,14 @@
+[2026-09-21T19:21:22.365Z] task=slugify-counter-duplicate-slug fixture=2acf5b3cadf7faed3928536d051104502ae2b667 tree=dd04f1bfc149 repeats=2
+[2026-09-21T19:21:22.366Z] model=deepseek-v4.1-flash provider=opencode-go thinkingFormat=deepseek headers=[x-opencode-session] ctx=1000000 maxTokens=32000
+[2026-09-21T19:21:22.366Z] schedule=leanpi:r1 stock:r1 stock:r2 leanpi:r2
+[2026-09-21T19:21:22.366Z] attempt 1/4 arm=leanpi repeat=1 runId=audit-slugify-leanpi-r1-1790018482366 session=real-session-audit-slugify-leanpi-r1-1790018482366
+(node:3142711) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+leanpi: capability gap (balanced): no bound model clears the balanced floor 70; escalating to the highest-scoring bound model "opencode-go/deepseek-v4.1-flash" (no known coding score)
+[2026-09-21T19:23:28.853Z]   verdict=incomplete wall=126487ms in=52687 cache=581504 out=6163 reason=7151 jev=36349 cost=$0.014872
+[2026-09-21T19:23:28.854Z] attempt 2/4 arm=stock repeat=1 runId=audit-slugify-stock-r1-1790018608854 session=real-session-audit-slugify-stock-r1-1790018608854
+[2026-09-21T19:25:20.683Z]   verdict=incomplete wall=111829ms in=41978 cache=1582208 out=12663 reason=7178 jev=0 cost=$0.018641
+[2026-09-21T19:25:20.683Z] attempt 3/4 arm=stock repeat=2 runId=audit-slugify-stock-r2-1790018720683 session=real-session-audit-slugify-stock-r2-1790018720683
+[2026-09-21T19:26:49.837Z]   verdict=incomplete wall=89154ms in=37581 cache=961920 out=13102 reason=6605 jev=0 cost=$0.016384
+[2026-09-21T19:26:49.837Z] attempt 4/4 arm=leanpi repeat=2 runId=audit-slugify-leanpi-r2-1790018809837 session=real-session-audit-slugify-leanpi-r2-1790018809837
+leanpi: capability gap (quick): no bound model clears the quick floor 50; escalating to the highest-scoring bound model "opencode-go/deepseek-v4.1-flash" (no known coding score)

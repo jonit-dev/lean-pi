@@ -277,7 +277,14 @@ export function writePrdState(cwd: string, state: PrdState): string {
 export function readPrdState(cwd: string): PrdState | null {
 	const path = prdStatePath(cwd);
 	if (!existsSync(path)) return null;
-	return JSON.parse(readFileSync(path, "utf8")) as PrdState;
+	// A crash between truncate and write leaves invalid JSON; the next status
+	// write overwrites it, so a corrupt store degrades to "no PRD" instead of
+	// throwing on every prompt assembly.
+	try {
+		return JSON.parse(readFileSync(path, "utf8")) as PrdState;
+	} catch {
+		return null;
+	}
 }
 
 // ---------------------------------------------------------------------------

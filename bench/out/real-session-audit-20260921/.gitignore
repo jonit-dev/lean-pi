@@ -1,0 +1,20 @@
+# Generated compiled runtime snapshot and local fixture/template copies.
+runtime/
+fixtures/
+templates/
+scratch/dist-snap/
+scratch/probe-ws/
+# Result workspaces: nested Git repos, node_modules, credentials; per-arm patches kept alongside.
+out/*/workspaces/
+runs/*/slugify-counter-duplicate-slug*/
+# Credential stores and env files.
+.bench-agent/
+auth.json
+models.json
+models-store.json
+.env
+.env.*
+*.sqlite
+
+# Duplicate rendered reports; structured report.json is retained.
+out/*/report.md

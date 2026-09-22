@@ -15,7 +15,9 @@ import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
 import { startStubJev, type StubJev } from "../helpers/stub-jev.js";
 import { skillFixture, surfaceFixture, type SurfaceFixture } from "./helpers.js";
 
-const RANKED_MODEL = "claude-haiku-4-5";
+// A model the shipped ranking actually carries; the scrape follows the
+// leaderboard, which drops a generation when the vendor does.
+const RANKED_MODEL = "claude-sonnet-5";
 const UNRANKED_MODEL = "not-a-ranked-model";
 const MISSING_COMMAND = "leanpi-not-installed-xyz";
 const STUB_SECRET = "sk-super-secret-value";
@@ -47,7 +49,7 @@ function modelDoctorFixture(): SurfaceFixture {
 				quick: { backend: "stub", model: RANKED_MODEL },
 				balanced: { backend: "stub", model: "gpt-5" },
 				strong: { backend: "stub", model: UNRANKED_MODEL },
-				review_quick: { backend: "stub", model: "claude-sonnet-4-5" },
+				review_quick: { backend: "stub", model: "claude-haiku-5" },
 			},
 			capabilities: { skillRoots },
 			jev: { endpoint: jev.url, apiKey: "test-key", model: "jev-latest", mode: "enabled" },
@@ -59,13 +61,15 @@ function modelDoctorFixture(): SurfaceFixture {
 	});
 }
 
-describe("/models and /doctor (PRD-016 Phase 2)", () => {
+describe("/model and /doctor (PRD-016 Phase 2)", () => {
 	it("lists configured models by role with the ranking's score, price, role-fill, revision and staleness (AC-4)", async () => {
 		const fixture = modelDoctorFixture();
 
-		const models = await fixture.dispatch("/models");
+		const models = await fixture.dispatch("/model");
 		expect(models.ok).toBe(true);
-		expect(models.text).toContain("ranking revision 1");
+		// The revision moves with every scrape of the ranking; that it is reported
+		// is the contract, not which number it currently is.
+		expect(models.text).toMatch(/^ranking revision \d+ /);
 		expect(models.text).toMatch(/oldest record \d{4}-\d{2}-\d{2} \(\d+ days old/);
 		// A ranked model carries its score, price, role-fill and evidence kind.
 		expect(models.text).toMatch(
@@ -79,7 +83,7 @@ describe("/models and /doctor (PRD-016 Phase 2)", () => {
 		expect(models.text).not.toContain(STUB_SECRET);
 
 		// The ranking is a shipped file: there is nothing to refresh.
-		const refresh = await fixture.dispatch("/models --refresh");
+		const refresh = await fixture.dispatch("/model --refresh");
 		expect(refresh.ok).toBe(false);
 		expect(refresh.text).toContain("unknown flag");
 	});
@@ -89,7 +93,9 @@ describe("/models and /doctor (PRD-016 Phase 2)", () => {
 
 		const before = await fixture.dispatch("/route");
 		expect(before.text).toContain("route: no contract compiled yet");
-		expect(before.text).not.toContain("gpt-5");
+		// The negative control is the pin's own marker: which model an unpinned
+		// lane resolves to is the ranking's business and moves when it is rescraped.
+		expect(before.text).not.toContain("(forced)");
 
 		// `/model <role>` is gone: Pi owns `/model`, and the role switch was always
 		// this pin. The binding still resolves through the ranking (PRD-024).

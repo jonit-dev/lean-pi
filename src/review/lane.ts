@@ -77,7 +77,7 @@ export interface ReviewDeps {
 	agentDir?: string;
 	/**
 	 * The parsed configuration, so the reviewer's model resolves through the same
-	 * `models:` ladder `/models` uses. Without it the registry's role map is all
+	 * `models:` ladder `/model` uses. Without it the registry's role map is all
 	 * the lane has, which is what a caller that already holds a pool passes.
 	 */
 	config?: LeanPiConfig;
@@ -138,7 +138,7 @@ function identityOf(backend: string, model: string | null): string {
 }
 
 /**
- * The model the reviewer runs under on this backend. `/models` resolves a role
+ * The model the reviewer runs under on this backend. `/model` resolves a role
  * through the §27 ladder, so dispatch does too: the first role in
  * `ROLE_FALLBACK_CHAINS[role]` whose `models:` entry names this backend is the
  * one that binds it. Nothing else does — a role and backend nothing names stays

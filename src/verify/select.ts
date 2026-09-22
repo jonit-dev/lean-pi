@@ -80,6 +80,8 @@ export interface DiffSummary {
 	files: readonly string[];
 	/** The executor/compiler report that the change modifies an exported symbol. */
 	exportedSymbol?: boolean;
+	/** The change set could not be derived, so scope cannot be narrowed. */
+	unknown?: boolean;
 }
 
 export interface SelectOptions {
@@ -165,6 +167,9 @@ export function changesSharedContract(diff: DiffSummary): boolean {
  */
 export function regressionScopeRule(diff: DiffSummary | undefined, threshold: number = REGRESSION_SCOPE_FILE_THRESHOLD): RegressionScope {
 	if (!diff) return "TARGETED_SUFFICIENT";
+	// An unknown change set cannot be shown to be covered by the targeted tests,
+	// so the conservative scope is the broader suite.
+	if (diff.unknown === true) return "BROADER_SUITE_REQUIRED";
 	return coversTargetedOnly(diff, threshold) && !changesSharedContract(diff) ? "TARGETED_SUFFICIENT" : "BROADER_SUITE_REQUIRED";
 }
 

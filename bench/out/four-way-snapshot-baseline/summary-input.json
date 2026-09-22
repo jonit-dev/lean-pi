@@ -1,0 +1,110 @@
+{
+ "parity_verified": false,
+ "parity_evidence": "Same provider, model id, prompt bytes and acceptance test for all four arms. Reasoning budget is NOT normalised across harnesses and there is no upstream attestation of wire-format conversion equivalence.",
+ "attempts": [
+  {
+   "task": "slugify-counter-duplicate-slug",
+   "arm": "claude-code",
+   "trial": 1,
+   "status": "passed",
+   "cost_usd": {
+    "model": 0.014933477999999998,
+    "classifier": 0,
+    "delegated": 0,
+    "other": 0
+   },
+   "seconds": 96.09
+  },
+  {
+   "task": "slugify-counter-duplicate-slug",
+   "arm": "claude-code",
+   "trial": 2,
+   "status": "failed",
+   "cost_usd": {
+    "model": 0.030702834,
+    "classifier": 0,
+    "delegated": 0,
+    "other": 0
+   },
+   "seconds": 205.203
+  },
+  {
+   "task": "slugify-counter-duplicate-slug",
+   "arm": "codex",
+   "trial": 1,
+   "status": "passed",
+   "cost_usd": {
+    "model": 0.005326056000000001,
+    "classifier": 0,
+    "delegated": 0,
+    "other": 0
+   },
+   "seconds": 43.866
+  },
+  {
+   "task": "slugify-counter-duplicate-slug",
+   "arm": "codex",
+   "trial": 2,
+   "status": "failed",
+   "cost_usd": {
+    "model": 0.01791735,
+    "classifier": 0,
+    "delegated": 0,
+    "other": 0
+   },
+   "seconds": 148.546
+  },
+  {
+   "task": "slugify-counter-duplicate-slug",
+   "arm": "leanpi",
+   "trial": 1,
+   "status": "passed",
+   "cost_usd": {
+    "model": 0.0129,
+    "classifier": 0.001339884,
+    "delegated": 0,
+    "other": 0
+   },
+   "seconds": 138.881
+  },
+  {
+   "task": "slugify-counter-duplicate-slug",
+   "arm": "leanpi",
+   "trial": 2,
+   "status": "passed",
+   "cost_usd": {
+    "model": 0.005462,
+    "classifier": 0.001339884,
+    "delegated": 0,
+    "other": 0
+   },
+   "seconds": 41.831
+  },
+  {
+   "task": "slugify-counter-duplicate-slug",
+   "arm": "stock-pi",
+   "trial": 1,
+   "status": "passed",
+   "cost_usd": {
+    "model": 0.011775,
+    "classifier": 0,
+    "delegated": 0,
+    "other": 0
+   },
+   "seconds": 59.836
+  },
+  {
+   "task": "slugify-counter-duplicate-slug",
+   "arm": "stock-pi",
+   "trial": 2,
+   "status": "passed",
+   "cost_usd": {
+    "model": 0.016551,
+    "classifier": 0,
+    "delegated": 0,
+    "other": 0
+   },
+   "seconds": 154.67
+  }
+ ]
+}

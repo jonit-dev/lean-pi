@@ -263,6 +263,9 @@ export function leanPiAttempt(options: LeanPiAttemptOptions): BenchAttemptExecut
 		const spend = callsFromMessages(booted.session.messages ?? [], { backend: context.modelRef.backend, model: context.modelRef.model });
 		for (const call of spend.calls) collector.add(call);
 		collector.noteToolCall(spend.toolCalls);
+		// The same measurement the extension's own sink makes: without it the two
+		// counters the fat question reads are structurally always zero.
+		for (const path of spend.fileReads) collector.noteFileRead(path);
 		collector.addWallMs(Date.now() - started);
 		// JEV's own spend, read back from the run's decision log: the compiler asks
 		// five sites per turn on this path, and their tokens are money on the same
@@ -310,7 +313,8 @@ export async function stockPiExtensions(cwd: string, agentDir: string): Promise<
  * Stock Pi reaches a local model exactly this way — no credential, no
  * subscription, no LeanPi provider registration.
  */
-export function writeStockPiModels(config: LeanPiConfig, agentDir: string): void {
+export function writeStockPiModels(config: LeanPiConfig, agentDir: string, options: { includeCost?: boolean } = {}): void {
+	const includeCost = options.includeCost ?? true;
 	const providers: Record<string, unknown> = {};
 	for (const [name, backend] of Object.entries(config.backends)) {
 		if (backend.type !== "native" || typeof backend.baseUrl !== "string") continue;
@@ -318,12 +322,28 @@ export function writeStockPiModels(config: LeanPiConfig, agentDir: string): void
 		// binding, so only the role keys name a model this provider serves.
 		const models = Object.entries(config.models)
 			.filter(([role, entry]) => isModelRole(role) && entry?.backend === name)
-			.map(([, entry]) => ({ id: entry!.model }));
+			// Pi needs the full model descriptor, `cost` included: without it the
+			// model still registers but every request resolves to an empty
+			// assistant turn with zero tokens, which the bench then records as a
+			// successful attempt that measured nothing.
+			.map(([, entry]) => ({
+				id: entry!.model,
+				...(backend.reasoning === undefined ? {} : { reasoning: backend.reasoning }),
+				...(backend.contextWindow === undefined ? {} : { contextWindow: backend.contextWindow }),
+				...(backend.maxTokens === undefined ? {} : { maxTokens: backend.maxTokens }),
+				...(backend.cost === undefined || !includeCost ? {} : { cost: backend.cost }),
+			}));
 		if (models.length === 0) continue;
 		providers[name] = {
 			baseUrl: backend.baseUrl,
 			api: backend.api ?? "openai-completions",
 			apiKey: typeof backend.apiKey === "string" ? backend.apiKey : "local",
+			// A backend that authenticates or shapes requests per call is
+			// unreachable without these: opencode-go rejects a header-less request
+			// with 400 MissingSessionID, which stock Pi reports as a 260ms
+			// zero-token "success" — an arm that silently measures nothing.
+			...(backend.headers === undefined ? {} : { headers: backend.headers }),
+			...(backend.compat === undefined ? {} : { compat: backend.compat }),
 			models,
 		};
 	}
@@ -367,12 +387,11 @@ export function stockPiAttempt(options: StockPiAttemptOptions): BenchAttemptExec
 		const config = configForRow(options.config, attempt.config);
 		const agentDir = options.agentDir ?? join(attempt.workspace, ".bench-agent");
 		const loaded = await stockPiExtensions(attempt.workspace, agentDir);
-		writeStockPiModels(config, agentDir);
-		const services = await createAgentSessionServices({
-			cwd: attempt.workspace,
-			agentDir,
-			resourceLoaderOptions: { extensionFactories: [] },
-		});
+		const boot = async (includeCost: boolean): Promise<AgentSessionServices> => {
+			writeStockPiModels(config, agentDir, { includeCost });
+			return createAgentSessionServices({ cwd: attempt.workspace, agentDir, resourceLoaderOptions: { extensionFactories: [] } });
+		};
+		let services = await boot(true);
 		// Role bindings only: falling back to the first `models:` value would pick
 		// the `specialists` map (FR-047) and dispatch an undefined model id.
 		const bindings = Object.entries(config.models)
@@ -380,7 +399,16 @@ export function stockPiAttempt(options: StockPiAttemptOptions): BenchAttemptExec
 			.map(([, entry]) => entry!);
 		const declared = bindings.find((entry) => entry.model === attempt.config.executor_model) ?? bindings[0];
 		if (!declared) throw new BenchError(`config "${attempt.config.id}" declares no model for a stock Pi session`, "config");
-		const model = services.modelRuntime.getModel(declared.backend, declared.model);
+		// Pi keeps the rate card only for providers its own catalog knows; on any
+		// other provider a model entry carrying `cost` is dropped outright. The
+		// card is worth one retry rather than a hard failure: a backend that needs
+		// it (opencode-go returns an empty assistant turn without it) keeps it, and
+		// a bespoke provider still boots. Pricing lives in the ledger either way.
+		let model = services.modelRuntime.getModel(declared.backend, declared.model);
+		if (!model) {
+			services = await boot(false);
+			model = services.modelRuntime.getModel(declared.backend, declared.model);
+		}
 		if (!model) {
 			throw new BenchError(`stock Pi cannot reach ${declared.backend}/${declared.model}: write a baseUrl for that backend in leanpi.config.yaml`, "config");
 		}

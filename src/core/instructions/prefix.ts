@@ -39,10 +39,44 @@ export function readVendoredPonytail(): string {
 }
 
 /**
- * `''` when disabled; otherwise the marker line followed by the vendored body.
+ * How LeanPi answers, as opposed to how it works. Ponytail governs what gets
+ * built; this governs the shape of the reply the operator reads — so it stands
+ * whether or not Ponytail is enabled.
+ */
+/**
+ * Karpathy's coding guidelines, minus the one already vendored.
+ *
+ * Four guidelines, three of them here: "Simplicity First" is Ponytail's entire
+ * subject and repeating it would spend prefix bytes to say the same thing twice.
+ * What Ponytail does not cover is the part before the code (say what you assumed,
+ * do not silently pick one of several readings) and the part around it (change
+ * only what the request touches; decide the check before writing the thing it
+ * checks). Condensed to fit the §6.1 prefix ceiling.
+ *
+ * The four acronyms are named anyway: Ponytail carries simplicity when it is on,
+ * and these rules also stand alone when it is off.
+ */
+export const WORKING_RULES = [
+	"Working rules:",
+	"- Think first. State your assumptions; ask rather than guess. Several readings of the request — give them, do not silently pick one. A simpler approach exists — say so. Confused — name it instead of proceeding.",
+	"- Surgical. Every changed line traces to the request. Do not improve, reformat or refactor code you were not asked about; match the style already there. Pre-existing dead code: mention it, leave it. Delete only what your own change orphaned.",
+	"- SRP, KISS, DRY, YAGNI. One reason to change per unit; the plain solution over the clever one; one source of truth for a rule; and nothing built for a need the request does not state.",
+	"- Don't trust, verify. Turn the task into a check before writing the code — a bug becomes a failing test first: red before the fix, green after. State a multi-step plan as `step → verify`, run the tests covering what you changed to prove no regression, and loop until the check passes.",
+].join("\n");
+
+export const OUTPUT_STYLE = [
+	"LeanPi output style:",
+	"- End a finished task with a `TLDR:` block naming exactly what was delivered.",
+	"- Mark states with the emoji on the line it describes: ✅ done, ⚠️ caveat, ❌ failed. Not decoration.",
+	'- When you offer the operator options, rate each 1-5 stars (★), best first, and mark one "Recommended".',
+].join("\n");
+
+/**
+ * The output style alone when Ponytail is disabled; otherwise the marker line,
+ * the vendored body, then the style.
  * Byte-stable for a given vendored file — no task data, no timestamps.
  */
 export function buildStaticPrefix(config: Pick<LeanPiConfig, "instructions">): string {
-	if (config.instructions.ponytail === false) return "";
-	return `${PONYTAIL_MARKER}\n\n${readVendoredPonytail()}`;
+	if (config.instructions.ponytail === false) return `${WORKING_RULES}\n\n${OUTPUT_STYLE}`;
+	return `${PONYTAIL_MARKER}\n\n${readVendoredPonytail()}\n\n${WORKING_RULES}\n\n${OUTPUT_STYLE}`;
 }

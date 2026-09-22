@@ -1,4 +1,18 @@
 allowBuilds:
-  '@google/genai': set this to true or false
-  esbuild: set this to true or false
-  protobufjs: set this to true or false
+  # Migrated from the deprecated `pnpm.onlyBuiltDependencies` in package.json,
+  # which named esbuild and nothing else. The placeholders these replace were
+  # never filled in, so every `pnpm test`/`typecheck`/`build` aborted with
+  # ERR_PNPM_IGNORED_BUILDS before running anything.
+  esbuild: true
+  # Transitive, and their install scripts have never run in this checkout — the
+  # suite and the CLI both pass without them. `false` states that, rather than
+  # leaving the question open and the error firing every time.
+  '@google/genai': false
+  protobufjs: false
+minimumReleaseAgeExclude:
+  - '@earendil-works/chord@0.86.1 || 0.87.0'
+  - '@earendil-works/pi-agent-core@0.86.1 || 0.87.0'
+  - '@earendil-works/pi-ai@0.86.1 || 0.87.0'
+  - '@earendil-works/pi-coding-agent@0.86.1 || 0.87.0'
+  - '@earendil-works/pi-telemetry@0.86.1 || 0.87.0'
+  - '@earendil-works/pi-tui@0.86.1 || 0.87.0'

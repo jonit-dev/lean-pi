@@ -12,7 +12,7 @@
  */
 import { MODEL_ROLES, type BackendRef, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import type { RankedModel, Ranking } from "./schema.js";
-import { boundCandidates, candidateRef, compareCandidates, findRankedModel, type CapabilityGap } from "./select.js";
+import { boundCandidates, boundRecords, candidateRef, compareCandidates, findRankedModel, type CapabilityGap } from "./select.js";
 
 /** `capability.roles.<role>`: a coding floor, an optional price ceiling, an optional pin. */
 export interface CapabilityRoleSetting {
@@ -117,13 +117,30 @@ function shortfallsOf(record: RankedModel, role: ModelRole, setting: CapabilityR
  * The cheapest bound record clearing the role's floor and price ceiling,
  * tie-broken by higher `coding_score` then `model_id`. A pin wins unconditionally
  * and reports its shortfall instead of being swapped. When nothing clears, the
- * highest-scoring bound record is escalated into the role with a `capability_gap`.
+ * highest-scoring bound record is escalated into the role with a `capability_gap`
+ * — including a bound record with no measured score, so a configured CLI model
+ * resolves to its own binding with the gap reported rather than silently falling
+ * through to the static `models:` map.
  */
 export function selectRoleModel(role: ModelRole, ranking: Ranking, config: LeanPiConfig): RoleSelection {
 	const setting = capabilityConfigOf(config).roles[role];
 	if (setting.pin !== undefined) {
 		const record = findRankedModel(ranking, setting.pin);
-		if (!record) throw new UnknownPinError(role, setting.pin);
+		// A pin the ranking does not carry is still the operator's choice when the
+		// config binds that exact model to the role: `/model` writes both, and a
+		// discovered CLI model is in no ranking at all. Only a pin that matches
+		// neither is the config error `UnknownPinError` names.
+		if (!record) {
+			const entry = config.models[role];
+			if (entry?.model !== setting.pin) throw new UnknownPinError(role, setting.pin);
+			const backend = config.backends[entry.backend];
+			return {
+				role,
+				model_id: null,
+				ref: backend ? { backend: entry.backend, model: entry.model, type: backend.type } : null,
+				pinned: true,
+			};
+		}
 		const shortfalls = shortfallsOf(record, role, setting);
 		const selection: RoleSelection = { role, model_id: record.model_id, ref: record.backend_binding, pinned: true };
 		if (shortfalls.length === 0) return selection;
@@ -146,7 +163,7 @@ export function selectRoleModel(role: ModelRole, ranking: Ranking, config: LeanP
 	const chosen = clearing[0];
 	if (chosen) return { role, model_id: chosen.model_id, ref: candidateRef(chosen), pinned: false };
 
-	const best = [...bound].sort((a, b) => b.coding_score - a.coding_score || (a.model_id < b.model_id ? -1 : 1))[0];
+	const best = [...boundRecords(ranking)].sort((a, b) => (b.coding_score ?? -1) - (a.coding_score ?? -1) || (a.model_id < b.model_id ? -1 : 1))[0];
 	if (!best) {
 		return {
 			role,
@@ -156,20 +173,21 @@ export function selectRoleModel(role: ModelRole, ranking: Ranking, config: LeanP
 			capability_gap: { requested: setting.min_coding_index, best_available: null, reason: `no ranked model has a reachable backend (${role} floor ${setting.min_coding_index})` },
 		};
 	}
+	const binding = best.backend_binding as BackendRef;
 	return {
 		role,
 		model_id: best.model_id,
-		ref: candidateRef(best),
+		ref: { backend: binding.backend, model: binding.model, type: binding.type },
 		pinned: false,
 		capability_gap: {
 			requested: setting.min_coding_index,
 			best_available: best.coding_score,
-			reason: `no bound model clears the ${role} floor ${setting.min_coding_index}${ceiling === undefined ? "" : ` within the price ceiling ${ceiling}`}; escalating to the highest-scoring bound model "${best.model_id}" (${best.coding_score})`,
+			reason: `no bound model clears the ${role} floor ${setting.min_coding_index}${ceiling === undefined ? "" : ` within the price ceiling ${ceiling}`}; escalating to the highest-scoring bound model "${best.model_id}" (${best.coding_score ?? "no known coding score"})`,
 		},
 	};
 }
 
-/** All six roles resolved against one ranking and one config — the row set `/models` joins. */
+/** All six roles resolved against one ranking and one config — the row set `/model` joins. */
 export function roleResolutionsOf(ranking: Ranking, config: LeanPiConfig): RoleSelection[] {
 	return MODEL_ROLES.map((role) => selectRoleModel(role, ranking, config));
 }

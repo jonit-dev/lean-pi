@@ -1,0 +1,71 @@
+{
+  "parity_verified": false,
+  "parity_evidence": "Same provider, same model id, same prompt bytes and same acceptance test for all four arms. Request-level reasoning settings are NOT normalised across harnesses (Codex reasoning.effort=medium; Claude Code MAX_THINKING_TOKENS=8000; LeanPi/stock Pi use their own defaults), and there is no upstream attestation that the gateway converts the OpenAI and Anthropic wire formats equivalently.",
+  "attempts": [
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 1,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.012636,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 148.161
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 2,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.006896,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 46.497
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 3,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.01112,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 187.248
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 4,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.009005,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 61.905
+    },
+    {
+      "task": "slugify-counter-duplicate-slug",
+      "arm": "leanpi",
+      "trial": 5,
+      "status": "passed",
+      "cost_usd": {
+        "model": 0.009176,
+        "classifier": 0.000153258,
+        "delegated": 0,
+        "other": 0
+      },
+      "seconds": 64.574
+    }
+  ]
+}

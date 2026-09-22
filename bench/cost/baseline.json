@@ -1,0 +1,49 @@
+{
+  "task": "slugify-counter-duplicate-slug",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "recorded_at": "2026-09-22",
+  "source_run": "cost-followup-20260922",
+  "git_sha": "2b7c896e73d6e0d2e3bb847f86f7ce7d81c1e1c7",
+  "trials": 5,
+  "tolerance": 0.35,
+  "passrate_tolerance": 0.2,
+  "ratio": 0.6796764239846551,
+  "leanpi_passrate": 1,
+  "arms": {
+    "leanpi": {
+      "total_trials": 5,
+      "valid_trials": 5,
+      "status_counts": {
+        "error": 0,
+        "timeout": 0,
+        "invalid": 0,
+        "failed": 0,
+        "passed": 5
+      },
+      "verified": 5,
+      "passrate": 1,
+      "known_spend_usd": 0.04075,
+      "cost_complete": true,
+      "cost_per_verified_completion": 0.00815,
+      "elapsed_seconds": 351.32
+    },
+    "stock-pi": {
+      "total_trials": 5,
+      "valid_trials": 5,
+      "status_counts": {
+        "error": 0,
+        "timeout": 0,
+        "invalid": 0,
+        "failed": 0,
+        "passed": 5
+      },
+      "verified": 5,
+      "passrate": 1,
+      "known_spend_usd": 0.059955,
+      "cost_complete": true,
+      "cost_per_verified_completion": 0.011991,
+      "elapsed_seconds": 479.748
+    }
+  }
+}

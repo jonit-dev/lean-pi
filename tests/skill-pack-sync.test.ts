@@ -124,7 +124,9 @@ describe("PRD-026 Phase 1 — the sync tool", () => {
 
 		const manifest = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
 		for (const hook of ["install", "postinstall", "preinstall", "prepare"]) expect(manifest.scripts[hook], hook).toBeUndefined();
-	});
+		// `npm pack --dry-run` triggers `prepack` (vendor + tsc), which on a cold,
+		// loaded CI runner exceeds the 30s default.
+	}, 120_000);
 
 	it("AC-6: no bundled-skill code path reaches the network", () => {
 		// A source-level assertion, because a passing offline run proves only that

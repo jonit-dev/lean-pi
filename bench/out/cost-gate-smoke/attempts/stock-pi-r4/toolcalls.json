@@ -1,0 +1,93 @@
+{
+  "arm": "stock-pi",
+  "calls": [
+    {
+      "name": "bash",
+      "input": "{\"command\":\"ls -la && find . -type f -not -path './node_modules/*' -not -path './.git/*' | head -100\",\"timeout\":30}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace/index.js\",\"offset\":1,\"limit\":300}"
+    },
+    {
+      "name": "read",
+      "input": "{\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace/package.json\",\"offset\":1,\"limit\":50}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && node --version && cat .npmrc && ls node_modules/.bin | head -50\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && grep -n \\\"slugifyWithCounter\\\\|counter\\\\|reset\\\" test.js\",\"timeout\":30}"
+    },
+    {
+      "name": "read",
+      "input": "{\"limit\":130,\"offset\":225,\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace/test.js\"}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && ./node_modules/.bin/ava 2>&1 | head -80\",\"timeout\":180}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && git log --oneline -15 && echo \\\"---STATUS---\\\" && git status && echo \\\"---DIFF---\\\" && git diff HEAD~5 -- index.js 2>/dev/null | head -10"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && cat > /tmp/fuzz.mjs <<'EOF'\\nimport {slugifyWithCounter} from './index.js';\\n\\nconst inputs = [\\n  'foo', 'foo bar', 'foo 1', 'foo-1', 'f"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && sed -i \\\"s#'./index.js'#'/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace/index.js'#\\\" /tmp/fuzz.mjs "
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && grep -rn \\\"slugifyWithCounter\\\\|removeCounterSuffix\\\\|occurrences\\\" --include=*.js --include=*.ts -l . | grep -v node_modules\",\"timeout\":"
+    },
+    {
+      "name": "read",
+      "input": "{\"limit\":200,\"offset\":1,\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace/index.d.ts\"}"
+    },
+    {
+      "name": "read",
+      "input": "{\"limit\":120,\"offset\":201,\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace/index.d.ts\"}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && cat > /tmp/fuzz2.mjs <<'EOF'\\nimport {slugifyWithCounter} from '/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && git show HEAD --stat && echo \\\"=====\\\" && git show HEAD -- index.js | head -200\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && git log --oneline --all -25 && echo \\\"=== reflog ===\\\" && git reflog -25 2>/dev/null | head -30\",\"timeout\":30}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && git show 6d97501 --stat && echo \\\"===== PATCH =====\\\" && git show 6d97501\",\"timeout\":30}"
+    },
+    {
+      "name": "edit",
+      "input": "{\"path\":\"/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace/index.js\",\"edits\":[{\"oldText\":\"export function slugifyWithCounter() {\\n\\tconst occurrences = new Map();\\n\\n\\tconst countable = (string, options) ="
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && cat > /tmp/verify.mjs <<'EOF'\\nimport {slugifyWithCounter} from '/home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && ./node_modules/.bin/xo && ./node_modules/.bin/ava 2>&1 | tail -20\",\"timeout\":240}"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && cp index.js /tmp/index-fixed.js && git show HEAD:index.js > index.js && echo \\\"=== RED (pre-fix) ===\\\" && node /tmp/verify.mjs; echo \\\"ex"
+    },
+    {
+      "name": "bash",
+      "input": "{\"command\":\"cd /home/joao/projects/lean-pi/bench/out/cost-gate-smoke/attempts/stock-pi-r4/workspace && git diff index.js\",\"timeout\":30}"
+    }
+  ]
+}

@@ -10,10 +10,11 @@
  *    failing with "no model roles configured".
  * 2. **Is the control plane there?** LeanPi's whole thesis is that a cheap
  *    semantic layer decides what a task needs (ROADMAP §4). Without a JEV
- *    credential every site falls back to a heuristic, which is a different
- *    product — one this repository has measured and does not silently ship. So
- *    a missing key stops the run and says how to fix it, and `--no-jev` is the
- *    explicit way to ask for the degraded harness anyway.
+ *    credential every site falls back to a deterministic heuristic — the
+ *    harness still runs, it just routes worse and spends more tokens per task.
+ *    So a missing key is a warning, not a refusal: the operator gets a working
+ *    session and is told what it is. `--no-jev` and `jev.mode: disabled` are
+ *    deliberate opt-outs and earn no warning at all.
  */
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -21,11 +22,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
-import { allocateRoles, candidateKey, detectModels, ladderAllocation, VENDOR_DEFAULT, type Allocation, type ModelCandidate } from "./allocate.js";
+import { allocateRoles, candidateKey, discoverInventory, ladderAllocation, VENDOR_DEFAULT, type Allocation, type DiscoveredModel, type ModelCandidate } from "./allocate.js";
 import { CONFIG_FILENAME, configPathFor, loadConfig, userConfigPath } from "../core/config.js";
 import { resolvePiCli } from "./launch.js";
 import { MODEL_ROLES, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { createJevClient, type JevClient } from "../jev/client.js";
+import { LEANPI_VERSION } from "../core/package-info.js";
 import { describeCredential, resolveCredential, writeStoredKey } from "../jev/credentials.js";
 
 export interface BootstrapEnv {
@@ -122,6 +124,12 @@ export interface AutoConfigResult {
 	 */
 	outcome: "existing" | "written" | "no-subscription";
 	usable: SubscriptionState[];
+	/**
+	 * Every model this machine can see, across every vendor CLI, whether or not a
+	 * role binds it and whether or not the vendor is signed in. The inventory JEV
+	 * is asked to judge and `/model` can list; empty when a config already exists.
+	 */
+	inventory: DiscoveredModel[];
 	/** One line a human can read: what was detected, and what was written. */
 	summary: string;
 }
@@ -227,19 +235,24 @@ export async function autoConfigure(
 	const { cwd, env, home } = environment(options);
 	const path = configPathFor(cwd, env);
 	if (existsSync(path)) {
-		return { path, created: false, outcome: "existing", usable: [], summary: `configuration: ${path}` };
+		return { path, created: false, outcome: "existing", usable: [], inventory: [], summary: `configuration: ${path}` };
 	}
 	// `verify: true`: a first run may spend a second asking three CLIs whether
 	// they are actually logged in, rather than writing a config against a vendor
 	// that only *looks* signed in from its credential file.
 	const detected = detectVendors({ env, home, verify: true });
 	const usable = detected.filter((state) => state.onPath && state.signedIn);
+	// Discovery covers every vendor the machine has, signed in or not: the
+	// inventory is JEV's decision data, and a signed-out vendor's models are an
+	// exclusion to state rather than a candidate to drop before the question.
+	const inventory = discoverInventory({ env, home, verify: true, states: detected });
 	if (usable.length === 0) {
 		return {
 			path,
 			created: false,
 			outcome: "no-subscription",
 			usable,
+			inventory,
 			// One readiness block, not one verdict. The old line said "no vendor
 			// CLI is both installed and signed in" and threw the probe results
 			// away, so a user with Claude installed and signed out was told the
@@ -255,17 +268,23 @@ export async function autoConfigure(
 	// CLI. Where both are available for the same subscription the provider wins,
 	// because that is the one Pi's own loop can run.
 	const nativeOpenCode = usable.some((state) => state.vendor === "opencode") && (options.piReady ?? piProviderReady)(OPENCODE_GO_PROVIDER);
-	const candidates = usable.flatMap((state) =>
-		detectModels(state.vendor, { env, home }).map((candidate) =>
-			nativeOpenCode && candidate.vendor === "opencode"
-				? { ...candidate, backend: OPENCODE_GO_PROVIDER, model: candidate.model.replace(`${OPENCODE_GO_PROVIDER}/`, "") }
-				: candidate,
-		),
-	);
+	// One remap, applied to the inventory and the ballot together so JEV judges
+	// the same execution route the config will dispatch.
+	const remap = (candidate: DiscoveredModel): DiscoveredModel =>
+		nativeOpenCode && candidate.vendor === "opencode"
+			? {
+					...candidate,
+					backend: OPENCODE_GO_PROVIDER,
+					model: candidate.model.replace(`${OPENCODE_GO_PROVIDER}/`, ""),
+					facts: { ...candidate.facts, execution: "native" },
+				}
+			: candidate;
+	const fullInventory = inventory.map(remap);
+	const candidates: DiscoveredModel[] = fullInventory.filter((candidate) => usable.some((state) => state.vendor === candidate.vendor));
 	const allocation =
 		options.client === undefined
 			? { roles: ladderAllocation(candidates), fallbackUsed: true, decided: [] }
-			: await allocateRoles(options.client, candidates);
+			: await allocateRoles(options.client, candidates, fullInventory);
 	// The same computation discovery uses, so the file written here is the file
 	// found on the next line.
 	const target = userConfigPath({ ...env, HOME: home }) ?? join(cwd, CONFIG_FILENAME);
@@ -276,17 +295,11 @@ export async function autoConfigure(
 		created: true,
 		outcome: "written",
 		usable,
+		inventory: fullInventory,
 		// One line, and the banner prints the resulting map immediately after, so
 		// this says where the file is and who decided — not the map twice.
 		summary: `no ${CONFIG_FILENAME} found — wrote ${target}; detected ${usable.map((state) => state.vendor).join(", ")}; roles by ${describeAllocation(allocation)}`,
 	};
-}
-
-export class MissingJevKeyError extends Error {
-	constructor(readonly detail: string) {
-		super(detail);
-		this.name = "MissingJevKeyError";
-	}
 }
 
 export interface JevCheck {
@@ -296,13 +309,14 @@ export interface JevCheck {
 }
 
 /**
- * Refuse to start without the control plane, unless asked to.
+ * Resolve the control plane without demanding it.
  *
  * A LeanPi with no JEV key still runs — every site has a deterministic fallback
  * — but it is not the product the numbers describe: the classification, the
- * disclosure ranking and the proof sufficiency are all heuristics then. Starting
- * it silently is how a harness ends up measured for months with its control
- * plane switched off, which is exactly what happened in this repository.
+ * disclosure ranking and the proof sufficiency are all heuristics then. That is
+ * worth saying, not worth refusing, so a missing key reports `not configured`
+ * and the startup path warns. `--no-jev` and `jev.mode: disabled` are deliberate
+ * opt-outs: the operator already answered the question, so neither warns.
  */
 export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boolean; setKey?: string } = {}): JevCheck {
 	const { cwd, env, home } = environment(options);
@@ -322,20 +336,24 @@ export function requireJev(options: Partial<BootstrapEnv> & { allowMissing?: boo
 	const credential = resolveCredential(config, { ...env, HOME: home }, cwd);
 	if (credential.key !== null) return { source: describeCredential(credential) };
 	if (options.allowMissing === true) return { source: "not configured (--no-jev)" };
-	throw new MissingJevKeyError(
-		[
-			"LeanPi needs a JEV key: its task compiler, skill disclosure and proof gate are JEV decisions,",
-			"and without one every site falls back to a heuristic — a different harness than the measured one.",
-			"",
-			"Configure it in any of these ways:",
-			`  leanpi --jev-key <key>      store it for this machine (${join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "leanpi", "credentials.json")}, mode 0600)`,
-			"  export JEV_API_KEY=<key>    for this shell",
-			"  echo 'JEV_API_KEY=<key>' >> .env    for this project (read, never exported)",
-			"",
-			"Or run the degraded harness deliberately:",
-			"  leanpi --no-jev",
-		].join("\n"),
-	);
+	return { source: "not configured" };
+}
+
+/**
+ * What to say when JEV is missing and the operator did not opt out.
+ *
+ * One copy of the text, read by both `bin/leanpi.js` (printed under the banner)
+ * and the extension's `session_start` (a warning notification), so the two
+ * surfaces cannot drift. `null` means "say nothing": a resolved key, `--no-jev`
+ * or `jev.mode: disabled` are all answers, and only an unanswered question warns.
+ */
+export function jevWarning(source: string): string[] | null {
+	if (!source.startsWith("not configured") || source.includes("--no-jev")) return null;
+	return [
+		"JEV not configured — LeanPi routes on heuristics and spends more tokens per task.",
+		"  Get a key: https://typesafe.ai",
+		"  Set it:    leanpi --jev-key <key>   |   export JEV_API_KEY=<key>   |   /jev key set <key>",
+	];
 }
 
 /**
@@ -372,27 +390,90 @@ export function jevClientFor(options: Partial<BootstrapEnv> = {}): JevClient {
  * the control plane is live. One screen line each, on stderr, so a piped
  * `--print` run still yields clean stdout.
  */
-export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?: string): string {
-	const label = (role: ModelRole): string => {
-		const entry = config.models[role];
-		if (entry === undefined) return "—";
-		return entry.model === VENDOR_DEFAULT ? entry.backend : `${entry.backend} ${entry.model}`;
-	};
-	const roles = [`quick ${label("quick")}`, `balanced ${label("balanced")}`, `strong ${label("strong")}`];
-	return [
-		"leanpi — tell me your goal, I figure out the rest.",
-		`  models   ${roles.join("  ·  ")}`,
-		`  review   ${label("review_quick")} → ${label("review_strong")}`,
-		`  control  JEV ${jev.source}`,
-		// Who answers the prompt. Pi's own loop cannot dial a vendor CLI, so on a
-		// subscription-only config it runs on whatever provider Pi has — and the
-		// roles above describe the workers LeanPi spawns *inside* the turn, not
-		// the loop. Saying so is the difference between a surprising `429` from an
-		// endpoint the user never configured and an expected one.
-		sessionModel === undefined
-			? "  loop     pi's own model — the roles above are vendor CLIs LeanPi runs inside the turn (`pi auth login` gives the loop its own)"
-			: `  loop     pi runs ${sessionModel}`,
-	].join("\n");
+/** `JEV on (credential store)`, or why it is not deciding anything. */
+function jevLine(source: string): string {
+	if (source.startsWith("disabled") || source.startsWith("not configured")) {
+		return `JEV ${source} — decisions take their built-in defaults`;
+	}
+	// "configured (source: credential store)" → "credential store".
+	const inner = /\(source:\s*([^)]+)\)/.exec(source);
+	// Not a middot: the banner already joins its facts with one, and a second
+	// inside a fact makes the line read as two.
+	return `JEV on (${inner ? inner[1] : source})`;
+}
+
+/** The π mark, four rows of block glyphs, sized to sit beside four facts. */
+const MARK: readonly string[] = ["\u2597\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2596", " \u2590\u2588\u258c \u2590\u2588\u258c ", " \u2590\u2588\u258c \u2590\u2588\u258c ", " \u259d\u2580\u2598 \u259d\u2580\u2598 "];
+
+/**
+ * Emphasis, written the way the eye reads a masthead: one bright thing.
+ *
+ * The name is the only text at full weight. Everything else — the version, the
+ * model, the control plane, the path — is supporting detail and is muted, so
+ * the block that opens the session has a single focal point instead of four
+ * lines competing at the same brightness.
+ */
+const MARK_COLOR = "\u001b[38;5;43m";
+const NAME = "\u001b[1m";
+const MUTED = "\u001b[38;5;245m";
+const OFF = "\u001b[0m";
+
+/** `/home/joao/x` → `~/x`: the home prefix is noise in a line about location. */
+function tildify(cwd: string, home: string): string {
+	return cwd === home ? "~" : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
+}
+
+export interface BannerStyle {
+	/** Emit SGR escapes. Off by default so a redirected stream stays plain text. */
+	color?: boolean;
+	cwd?: string;
+	home?: string;
+}
+
+/**
+ * The first screen: the mark, then what is running, beside it.
+ *
+ * Four facts, not a config dump. The previous banner printed every role, both
+ * reviewers, the control plane and the loop — six model ids for a config that
+ * names one model, which is what made the launch read as noise. Role bindings,
+ * reasoning level, backend health and session cost all already have a home in
+ * `/status`; this says only what a user needs before typing the first word.
+ */
+export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?: string, style: BannerStyle = {}): string {
+	const cwd = style.cwd ?? process.cwd();
+	const home = style.home ?? homedir();
+	const on = style.color === true;
+	const paint = (code: string, text: string): string => (on ? `${code}${text}${OFF}` : text);
+	// The model that answers the prompt. The roles are the workers LeanPi spawns
+	// *inside* a turn, and naming them here described something the user is not
+	// about to talk to.
+	const running = sessionModel === undefined ? "pi's own model — `pi auth login` gives it one" : sessionModel.slice(sessionModel.indexOf("/") + 1);
+	const facts = [
+		// The one bright thing, and its version muted beside it.
+		`${paint(NAME, "leanpi")} ${paint(MUTED, `v${LEANPI_VERSION}`)}`,
+		// LeanPi picks the effort per task; naming a fixed level would be a lie.
+		paint(MUTED, `${running}${sessionModel === undefined ? "" : ", effort chosen per task"}`),
+		paint(MUTED, jevLine(jev.source)),
+		paint(MUTED, tildify(cwd, home)),
+	];
+	return MARK.map((row, index) => `${paint(MARK_COLOR, row)}  ${facts[index] ?? ""}`.trimEnd()).join("\n");
+}
+
+/**
+ * Named credentials the shell does not hold *and* Pi cannot cover.
+ *
+ * A missing variable is only a problem when nothing else can authenticate the
+ * provider: Pi keeps its own credential store, and on a machine where `pi auth`
+ * already has the provider the request succeeds and the warning is a false
+ * alarm — which is exactly what it was, printed on every launch, above a
+ * session that then worked perfectly.
+ */
+export function unusableBackendKeys(
+	config: LeanPiConfig,
+	env: NodeJS.ProcessEnv = process.env,
+	piReady: (provider: string) => boolean = piProviderReady,
+): Array<{ backend: string; variable: string }> {
+	return missingBackendKeys(config, env).filter(({ backend }) => !piReady(backend));
 }
 
 /**

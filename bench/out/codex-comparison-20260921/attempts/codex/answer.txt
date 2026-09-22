@@ -1,0 +1,12 @@
+Fixed in `index.js:126`.
+
+**Root cause**
+`slugifyWithCounter()` tracked how many times each normalized slug was seen, but it never checked whether the string it actually returned had already been handed out. The `numberless > 2` heuristic only guessed at collisions, so sequences like `slugify('foo')`, `slugify('foo')`, `slugify('foo-2')` produced `foo`, `foo-2`, `foo-2` — a duplicate.
+
+**Fix**
+- Added a `used` set that records every emitted slug (case-insensitively).
+- The plain slug is only returned when it's the slug's first occurrence, the base slug hasn't already spawned counters, and the plain slug is still free.
+- Otherwise it appends a numeric counter, incrementing past any value already emitted, guaranteeing every returned slug is distinct.
+- `reset()` now clears `used` alongside `occurrences`.
+
+The existing `counter` test expectations are preserved exactly (e.g. `foo-11` still yields `foo-11-1`), all 24 tests pass including the ReDoS guard, and an exhaustive search over 162,302 calls across colliding inputs found zero duplicates.
