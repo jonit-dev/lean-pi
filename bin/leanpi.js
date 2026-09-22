@@ -18,6 +18,7 @@ if (major < 22 || (major === 22 && minor < 19)) {
 	process.exit(1);
 }
 import { autoConfigure, jevClientFor, jevWarning, unusableBackendKeys, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
+import { runOnboarding, shouldOnboard } from "../dist/cli/onboarding.js";
 import { loadConfig } from "../dist/core/config.js";
 import { isInformational, launchEnv, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 import { ensureGitIgnored } from "../dist/runtime/ignore.js";
@@ -50,6 +51,13 @@ try {
 	// take from the theme — the diff's syntax colours — and only where the user
 	// has not already answered.
 	if (flags.ui === "compact") ensureCompactUiDefaults();
+	// The one question the machine cannot answer for itself, asked before
+	// anything is written: the key decides the role map `autoConfigure` is about
+	// to write, and that map is never recomputed. Only when a person is watching
+	// and the question is genuinely open — a prompt in CI hangs forever.
+	if (shouldOnboard({ flags, interactive: process.stdin.isTTY === true && process.stderr.isTTY === true })) {
+		await runOnboarding();
+	}
 	// The key first: JEV allocates the roles the config is written with, so a run
 	// that has no control plane must stop before it writes anything.
 	const jev = requireJev({ allowMissing: flags.allowMissingJev, ...(flags.jevKey === undefined ? {} : { setKey: flags.jevKey }) });

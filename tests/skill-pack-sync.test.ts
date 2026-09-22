@@ -5,11 +5,26 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkPack, listPackFiles, PACK_UNLOCKED, readJson, renderNotice, VendorError, vendorPack } from "../src/skills/vendor.mjs";
 import { PACKAGE_ROOT } from "../src/core/package-info.js";
 import { tempDir } from "./helpers/fixtures.js";
+
+/**
+ * The published file list, packed once per process. `npm pack --dry-run` triggers
+ * `prepack` (vendor + tsc), which on a cold, loaded CI runner exceeds the 30s
+ * default, so two assertions must not pack twice.
+ */
+let packedPaths: Set<string> | undefined;
+function publishedPaths(): Set<string> {
+	packedPaths ??= new Set(
+		(
+			JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: PACKAGE_ROOT, encoding: "utf8" })) as Array<{ files: Array<{ path: string }> }>
+		)[0]!.files.map((file) => file.path),
+	);
+	return packedPaths;
+}
 
 /** An upstream that reproduces both hazards the PRD names: a symlink and a `.bak`. */
 function fixtureUpstream(options: { adhdVersion?: string; licenceless?: boolean } = {}): string {
@@ -111,8 +126,7 @@ describe("PRD-026 Phase 1 — the sync tool", () => {
 	});
 
 	it("AC-6: the published file list carries the pack, no ponytail skill copy and no install hook", () => {
-		const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: PACKAGE_ROOT, encoding: "utf8" })) as Array<{ files: Array<{ path: string }> }>;
-		const published = new Set(packed[0]!.files.map((file) => file.path));
+		const published = publishedPaths();
 		const lock = readJson(join(PACKAGE_ROOT, "skills/pack.lock.json"));
 
 		for (const skill of lock.skills) for (const file of skill.files) expect(published.has(`skills/${file.path}`), file.path).toBe(true);
@@ -126,6 +140,22 @@ describe("PRD-026 Phase 1 — the sync tool", () => {
 		for (const hook of ["install", "postinstall", "preinstall", "prepare"]) expect(manifest.scripts[hook], hook).toBeUndefined();
 		// `npm pack --dry-run` triggers `prepack` (vendor + tsc), which on a cold,
 		// loaded CI runner exceeds the 30s default.
+	}, 120_000);
+
+	it("AC-6: the packed bin entry point can resolve every relative import it makes", () => {
+		// A shipped `bin/leanpi.js` that imports a file `files` left out is a package
+		// that cannot start: 0.1.1 shipped `bin/leanpi.js` importing
+		// `../scripts/patch-pi-model-command.mjs` while `files` omitted `scripts/`,
+		// so `npx leanpi --version` died on ERR_MODULE_NOT_FOUND. Every relative
+		// import the entry point makes has to be in the tarball.
+		const published = publishedPaths();
+		const source = readFileSync(join(PACKAGE_ROOT, "bin/leanpi.js"), "utf8");
+		const specifiers = [...source.matchAll(/from\s+"(\.[^"]+)"/g)].map((match) => match[1]!);
+		expect(specifiers.length).toBeGreaterThan(0);
+		for (const specifier of specifiers) {
+			const shipped = relative(PACKAGE_ROOT, resolve(PACKAGE_ROOT, "bin", specifier));
+			expect(published.has(shipped), `${specifier} -> ${shipped} is not in the published file list`).toBe(true);
+		}
 	}, 120_000);
 
 	it("AC-6: no bundled-skill code path reaches the network", () => {

@@ -554,7 +554,7 @@ describe("the status line", () => {
 		// line names no internal lane: "Executor lane" is a word the operator
 		// cannot act on. The provider follows the model because one model id is
 		// served by several of them at different prices.
-		expect(line).toBe("opus (1m)  ·  claude  ·  auto  ·  thinking: medium  ·  normal task");
+		expect(line).toBe("opus (1m)  ·  claude  ·  Auto  ·  thinking: medium  ·  normal task");
 	});
 
 	it("colours the model and the effort only when asked, so the plain line stays plain", () => {
@@ -575,10 +575,10 @@ describe("the status line", () => {
 		expect(mk("max", true)).toContain("\u001b[38;5;196m");
 		// A caller that did not ask gets text it can compare as text.
 		expect(mk("low")).not.toContain("\u001b");
-		expect(mk("low")).toBe("quick  ·  auto  ·  thinking: low  ·  simple task");
+		expect(mk("low")).toBe("quick  ·  Auto  ·  thinking: low  ·  simple task");
 	});
 
-	it("says `auto` until the operator pins the role, and stops saying it after", () => {
+	it("says `Auto` until the operator pins the role, then `Manual` in red", () => {
 		const backends = { claude: { type: "external_harness", vendor: "claude" } };
 		const models = { strong: { backend: "claude", model: "opus[1m]" } };
 		const contract = {
@@ -591,10 +591,17 @@ describe("the status line", () => {
 		// Nobody chose this model: the capability index did, and a harness that
 		// picks for you without saying so is indistinguishable from one that was
 		// configured that way.
-		expect(statusLine({ config: { backends, models } as never, contract })).toContain("auto");
-		// `/model` writes the pin, and the chip is how the operator sees it took.
+		const auto = statusLine({ config: { backends, models } as never, contract });
+		expect(auto).toContain("Auto");
+		expect(auto).not.toContain("Manual");
+		// `/model` writes the pin, and the chip is how the operator sees it took:
+		// a red `Manual` next to the model, so a hand-picked model is never
+		// mistaken for the harness's own choice.
 		const pinned = { backends, models, capability: { roles: { strong: { pin: "opus[1m]" } } } } as never;
-		expect(statusLine({ config: pinned, contract })).not.toContain("auto");
+		const manual = statusLine({ config: pinned, contract, color: true });
+		expect(manual).toContain("Manual");
+		expect(manual).toContain("\u001b[38;5;196mManual\u001b[0m");
+		expect(manual).not.toContain("Auto");
 	});
 
 	it("reports Pi's context reading and a measured shortfall, and stays silent without either", () => {
