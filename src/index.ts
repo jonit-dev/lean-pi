@@ -10,7 +10,7 @@
  */
 import type { AgentSession, ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	getActivePrefix,
@@ -89,7 +89,7 @@ import { createJevClient, type JevClient } from "./jev/client.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
 import { isModelRole, type LeanPiConfig, type ModelRole } from "./core/types.js";
-import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
+import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
 
 /**
  * The host's `ask` channel for an isolated worktree, built from Pi's own UI.
@@ -1086,6 +1086,8 @@ export default function attach(pi: ExtensionAPI, options: ActivateOptions = {}):
 export interface CreateLeanPiSessionOptions {
 	cwd?: string;
 	agentDir?: string;
+	/** Reuse a SettingsManager so upstream resource discovery matches the session's own loader. */
+	settingsManager?: SettingsManager;
 	config?: LeanPiConfig;
 	sessionManager?: SessionManager;
 	env?: CredentialEnv;
@@ -1124,6 +1126,11 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 	const cwd = options.cwd ?? process.cwd();
 	// Upstream's global settings use getAgentDir independently of this SDK path.
 	const agentDir = options.agentDir ?? getAgentDir();
+	// One manager for resource discovery and the session's own loader: Pi's
+	// canonical-path merge then dedupes LeanPi's selected upstream entry against
+	// any copy the same settings already expose.
+	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	const subagents = await prepareSubagents({ cwd, agentDir, settingsManager });
 	let activation: LeanPiActivation | undefined;
 	// The session's extension API, kept so the active-tool set can be built from
 	// the tools that actually registered (the package's parent tools included)
@@ -1132,7 +1139,11 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 	const services = await createAgentSessionServices({
 		cwd,
 		agentDir,
+		settingsManager,
 		resourceLoaderOptions: {
+			// Upstream is attached as a real resource path, so Pi loads it once and
+			// dedupes it by canonical path against the operator's own copy.
+			additionalExtensionPaths: [subagents.entry],
 			// LeanPi owns skill disclosure (PRD-005): the contract's skill slots are
 			// filled by `selectSkills`, so Pi's blanket `<available_skills>` block is
 			// duplicate surface — and it is not small. Measured on this machine it

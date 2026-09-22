@@ -341,7 +341,7 @@ export function launchEnv(flags: LeanPiFlags, jevWarned: boolean, base: NodeJS.P
  * accepts the flag more than once, and silently dropping a user's extension
  * would be the launcher deciding something it was not asked to decide.
  */
-export function launchPlan(argv: readonly string[], root: string = packageRoot(), sessionModel?: string, ui: UiMode = "compact", thinkingFold = true): LaunchPlan {
+export function launchPlan(argv: readonly string[], root: string = packageRoot(), sessionModel?: string, ui: UiMode = "compact", thinkingFold = true, subagentsEntry?: string): LaunchPlan {
 	// `dist/leanpi.js`, not `dist/index.js`: Pi names an extension after its
 	// file and the banner is the user's first screen (`[Extensions] leanpi`).
 	const extension = join(root, "dist", "leanpi.js");
@@ -378,6 +378,11 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// take it from a surface that already exists.
 	const bundled = bundledExtensions(root, ui, thinkingFold);
 	const bundledArgs = bundled.flatMap((path) => ["--extension", path]);
+	// Upstream `pi-subagents` is attached as its exact selected resource path,
+	// once and centrally. Pi's loader merges this with the path its own settings
+	// resolution produces and keeps one by canonical path, so a global install
+	// and this selection cannot double-register.
+	const subagents = subagentsEntry === undefined ? [] : ["--extension", subagentsEntry];
 	return {
 		cli: resolvePiCli(root),
 		extension,
@@ -390,6 +395,7 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 			// attached and Pi's duplicate-name rename can never fire.
 			"--extension",
 			usageAdapterExtension(root),
+			...subagents,
 			...bundledArgs,
 			"--extension",
 			spinnerExtension(root),

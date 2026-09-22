@@ -198,19 +198,34 @@ Annotated example: [`leanpi.config.yaml`](leanpi.config.yaml).
 ## Subagents
 
 LeanPi attaches [`pi-subagents`](https://pi.dev/packages/pi-subagents) (pinned
-`0.70.1`) through the same `attach` entry as everything else, so delegation is
-available without a second launcher flag or extension file. Whether the *model*
-can delegate depends on who answers the turn:
+`0.70.1`) as one resource path through Pi's native loader. It resolves the exact
+enabled extension path Pi's own settings expose and passes that path (the CLI
+adds one `--extension`, the SDK one `additionalExtensionPaths` entry), so Pi's
+canonical-path merge keeps a single copy even when the operator has configured
+the same package globally. LeanPi's own `attach` adds only the operator limit
+clamp and its command; it does not register the package a second time. Selection
+fails closed with an actionable message on a mismatched
+version, more than one enabled copy, a malformed config, or (in the CLI's
+global-only preflight) a project-scoped copy that could load on top later.
+Move or remove a project-local copy before launching LeanPi; this conservative
+check can also reject a physical copy disabled by a project filter.
+Whether the *model* can delegate depends on who answers the turn:
 
 | parent mode | who answers the turn | model can call `subagent` | supported delegation entrypoint |
 | --- | --- | --- | --- |
 | `leanpi` CLI / `createLeanPiSession`, native backends | Pi's loop | yes | the `subagent` tool |
-| external-harness parent (all roles `external_harness`) | the vendor CLI | no | host-owned `/run` and the upstream `/subagents*` commands |
+| external-harness parent (all roles `external_harness`) | the vendor CLI | no | host-owned `/run` with an available Pi-native child model |
 
 An external vendor CLI owns its own turn and never sees Pi's tools, so LeanPi
 does not claim a model-driven subagent call there; the host-owned `/run` command
 is the supported path and runs the same upstream workflow engine. No adapter or
 scheduler is invented to bridge the two.
+
+Try `/run delegate summarize this file`. `delegate` is an upstream built-in
+agent; no custom agent file is needed. A native parent can also ask its model to
+use the `subagent` tool. An external-harness parent needs a Pi-native child
+provider/model (for example, set `subagents.defaultModel` in Pi settings to a
+model already available to Pi); a vendor CLI model alone cannot run the child.
 
 **Per-run limit.** LeanPi ships `globalConcurrencyLimit: 3`: at most three
 children of one delegation run (one workflow call) overlap. Upstream already
@@ -226,19 +241,20 @@ claim otherwise.
 
 Upstream reads its config once when its extension starts, so a saved change
 applies after `/reload` or a restart; the command says so, and it never writes
-on invalid input or a config file it cannot safely round-trip. A config with no
+on invalid input or a config file it cannot safely round-trip. The limit is
+stored in Pi's upstream config at `getAgentDir()/extensions/subagent/config.json`
+(`PI_CODING_AGENT_DIR` when set).
+The SDK's `agentDir` option controls resource discovery separately and does not
+change this config location or the process environment. A config with no
 `asyncByDefault` is written as `false`: LeanPi's native providers are registered
 in-process, and an async child is a separate process that cannot see them. To
 run children asynchronously, name a child-visible `backend`/`model` in the
 child's agent config and set `asyncByDefault: true`; otherwise a child resolves
 `backend/model` only on the foreground path.
 
-**Cost.** `/subagent-cost` (upstream) reports parent and child usage from
-upstream's own accounting; `/cost` (LeanPi) reports LeanPi's ledger. They are
-separate numbers with separate scopes and neither is a billing framework.
-
-The package's agents, skills and prompt templates are the upstream ones LeanPi
-actually ships and loads; LeanPi adds no delegation agents of its own.
+**Cost.** `/subagent-cost` (upstream) reports its child usage. LeanPi's `/cost`
+does not aggregate that child usage. The model-tool clamp applies to model-issued
+workflow overrides; trusted direct extension/RPC callers use upstream's own API.
 
 ---
 

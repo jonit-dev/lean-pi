@@ -87,19 +87,14 @@ describe("pi-subagents is attached to the real SDK session (AC-1, AC-2)", () => 
 		}
 	});
 
-	it("does not register upstream when its global config is malformed", async () => {
+	it("rejects before loading any resource when its global config is malformed", async () => {
 		const globalDir = tempDir("leanpi-invalid-agent-");
 		const path = subagentConfigPath(globalDir);
 		mkdirSync(dirname(path), { recursive: true });
 		writeFileSync(path, "{broken");
 		process.env.PI_CODING_AGENT_DIR = globalDir;
-		const session = await createLeanPiSession({ cwd, agentDir: tempDir("leanpi-sdk-agent-") });
-		try {
-			expect(session.session.getActiveToolNames()).not.toContain("subagent");
-			expect(readFileSync(path, "utf8")).toBe("{broken");
-		} finally {
-			session.session.dispose();
-			process.env.PI_CODING_AGENT_DIR = agentDir;
-		}
+		await expect(createLeanPiSession({ cwd, agentDir: tempDir("leanpi-sdk-agent-") })).rejects.toThrow(/refusing to load pi-subagents/);
+		expect(readFileSync(path, "utf8")).toBe("{broken");
+		process.env.PI_CODING_AGENT_DIR = agentDir;
 	});
 });

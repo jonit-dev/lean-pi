@@ -23,6 +23,7 @@ import { loadConfig } from "../dist/core/config.js";
 import { isInformational, launchEnv, launchPlan, parseLeanPiFlags } from "../dist/cli/launch.js";
 import { ensureGitIgnored } from "../dist/runtime/ignore.js";
 import { ensureCompactUiDefaults, thinkingFoldEnabled } from "../dist/cli/ui-settings.js";
+import { prepareCliSubagents } from "../dist/subagents/index.js";
 import { patchPiModelCommand } from "../scripts/patch-pi-model-command.mjs";
 
 let flags;
@@ -94,7 +95,11 @@ try {
 		process.stderr.write(`leanpi: backend "${backend}" reads its key from $${variable}, which is not set in this shell — export it, or remove the \`apiKey\` line to use pi's own credential for that provider.\n`);
 	}
 	// Folded reasoning unless `/thinking-fold off` stored the other answer.
-	plan = launchPlan(flags.rest, undefined, sessionModel, flags.ui, thinkingFoldEnabled());
+	// Select upstream's one resource path before spawning: a global-only preflight
+	// (project packages are reported, never trusted or executed) feeds Pi's own
+	// `--extension`, whose canonical-path merge dedupes it against the global copy.
+	const subagents = await prepareCliSubagents(process.cwd());
+	plan = launchPlan(flags.rest, undefined, sessionModel, flags.ui, thinkingFoldEnabled(), subagents.entry);
 	}
 } catch (error) {
 	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

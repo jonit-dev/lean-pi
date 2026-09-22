@@ -14,7 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { PACKAGE_ROOT } from "../../src/index.js";
+import { PACKAGE_ROOT, type LeanPiSession } from "../../src/index.js";
+import { fixtureRepo, isolateAgentDir, nativeBackend, writeConfig } from "../helpers/fixtures.js";
 
 /**
  * Pack the repository, unpack it, and hand back the installed-layout root.
@@ -75,8 +76,37 @@ describe("the published package", () => {
 			// export would install but never register `subagent`.
 			const manifest = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")) as { dependencies?: Record<string, string> };
 			expect(manifest.dependencies?.["pi-subagents"]).toBe("0.70.1");
-			const shipped = (await import(/* @vite-ignore */ pathToFileURL(join(pkg, "dist", "index.js")).href)) as { default?: unknown };
+			const shipped = (await import(/* @vite-ignore */ pathToFileURL(join(pkg, "dist", "index.js")).href)) as {
+				default?: unknown;
+				createLeanPiSession?: (options: { cwd: string; agentDir: string }) => Promise<LeanPiSession>;
+			};
 			expect(typeof shipped.default).toBe("function");
+			const createShippedSession = shipped.createLeanPiSession;
+			if (typeof createShippedSession !== "function") throw new Error("the packed SDK has no session entry");
+			const repo = fixtureRepo();
+			const restoreAgentDir = isolateAgentDir(repo.agentDir);
+			let consumer: LeanPiSession | undefined;
+			try {
+				writeConfig(repo.cwd, {
+					backends: { local: nativeBackend("http://127.0.0.1:1") },
+					models: {
+						quick: { backend: "local", model: "cheap-fast" },
+						balanced: { backend: "local", model: "cheap-fast" },
+						strong: { backend: "local", model: "cheap-fast" },
+					},
+					jev: { mode: "disabled" },
+					lsp: { mode: "off" },
+				});
+				consumer = await createShippedSession({ cwd: repo.cwd, agentDir: repo.agentDir });
+				expect(consumer.session.getActiveToolNames()).toContain("subagent");
+				expect(consumer.session.getActiveToolNames()).toContain("bg_wait");
+				const loaded = consumer.session.resourceLoader.getExtensions();
+				expect(loaded.errors).toEqual([]);
+				expect(loaded.extensions.flatMap((extension) => [...extension.commands.keys()])).toContain("run");
+			} finally {
+				consumer?.session.dispose();
+				restoreAgentDir();
+			}
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
