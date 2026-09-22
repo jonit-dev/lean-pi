@@ -38,6 +38,12 @@ const BOLD = "\u001b[1m";
 const DIM = "\u001b[38;5;244m";
 /** The one colour that means "act on this": the two warning chips and nothing else. */
 const WARN = "\u001b[38;5;208m";
+/**
+ * `Manual` reads red because a hand-picked model is the operator's own doing:
+ * the harness cannot re-route around it, and a silent pin is how a stale
+ * `/model` choice keeps spending on the wrong model for a whole session.
+ */
+const MANUAL = "\u001b[38;5;196m";
 
 /**
  * Effort as a temperature, matching the theme's `thinking*` ramp: cheap and safe
@@ -125,7 +131,9 @@ export function statusLine({ config, contract, role, model: running, effort: app
 	let provider: string | undefined;
 	// Which model runs is the harness's call until the operator makes it theirs:
 	// the capability index picks one per turn, and only a `/model` pin stops it.
-	let auto = false;
+	// `undefined` when the caller already knows the running model and the role's
+	// pin state would describe a model that is not the one executing.
+	let pinned: boolean | undefined;
 	// The role asked for a floor the running model does not clear. Reported once
 	// to stderr at session start, which in the TUI is nowhere, so a hard task
 	// quietly running on the cheap model looked exactly like one that was not.
@@ -140,7 +148,7 @@ export function statusLine({ config, contract, role, model: running, effort: app
 		provider = split?.[0];
 	} else {
 		const status = roleStatus(config, resolvedRole);
-		auto = !status.pinned;
+		pinned = status.pinned;
 		if (status.gap !== undefined && status.gap.best_available !== null) shortfall = `⚠ below ${resolvedRole} floor`;
 		try {
 			const ref = resolveRole(config, resolvedRole);
@@ -158,7 +166,9 @@ export function statusLine({ config, contract, role, model: running, effort: app
 		color === true ? `${BOLD}${model}${RESET}` : model,
 		// `default` renders as the backend name already; a second copy of it is noise.
 		...(provider !== undefined && provider !== model ? [color === true ? `${DIM}${provider}${RESET}` : provider] : []),
-		...(auto ? [color === true ? `${DIM}auto${RESET}` : "auto"] : []),
+		...(pinned === undefined
+			? []
+			: [color === true ? (pinned ? `${MANUAL}Manual${RESET}` : `${DIM}Auto${RESET}`) : pinned ? "Manual" : "Auto"]),
 		color === true ? `${EFFORT_COLOR[level]}${effort}${RESET}` : effort,
 		COMPLEXITY_LABEL[contract.task.execution_complexity],
 	];

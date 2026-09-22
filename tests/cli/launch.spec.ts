@@ -31,6 +31,8 @@ describe("the leanpi launcher", () => {
 		expect(plan.args).toEqual([
 			"--extension",
 			plan.extension,
+			"--extension",
+			join(PACKAGE_ROOT, "extensions", "usage", "index.ts"),
 			...bundled,
 			"--extension",
 			spinnerExtension(PACKAGE_ROOT),
@@ -156,6 +158,16 @@ describe("the leanpi launcher", () => {
 		expect(compactUiAttached(plain.args)).toBe(false);
 	});
 
+	it("attaches the /usage adapter and drops the raw usage-bars entry", () => {
+		const plan = launchPlan([]);
+		// The bundled extension's own `/usage` renders an empty selector on a LeanPi
+		// machine; the adapter runs the same factory but owns the single `usage`
+		// registration, so Pi never renames it to usage:1/usage:2.
+		expect(plan.bundled.some((path) => path.includes("pi-usage-bars"))).toBe(false);
+		expect(plan.args).toContain(join(PACKAGE_ROOT, "extensions", "usage", "index.ts"));
+		expect(existsSync(join(PACKAGE_ROOT, "extensions", "usage", "index.ts"))).toBe(true);
+	});
+
 	it("attaches the frames as TypeScript, so Pi loads them through jiti", () => {
 		// A compiled `.js` extension is imported by Node and gets this package's own
 		// pi-tui, so its patch lands on a prototype the interactive mode never
@@ -186,7 +198,9 @@ describe("the leanpi launcher", () => {
 		// LeanPi first: it registers the baseline tools and PRD-017's guard, and a
 		// bundled extension that replaces a tool name needs that surface to exist.
 		expect(attached[0]).toBe(plan.extension);
-		expect(attached.slice(1)).toEqual([...bundledExtensions(), spinnerExtension(), foldCacheExtension()]);
+		// The `/usage` adapter follows LeanPi's own extension, then the bundled
+		// extensions, then the frames.
+		expect(attached.slice(1)).toEqual([join(PACKAGE_ROOT, "extensions", "usage", "index.ts"), ...bundledExtensions(), spinnerExtension(), foldCacheExtension()]);
 		// Every bundled path is a real file, so Pi is never handed a missing one.
 		for (const path of bundledExtensions()) expect(existsSync(path)).toBe(true);
 		// Nothing LeanPi already owns: PRD-018 (LSP), PRD-019 (output reduction),
