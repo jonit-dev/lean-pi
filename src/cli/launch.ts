@@ -14,6 +14,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SAFETY_LEVELS, isSafetyLevel, type SafetyLevel } from "../permissions/rules.js";
+import type { JevProvider } from "../core/types.js";
 
 export interface LaunchPlan {
 	/** Pi's own CLI entry point, resolved out of this package's dependency. */
@@ -226,6 +227,8 @@ export interface LeanPiFlags {
 	allowMissingJev: boolean;
 	/** `--jev-key <key>`: store the key for this machine, then start. */
 	jevKey?: string;
+	/** `--laya` / `--jev`: override `jev.provider` for this run (PRD-042). */
+	provider?: JevProvider;
 	/** `--safety <low|medium|high>`: one named permission policy for this session. */
 	safety?: SafetyLevel;
 	/** `--ui <compact|plain>`: the tool-row surface. Compact unless asked otherwise. */
@@ -254,12 +257,23 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
 	const rest: string[] = [];
 	let allowMissingJev = false;
 	let jevKey: string | undefined;
+	let provider: JevProvider | undefined;
 	let safety: SafetyLevel | undefined;
 	let ui: UiMode = "compact";
 	for (let index = 0; index < argv.length; index += 1) {
 		const argument = argv[index] as string;
 		if (argument === "--no-jev") {
 			allowMissingJev = true;
+			continue;
+		}
+		// `--laya` and `--jev` are the one-run override of `jev.provider`. Last
+		// one wins, so a shell alias adding `--laya` is still overridable by hand.
+		if (argument === "--laya") {
+			provider = "laya";
+			continue;
+		}
+		if (argument === "--jev") {
+			provider = "typesafe";
 			continue;
 		}
 		if (argument === "--jev-key") {
@@ -293,7 +307,7 @@ export function parseLeanPiFlags(argv: readonly string[]): LeanPiFlags {
 		}
 		rest.push(argument);
 	}
-	return { allowMissingJev, ...(jevKey === undefined ? {} : { jevKey }), ...(safety === undefined ? {} : { safety }), ui, rest };
+	return { allowMissingJev, ...(jevKey === undefined ? {} : { jevKey }), ...(provider === undefined ? {} : { provider }), ...(safety === undefined ? {} : { safety }), ui, rest };
 }
 
 /**
@@ -328,6 +342,7 @@ export function launchEnv(flags: LeanPiFlags, jevWarned: boolean, base: NodeJS.P
 	return {
 		...base,
 		...(flags.allowMissingJev ? { LEANPI_NO_JEV: "1" } : {}),
+		...(flags.provider === undefined ? {} : { LEANPI_LAYAY_PROVIDER: flags.provider }),
 		...(jevWarned ? { LEANPI_JEV_WARNED: "1" } : {}),
 		...(flags.safety === undefined ? {} : { LEANPI_SAFETY: flags.safety }),
 		...(sourceCheckout(root) ? {} : { PI_SKIP_VERSION_CHECK: "1" }),

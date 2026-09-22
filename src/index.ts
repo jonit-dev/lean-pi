@@ -86,9 +86,11 @@ import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBas
 import { jevWarning } from "./cli/bootstrap.js";
 import { resolveCredential } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
+import { defaultLayaDeps, ensureLayaRuntime, layaProvider, layaStatus } from "./jev/laya.js";
+import { typesafeProvider, type ControlPlaneProvider } from "./jev/provider.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
-import { isModelRole, type LeanPiConfig, type ModelRole } from "./core/types.js";
+import { isModelRole, type JevProvider, type LeanPiConfig, type ModelRole } from "./core/types.js";
 import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
 
 /**
@@ -111,6 +113,10 @@ export interface ActivateOptions {
 	commands?: CommandRegistry;
 	/** JEV transport seam: tests point the client at a stub endpoint. */
 	jevTransport?: import("./jev/client.js").JevTransport;
+	/** Control-plane provider seam (PRD-042): tests inject one instead of TypeSafe or Laya. */
+	jevProvider?: import("./jev/provider.js").ControlPlaneProvider;
+	/** Laya process/exec seam (PRD-042): tests drive the runtime lifecycle without Python. */
+	layaDeps?: import("./jev/laya.js").LayaDeps;
 	/** Recap seam: tests replace the one-shot recap call so no model is reached. */
 	recapRunner?: RecapRunner;
 	/**
@@ -506,12 +512,28 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// reads the same runtime the command built, so a mid-session `/mcp disable` is
 	// visible to the next compile.
 	const mcpRuntime = registerMcpCommand(commands, { cwd, config, home: homedir(), env });
+	// PRD-042: the provider is chosen from config before the client exists, so
+	// `ask()` never has to consult config. `LEANPI_LAYAY_PROVIDER` is the launcher's
+	// `--laya` / `--jev` decision and wins over the config key for that run.
+	const layaDeps = options.layaDeps ?? defaultLayaDeps();
+	const forcedProvider = env.LEANPI_LAYAY_PROVIDER;
+	const providerName: JevProvider =
+		forcedProvider === "laya" || forcedProvider === "typesafe" ? forcedProvider : config.jev.provider;
+	const buildProvider = (name: JevProvider): ControlPlaneProvider | undefined =>
+		name === "laya"
+			? layaProvider(config.jev.laya, layaDeps)
+			: undefined; // the client's own TypeSafe resolution, unchanged
+	let provider = options.jevProvider ?? buildProvider(providerName);
 	const jev = createJevClient({
 		config,
 		cwd,
 		log: createDecisionLog(decisionLogPath(cwd)),
 		env,
 		...(options.jevTransport ? { transport: options.jevTransport } : {}),
+		// PRD-042: `provider` picks who answers the registered sites. Without one the
+		// client resolves the TypeSafe path inline, exactly as PRD-002 shipped it; with
+		// `laya`, `resolve()` is what provisions and starts the local runtime.
+		...(provider ? { provider } : {}),
 	});
 	// `leanpi --no-jev` is the operator saying "run the degraded harness". The
 	// launcher only skipped the startup credential check, so a machine that had a
@@ -753,7 +775,36 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		browserFacility: options.browserFacility ?? null,
 	});
 
-	registerJevCommands(commands, { client: jev, env });
+	registerJevCommands(commands, {
+		client: jev,
+		env,
+		// PRD-042: the switch builds a fresh provider and swaps it into the live
+		// client, disposing the one it replaces so a Laya server does not outlive
+		// the choice. `typesafe` needs no provider object: the client's own
+		// resolution is the TypeSafe path.
+		provider: {
+			current: () => (jev.providerName() === "laya" ? "laya" : "typesafe"),
+			async swap(name) {
+				await jev.dispose();
+				if (name === "laya") {
+					provider = layaProvider(config.jev.laya, layaDeps);
+					jev.setProvider(provider);
+					return;
+				}
+				provider = typesafeProvider({
+						endpoint: config.jev.endpoint,
+						model: config.jev.model,
+						credential: () => resolveCredential(config, env, cwd),
+				});
+				jev.setProvider(provider);
+			},
+			status: () => layaStatus(config.jev.laya, layaDeps),
+			async setup() {
+				const runtime = await ensureLayaRuntime(config.jev.laya, layaDeps);
+				return { home: runtime.home, python: runtime.python, installed: runtime.installed };
+			},
+		},
+	});
 	// The reasoning display (folded by default); the launcher reads what this stores.
 	registerThinkingFoldCommand(commands, env);
 
@@ -770,6 +821,19 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			// generation *before* the new session's persisted recap is restored: the
 			// old session's input must not answer `/recap` for the new one.
 			recap.reset(ctx);
+		}
+		// PRD-042: a local control plane has to be provisioned and started, and
+		// doing it here means the first turn is not the thing that waits for a
+		// multi-GB download. `resolve()` is the provider's own memoized entry point,
+		// so this and the first `ask()` share one attempt; a failure is reported
+		// once and the sites fall back, exactly as an unreachable TypeSafe would.
+		if (jev.providerName() === "laya" && jev.getMode() !== "disabled") {
+			void Promise.resolve()
+				.then(() => provider?.resolve())
+				.then(
+					() => ctx.hasUI && ctx.ui.notify("Laya control plane ready (local).", "info"),
+					(error: unknown) => ctx.hasUI && ctx.ui.notify(`Laya control plane unavailable: ${error instanceof Error ? error.message : String(error)}`, "warning"),
+				);
 		}
 		// The recap survives the session: the newest persisted one is shown again
 		// on resume without a model call. Reading it first means a session that
@@ -795,6 +859,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	pi.on("session_tree", (_event, ctx) => {
 		recap.reset(ctx);
 		recap.restore(ctx);
+	});
+
+	pi.on("session_shutdown", async () => {
+		// A local control plane owns a child process; a session switch (`/new`,
+		// `/resume`, `/fork`) rebinds the extension, so the old server must go with
+		// it or every switch leaks a multi-GB model. A no-op for TypeSafe.
+		await jev.dispose();
 	});
 
 	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
@@ -1395,6 +1466,8 @@ export { buildWorkingState, serializeWorkingState, stubSources, WORKING_STATE_MA
 export type { WorkingState, WorkingStateSession, WorkingStateSources } from "./context/working-state.js";
 export type { TaskPacket } from "./scout/index.js";
 export { createJevClient, JEV_ENDPOINT_DEFAULT, JEV_INPUT_COST_PER_MILLION, JEV_MODEL_DEFAULT } from "./jev/client.js";
+export { defaultLayaDeps, ensureLayaRuntime, layaHome, layaProvider, layaPython, layaStatus, startLayaServer, LayaRuntimeError } from "./jev/laya.js";
+export type { LayaDeps, LayaProcess, LayaRuntime, LayaServer, LayaStatus } from "./jev/laya.js";
 export type { JevClient, JevStatus, JevTestResult, JevTransport, JevTransportRequest, JevTransportResponse } from "./jev/client.js";
 export { CONFIDENCE_THRESHOLDS, accept } from "./jev/confidence.js";
 export {
@@ -1407,6 +1480,8 @@ export {
 } from "./jev/credentials.js";
 export type { CredentialEnv, CredentialSource, ResolvedCredential } from "./jev/credentials.js";
 export { createDecisionLog, decisionLogPath, readDecisions } from "./jev/log.js";
+export { typesafeProvider } from "./jev/provider.js";
+export type { ControlPlaneProvider, ControlPlaneTarget, TypesafeProviderOptions } from "./jev/provider.js";
 export type { DecisionLog, DecisionRow } from "./jev/log.js";
 export { applyPrivacy, metadataSummary, redactSecrets, REDACTED } from "./jev/privacy.js";
 export {

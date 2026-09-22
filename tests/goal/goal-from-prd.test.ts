@@ -84,6 +84,7 @@ describe("PRD-013 Phase 4 — the PRD-derived goal", () => {
 			evidence: store,
 			prd: prdGoalSource(() => readPrdState(cwd)),
 			jev,
+			cwd,
 		};
 
 		const partial = await evaluateGoal(newGoal(goal.text), deps);
@@ -142,6 +143,7 @@ describe("PRD-013 Phase 4 — the PRD-derived goal", () => {
 			evidence: store,
 			prd: prdGoalSource(() => readPrdState(cwd)),
 			jev: throwingJev().jev,
+			cwd,
 		});
 		expect(evaluation.stop).toBe("GOAL_MET");
 	});

@@ -111,7 +111,13 @@ export interface GoalBoundaryDeps {
 	jev?: GoalJev;
 	/** PRD-015's accumulated run cost. Defaults to the project's run store; pricing is never computed here. */
 	costSoFar?: () => number;
-	cwd?: string;
+	/**
+	 * The workspace whose run store the budget is read from. Required, not
+	 * defaulted to `process.cwd()`: a boundary that silently read the *runner's*
+	 * telemetry would count someone else's spend against this goal's cap, and a
+	 * missing cwd is exactly how that happens (it did, in this suite).
+	 */
+	cwd: string;
 	sessionId?: string;
 	/** PRD-025's ordered list: the "useful work remains" input. */
 	todos?: RemainingWorkSource;
@@ -344,7 +350,7 @@ export async function evaluateGoal(state: GoalState, deps: GoalBoundaryDeps): Pr
 	};
 
 	// Step 1 — limits first: a budget-exhausted goal costs zero inference.
-	const cost = (deps.costSoFar ?? costReader(deps.cwd ?? process.cwd(), deps.sessionId, deps.config))();
+	const cost = (deps.costSoFar ?? costReader(deps.cwd, deps.sessionId, deps.config))();
 	const budget = checkBudget(turnState, cost);
 	if (budget.exceeded) return stopNow("BUDGET_EXCEEDED", `BUDGET_EXCEEDED: ${budget.reason}`, []);
 

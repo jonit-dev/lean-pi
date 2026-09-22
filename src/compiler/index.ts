@@ -119,7 +119,7 @@ function fallbackConfig(): LeanPiConfig {
 		backends: {},
 		models: {},
 		instructions: { ponytail: true },
-		jev: { apiKey: null, endpoint: "", model: "", mode: "disabled", usd_per_mtok: 0 },
+		jev: { apiKey: null, endpoint: "", model: "", mode: "disabled", usd_per_mtok: 0, provider: "typesafe", laya: {} },
 		capabilities: { skillRoots: [], mcpConfigPaths: [] },
 		skills: { maxLoaded: 3, state: {} },
 		bench: { skills: { maxUnnecessaryLoadRate: 0.04 } },

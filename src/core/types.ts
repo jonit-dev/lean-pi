@@ -107,6 +107,28 @@ export interface BackendConfig {
 
 export type JevMode = "enabled" | "disabled" | "metadata-only" | "redacted";
 
+/**
+ * Which implementation answers the registered decision sites (PRD-042).
+ * `typesafe` is the hosted service and the default; `laya` is a local model.
+ */
+export type JevProvider = "typesafe" | "laya";
+
+/** The local Laya runtime (PRD-042). Every field has a working default. */
+export interface LayaConfig {
+	/** Attach to an already-running JEV-contract server instead of managing one. */
+	endpoint?: string;
+	/** Managed runtime root; `$XDG_DATA_HOME/leanpi/laya` when absent. */
+	home?: string;
+	/** `auto` uses CUDA when a CUDA GPU is present. */
+	device?: "auto" | "cuda" | "cpu";
+	/** Laya checkpoint subfolder; absent is the English root checkpoint. */
+	checkpoint?: string;
+	/** `false` makes a missing runtime a clear error instead of a download. */
+	autoSetup?: boolean;
+	/** Managed server port; 0 (default) picks a free one. */
+	port?: number;
+}
+
 export interface JevConfig {
 	/** Resolution slot, never a stored secret: explicit config wins over store/env. */
 	apiKey?: string | null;
@@ -115,6 +137,10 @@ export interface JevConfig {
 	mode?: JevMode;
 	/** USD per million JEV tokens; absent prices JEV at 0. */
 	usd_per_mtok?: number;
+	/** Which implementation answers the sites (PRD-042); `typesafe` when absent. */
+	provider?: JevProvider;
+	/** Local runtime settings, read when `provider: laya` (PRD-042). */
+	laya?: LayaConfig;
 }
 
 /**

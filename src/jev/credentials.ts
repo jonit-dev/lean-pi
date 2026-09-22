@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { parseEnv } from "node:util";
 import type { LeanPiConfig } from "../core/types.js";
 
-export type CredentialSource = "config" | "credential store" | "env" | "env file" | null;
+export type CredentialSource = "config" | "credential store" | "env" | "env file" | "laya" | null;
 
 export interface ResolvedCredential {
 	key: string | null;
