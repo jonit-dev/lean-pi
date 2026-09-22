@@ -16,7 +16,7 @@ pnpm install
 pnpm build
 ```
 
-Running it needs a JEV key — see the README's *Run it* section. The test suite
+Running it takes an optional JEV key — see [`docs/usage.md`](docs/usage.md). The test suite
 does not: it boots stub backends and points `$XDG_CONFIG_HOME` at a temporary
 directory (`tests/setup/machine-isolation.ts`) so it never reads your own
 `~/.config/leanpi/leanpi.config.yaml`.

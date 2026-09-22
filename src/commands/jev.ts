@@ -92,14 +92,13 @@ export function registerJevCommands(registry: CommandRegistry, deps: JevCommandD
 				return { ok: true, text: statusText(await client.status(), deps.provider ? await deps.provider.status() : undefined) };
 
 			case "provider": {
-				// `/jev provider` reports; `/jev provider <name>` switches. The switch is
-				// session-scoped unless `--save` is passed, because a permanent change
-				// belongs in a diffable file and `/config` is read-only by design.
-				const [name, ...flags] = rest;
-				const save = flags.includes("--save");
+				// `/jev provider` reports; `/jev provider <name>` switches the session and
+				// persists the choice as the one `jev.provider` leaf in the user config.
+				// `--save` is still accepted (and ignored) so old muscle memory works.
+				const [name] = rest;
 				if (name === undefined) {
 					const current = deps.provider ? deps.provider.current() : "typesafe";
-					return { ok: true, text: `provider: ${current}\nvalues: ${PROVIDERS.join(" | ")}\n\`/jev provider <name>\` switches this session; add \`--save\` to make it stick.` };
+					return { ok: true, text: `provider: ${current}\nvalues: ${PROVIDERS.join(" | ")}\n\`/jev provider <name>\` switches and saves it for every run.` };
 				}
 				if (!isProvider(name)) {
 					return { ok: false, text: `Unknown provider "${name}". Valid values: ${PROVIDERS.join(" | ")}.` };
@@ -116,14 +115,10 @@ export function registerJevCommands(registry: CommandRegistry, deps: JevCommandD
 						lines.push("setup downloads ~2.5 GB of wheels and ~0.8 GB of weights: /jev setup-laya");
 					}
 				}
-				if (save) {
-					try {
-						lines.push(`saved to ${writeUserProvider(name, deps.env)}`);
-					} catch (error) {
-						lines.push(`could not save: ${error instanceof Error ? error.message : String(error)}`);
-					}
-				} else {
-					lines.push("this session only — add --save to persist");
+				try {
+					lines.push(`saved to ${writeUserProvider(name, deps.env)}`);
+				} catch (error) {
+					lines.push(`could not save: ${error instanceof Error ? error.message : String(error)}`);
 				}
 				return { ok: true, text: lines.join("\n") };
 			}
@@ -210,7 +205,7 @@ export function registerJevCommands(registry: CommandRegistry, deps: JevCommandD
 		},
 		{
 			summary: "Control plane: status, key, privacy mode, provider, round trip",
-			usage: "/jev [provider [typesafe|laya] [--save] | setup-laya | setup | key set|clear | mode <mode> | test]",
+			usage: "/jev [provider [typesafe|laya] | setup-laya | setup | key set|clear | mode <mode> | test]",
 		},
 	);
 }

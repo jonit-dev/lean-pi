@@ -38,6 +38,7 @@ models:
     model: deepseek-v4.1-flash
 jev:
   mode: enabled
+  # provider: laya   # local decision model instead of hosted JEV (default: typesafe)
   usd_per_mtok: 0.042
 capability:
   roles:

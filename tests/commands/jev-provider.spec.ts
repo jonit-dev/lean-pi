@@ -158,7 +158,7 @@ describe("PRD-042 Phase 4 — provider toggle", () => {
 		expect(client.providerName()).toBe("typesafe"); // unchanged
 	});
 
-	it("AC-12: --save writes one leaf and leaves the rest of the user config alone", async () => {
+	it("AC-12: /jev provider <name> persists one leaf and leaves the rest of the user config alone", async () => {
 		const path = join(configHome, "leanpi", "leanpi.config.yaml");
 		mkdirSync(join(configHome, "leanpi"), { recursive: true });
 		const original = [
@@ -183,12 +183,10 @@ describe("PRD-042 Phase 4 — provider toggle", () => {
 		const client = buildClient("typesafe");
 		const registry = registerWithProvider(client);
 
-		// Without --save the file is untouched.
-		await registry.dispatch("/jev provider laya", { cwd });
-		expect(readFileSync(path, "utf8")).toBe(original);
-
-		const saved = await registry.dispatch("/jev provider laya --save", { cwd });
+		// No flag needed: the switch is the default for every later run.
+		const saved = await registry.dispatch("/jev provider laya", { cwd });
 		expect(saved.ok).toBe(true);
+		expect(saved.text).toContain("saved to");
 		const written = readFileSync(path, "utf8");
 		expect(written).not.toBe(original);
 		// Only the one leaf moved: the comment and every unrelated value survive.

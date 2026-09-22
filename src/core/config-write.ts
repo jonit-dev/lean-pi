@@ -26,7 +26,7 @@ export function writeUserProvider(provider: JevProvider, env: ConfigWriteEnv = p
 		throw new Error("No user config location: set HOME or XDG_CONFIG_HOME.");
 	}
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-	// A missing file is an empty document, not an error: the first `--save` on a
+	// A missing file is an empty document, not an error: the first `/jev provider` on a
 	// machine that has never written a config creates one with this single leaf.
 	const text = existsSync(path) ? readFileSync(path, "utf8") : "";
 	const document = parseDocument(text);
