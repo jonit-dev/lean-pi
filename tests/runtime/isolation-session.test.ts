@@ -16,7 +16,7 @@ import { loadConfig } from "../../src/core/config.js";
 import { readRuns } from "../../src/index.js";
 import { renderTurnOutcome } from "../../src/cli/outcome.js";
 import { resolvedDefaults } from "../../src/permissions/trust.js";
-import { bootSession, fixtureRepo, gitCommitAll, gitInit, nativeBackend } from "../helpers/fixtures.js";
+import { bootHarnessSession, fixtureRepo, gitCommitAll, gitInit, nativeBackend } from "../helpers/fixtures.js";
 import { startStubBackend } from "../helpers/stub-backend.js";
 import { installStubCli, setStubScript } from "../backends/helpers.js";
 
@@ -68,7 +68,7 @@ describe("PRD-022 — isolation through the real session", () => {
 		const cli = installStubCli();
 		const restore = setStubScript(cli.recordPath, { files: { "src/app.ts": "export const version = 2;\n" }, summary: PASS_VERDICT });
 		const config = sessionConfig(cwd, cli, native.baseUrl, "worktree", true);
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			const context = await session.runTurn({ text: "fix the parse bug", role: "specialist" });
 			expect(context.contract?.task.execution_complexity).toBe("MEDIUM");
@@ -123,7 +123,7 @@ describe("PRD-022 — isolation through the real session", () => {
 		const cli = installStubCli();
 		const restore = setStubScript(cli.recordPath, { files: { "src/app.ts": "export const version = 2;\n" }, summary: PASS_VERDICT });
 		const config = sessionConfig(cwd, cli, native.baseUrl, "worktree", false);
-		const session = await bootSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
+		const session = await bootHarnessSession({ cwd, agentDir, config, model: { provider: "local", model: "local-model" } });
 		try {
 			await expect(session.runTurn({ text: "fix the parse bug", role: "specialist" })).rejects.toThrow(/git_destructive/);
 			expect(existsSync(join(cwd, ".worktrees"))).toBe(false);
@@ -150,7 +150,7 @@ describe("PRD-040 D — the host confirm channel reaches an ask-posture worktree
 		const cli = installStubCli();
 		const restore = setStubScript(cli.recordPath, { files: { "src/app.ts": "export const version = 2;\n" }, summary: PASS_VERDICT });
 		const calls: unknown[] = [];
-		const session = await bootSession({
+		const session = await bootHarnessSession({
 			cwd,
 			agentDir,
 			config: askConfig(cwd, cli, native.baseUrl),
@@ -177,7 +177,7 @@ describe("PRD-040 D — the host confirm channel reaches an ask-posture worktree
 		const native = await startStubBackend([{ text: "ok" }]);
 		const cli = installStubCli();
 		const restore = setStubScript(cli.recordPath, { files: { "src/app.ts": "export const version = 2;\n" }, summary: PASS_VERDICT });
-		const session = await bootSession({
+		const session = await bootHarnessSession({
 			cwd,
 			agentDir,
 			config: askConfig(cwd, cli, native.baseUrl),
@@ -200,7 +200,7 @@ describe("PRD-040 D — the host confirm channel reaches an ask-posture worktree
 		const cli = installStubCli();
 		const restore = setStubScript(cli.recordPath, { files: { "src/app.ts": "export const version = 2;\n" }, summary: PASS_VERDICT });
 		const confirm = vi.fn(() => true);
-		const session = await bootSession({
+		const session = await bootHarnessSession({
 			cwd,
 			agentDir,
 			config: sessionConfig(cwd, cli, native.baseUrl, "worktree", false),

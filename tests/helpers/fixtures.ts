@@ -39,6 +39,24 @@ export function bootSession(options: CreateLeanPiSessionOptions): Promise<LeanPi
 	return createLeanPiSession({ agentDir: tempDir("leanpi-agent-"), ...options });
 }
 
+/**
+ * The environment a session fixture needs when its executor roles are bound to
+ * an external harness stub. Subscription routing (PRD-008 §25) probes *this
+ * machine* for a vendor login; a clean runner has none, so the executor class
+ * is routed away from the stub and onto a native role, and the stub never runs.
+ * The stub stands in for a signed-in vendor, so the fixture declares the
+ * credential env var Claude Code reads — the non-file signal `probeVendor`
+ * accepts beside `~/.claude/.credentials.json`.
+ */
+export function harnessStubEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	return { ...env, CLAUDE_CODE_OAUTH_TOKEN: "stub-claude-oauth-token" };
+}
+
+/** `bootSession` with the harness stub's declared login; for external-harness fixtures. */
+export function bootHarnessSession(options: CreateLeanPiSessionOptions): Promise<LeanPiSession> {
+	return bootSession({ ...options, env: harnessStubEnv(options.env) });
+}
+
 export function fixtureRepo(): { cwd: string; agentDir: string } {
 	const cwd = tempDir("leanpi-repo-");
 	const agentDir = tempDir("leanpi-agent-");
