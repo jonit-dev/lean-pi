@@ -188,7 +188,7 @@ function connectProbe(host: string, port: number, timeoutMs: number): Promise<Pr
  * What a signed-out vendor tells the user to run. `claude` takes a slash
  * command as its prompt argument; the other two have a plain subcommand.
  */
-const LOGIN_ARGS: Record<HarnessVendor, string> = {
+export const LOGIN_ARGS: Record<HarnessVendor, string> = {
 	claude: "/login",
 	codex: "login",
 	opencode: "auth login",

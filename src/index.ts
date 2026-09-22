@@ -1287,6 +1287,8 @@ export * from "./bench/index.js";
 export { levenshtein, upsertCommand } from "./commands/registry.js";
 export type { Command, CommandInit } from "./commands/registry.js";
 export { createCommandSurface, createSessionHost, OWNED_COMMANDS, registerCommandSurface } from "./commands/index.js";
+export { usageAdapter, usageInventory, renderUsage } from "./cli/usage.js";
+export type { UsageRow } from "./cli/usage.js";
 export { compilerLane, executorLane, ownsExecutionLoop, registerTurnLanes, registerTurnLanesIfOwned, type TurnLaneDeps } from "./commands/turn-lanes.js";
 export type { CommandSurface, CommandSurfaceDeps, ProbeResult, RoleBinding, SessionHost } from "./commands/index.js";
 export { applyRoutePins, clearRoutePins, pinOwner, pinnedDecision, routePins, setRoutePins } from "./compiler/pins.js";

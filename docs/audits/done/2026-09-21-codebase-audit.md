@@ -44,7 +44,7 @@ against the lane base `dd39d06` and the PRD-040 repair batch, which root accepte
 review. "Fixed at base" means the fix was already committed on the lane's base revision (`dd39d06`), so the
 `40e5507` snapshot no longer describes lane HEAD. No live vendor/provider/subscription/billing call was made;
 cost figures remain post-run configured valuations, not a provider invoice. Final local gates on the approved
-revision all exited 0: `pnpm build`, `pnpm test` (862 passed / 10 skipped across 134 passed / 2 skipped files),
+revision all exited 0: `pnpm build`, `pnpm test` (876 passed / 10 skipped across 136 passed / 2 skipped files),
 `pnpm typecheck`, `pnpm lint`, and `git diff --check`; the real `npm pack` artifact smoke passes inside the
 suite.
 

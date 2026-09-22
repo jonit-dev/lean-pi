@@ -39,16 +39,16 @@ export interface LaunchPlan {
  * PRD-017's permission guard in front of, so Pi refuses all three registrations
  * and the extension loads contributing nothing.
  *
- * Each ships TypeScript, which Pi's loader compiles; the path is the package's
- * own entry, not a build of ours. A package that is not installed is skipped
- * rather than fatal — the launcher's job is to start a session.
+ * `@hk_net/pi-usage-bars` is absent as a raw entry for the same class of reason:
+ * its own `/usage` resolves providers through Pi's model registry against a
+ * fixed vendor list, and on a LeanPi machine that list matches none of the
+ * configured backends, so the command renders nothing. It is attached through
+ * `usageAdapterExtension` instead, which keeps its polling and status bar but
+ * owns the single `usage` registration. Each shipped entry is TypeScript, which
+ * Pi's loader compiles; the path is the package's own entry, not a build of
+ * ours. A package that is not installed is skipped rather than fatal — the
+ * launcher's job is to start a session.
  */
-const BUNDLED_EXTENSIONS: readonly string[] = [
-	// Quota, balance and spend per provider — the per-session cost on the status
-	// line says what this run spent; this says what is left to spend it from.
-	// Registers no tools, so it costs nothing in the prompt.
-	join("@hk_net", "pi-usage-bars", "extensions", "usage-bars", "index.ts"),
-];
 
 /**
  * The compact tool rows (`--ui compact`, the default).
@@ -160,12 +160,24 @@ export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "co
 	const fold = thinkingFold ? thinkingFoldExtension(root) : undefined;
 	const vendored = fold !== undefined && existsSync(fold) ? [fold] : [];
 	return [
-		...BUNDLED_EXTENSIONS.map((entry) => dependencyDir(entry, root)).filter((path): path is string => path !== undefined),
 		...vendored,
 		...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])
 			.map((entry) => dependencyDir(entry, root))
 			.filter((path): path is string => path !== undefined),
 	];
+}
+
+/**
+ * The `/usage` adapter: the single owner of the `usage` command.
+ *
+ * LeanPi-owned, outside the `tsc` `src` build so Pi's loader compiles it, exactly
+ * as the bundled `.ts` entries are. It runs the `@hk_net/pi-usage-bars` factory
+ * and re-registers `usage` against LeanPi's own inventory; see
+ * `src/cli/usage.ts`. Attached after LeanPi's own extension so the commands it
+ * registers are in place when the adapter loads.
+ */
+export function usageAdapterExtension(root: string = packageRoot()): string {
+	return join(root, "extensions", "usage", "index.ts");
 }
 
 /** This package's root, from the module's own location (`dist/cli/launch.js`). */
@@ -373,6 +385,11 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 		args: [
 			"--extension",
 			extension,
+			// The single `usage` owner rides right behind LeanPi's own extension: it
+			// runs the bundled factory itself, so the raw usage-bars entry is never
+			// attached and Pi's duplicate-name rename can never fire.
+			"--extension",
+			usageAdapterExtension(root),
 			...bundledArgs,
 			"--extension",
 			spinnerExtension(root),

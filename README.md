@@ -84,6 +84,13 @@ those models from published capability and price data. It is an ordinary file:
 edit it, or delete it to have it written again. No credential is ever written
 into it.
 
+Before it writes that file, a first run at a terminal asks the one thing the
+machine cannot work out for itself: your JEV key. It is a single masked line,
+validated once — press Enter to skip and the run continues on the heuristics,
+exactly as it would with no key at all. The answer matters here and nowhere
+later: the key decides the role map this same run writes, and that map is never
+recomputed. Answer it without a prompt with any of the three ways below.
+
 ```
 leanpi — tell me your goal, I figure out the rest.
   models   quick opencode-go deepseek-v4.1-flash  ·  balanced codex gpt-6-astra  ·  strong claude opus[1m]
@@ -107,7 +114,8 @@ LeanPi's commands are ordinary Pi slash commands: `/help` lists them, and
 skill disclosure and the proof gate are JEV decisions; with a key they route on
 what a task actually needs. Without one, every site falls back to a
 deterministic heuristic — LeanPi still runs, it just routes worse and spends
-more tokens per task, and says so on startup:
+more tokens per task, and says so on startup. On a first run at a terminal it is
+asked for once, before the config is written; answer it up front instead with:
 
 ```sh
 leanpi --jev-key <key>          # stored at ~/.config/leanpi/credentials.json (0600)
