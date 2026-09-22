@@ -31,7 +31,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * The exact strings claimed from the upstream build, and what they become.
  * Ordered: the resolver, the two raw-message fallbacks, the working-status
- * label, then the settings surface.
+ * label, the settings surface, then the Ctrl+T listener.
  */
 export const THINKING_FOLD_PATCHES = [
 	{
@@ -60,6 +60,18 @@ export const THINKING_FOLD_PATCHES = [
 		reason: "the settings rows still offered preview and displayed persisted preview/full values",
 		find: 'settings:()=>[{id:"foldThreshold",label:"Fold after lines",description:"Show at most this many terminal-visible lines in a preview",currentValue:String(r.foldThreshold),values:Ju(r.foldThreshold)},{id:"streamingBehavior",label:"While thinking",description:"Auto hides summaries and previews traces while they stream",currentValue:r.streamingBehavior,values:["auto","preview","collapse"]},{id:"completedBehavior",label:"After thinking",description:"Auto hides completed content for every model",currentValue:r.completedBehavior,values:["auto","collapse","preview","full"]}],onChange:(B,$,n)=>{if(B==="foldThreshold")o({...r,foldThreshold:Number($)},n);else if(B==="streamingBehavior"&&($==="auto"||$==="preview"||$==="collapse"))o({...r,streamingBehavior:$},n);else if(B==="completedBehavior"&&($==="auto"||$==="collapse"||$==="preview"||$==="full"))o({...r,completedBehavior:$},n)}}',
 		replace: 'settings:()=>[{id:"reasoning",label:"Reasoning",description:"Collapsed to one line while streaming; ctrl+t expands the full trace",currentValue:"collapse"}],onChange:()=>{}}',
+	},
+	{
+		reason: "import pi-tui's key-release check for the Ctrl+T listener",
+		find: 'import{getKeybindings as Vu}from"@earendil-works/pi-tui"',
+		replace: 'import{getKeybindings as Vu,isKeyRelease as leanpiIsKeyRelease}from"@earendil-works/pi-tui"',
+	},
+	{
+		// Pi asks for kitty keyboard flags 7, and `matches` ignores the event type,
+		// so the release toggled back: expanded for a millisecond, then collapsed.
+		reason: "the Ctrl+T listener toggled again on the kitty key release",
+		find: 'if(!u||!Vu().matches(z,"app.thinking.toggle"))return',
+		replace: 'if(!u||leanpiIsKeyRelease(z)||!Vu().matches(z,"app.thinking.toggle"))return',
 	},
 ];
 

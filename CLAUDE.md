@@ -11,3 +11,5 @@
 **PRDs.** Plan with the `prd-creator` skill, not freehand. Ask `prd-manager` where PRDs stand instead of reading them. Finished PRD → `git mv` into `docs/PRDs/v1/done/` in the same commit that finishes it; never left in flight.
 
 **Docs**: Use mermaid if relevant.
+
+**Local bin**: `pnpm refresh:bin` links `~/.local/bin/leanpi` to this checkout and prints its version; restart running sessions to pick up changes.

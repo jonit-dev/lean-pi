@@ -8,7 +8,7 @@
  * `message_update` working-status hook with synthetic messages, no model.
  */
 import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
-import { MouseRegion } from "@earendil-works/pi-tui";
+import { getKeybindings, KeybindingsManager, MouseRegion, setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import { applyThinkingFoldPatches } from "../../scripts/vendor-thinking-fold.mjs";
 import { createCommandRegistry } from "../../src/index.js";
@@ -270,6 +270,51 @@ describe("the vendored fold at its render boundary", () => {
 		component.render(100);
 		expect((component as unknown as Record<symbol, unknown>)[cache]).toBeUndefined();
 		expect(plain(component.render(100))).toContain(TRACE_HEAD);
+	});
+});
+
+describe("the vendored fold's Ctrl+T listener", () => {
+	it("toggles once per key press, not again on the kitty key release", () => {
+		// Pi asks for kitty keyboard flags 7, so a supporting terminal reports the
+		// release too, and `matches` ignores the event type: press expanded, release
+		// collapsed a millisecond later. Drive the registered listener directly.
+		const previous = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = tempDir("leanpi-agent-");
+		const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>();
+		const on = (event: string, handler: (event: unknown, ctx: unknown) => void): void => {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		};
+		let listener: ((data: string) => unknown) | undefined;
+		const ui = {
+			setWorkingMessage: () => {},
+			setWidget: () => ({}),
+			notify: () => {},
+			onTerminalInput: (next: (data: string) => unknown) => {
+				listener = next;
+				return () => {};
+			},
+		};
+		const ctx = { mode: "tui", hasUI: true, ui, sessionManager: { getEntries: () => [] } };
+		// Pi's interactive mode installs this binding at startup.
+		const keybindings = getKeybindings();
+		setKeybindings(new KeybindingsManager({ "app.thinking.toggle": { defaultKeys: "ctrl+t", description: "Toggle thinking blocks" } }));
+		try {
+			installThinkingFoldExtension({ on, registerCommand: () => {} } as never);
+			const { fold } = mount();
+			for (const handler of handlers.get("session_start") ?? []) handler({}, ctx);
+			expect(listener).toBeDefined();
+			listener?.("\u001b[116;5u");
+			expect(fold.expanded).toBe(true);
+			listener?.("\u001b[116;5:3u");
+			expect(fold.expanded).toBe(true);
+			listener?.("\u001b[116;5u");
+			expect(fold.expanded).toBe(false);
+		} finally {
+			setKeybindings(keybindings);
+			for (const handler of handlers.get("session_shutdown") ?? []) handler({}, { mode: "tui", hasUI: false, ui });
+			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previous;
+		}
 	});
 });
 

@@ -1,13 +1,54 @@
+<div align="center">
+
 # LeanPi
 
-**Cost-aware task compiler and coding runtime built on [Pi](https://github.com/earendil-works/pi).**
+**A coding agent that spends less per task — and proves the work is done.**
 
-> Minimize effective cost per **verified** successful coding task, without losing
-> the completion quality of leading coding harnesses.
+[![CI](https://github.com/jonit-dev/lean-pi/actions/workflows/ci.yml/badge.svg)](https://github.com/jonit-dev/lean-pi/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/leanpi?color=cb3837&logo=npm)](https://www.npmjs.com/package/leanpi) [![npm downloads](https://img.shields.io/npm/dm/leanpi)](https://www.npmjs.com/package/leanpi) [![Node](https://img.shields.io/node/v/leanpi?logo=node.js)](.nvmrc) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-Tell it your goal; it figures out the rest. LeanPi finds the subscriptions and
-models your machine already has, then picks the models, reasoning effort, tools
-and proof each task needs.
+![LeanPi running in a terminal](docs/screenshots/main.png)
+
+</div>
+
+Most coding agents send every task to the same expensive model, load every tool
+into context, and call it done when the model says so. **LeanPi does the
+opposite.** Tell it your goal. It picks the cheapest model that can handle the
+task, loads only the context the task needs, and treats a task as finished only
+when verifiers show the evidence.
+
+## Getting Started
+
+```sh
+npx leanpi                         # or: npm install -g leanpi && leanpi
+```
+
+Node 22+ is the only requirement. No new account or API key: LeanPi runs on
+the Claude Code, Codex and OpenCode subscriptions you already have. The first
+run writes `~/.config/leanpi/leanpi.config.yaml` (a plain file you can edit)
+and opens a session. Then type what you want:
+
+> refactor the auth middleware, and prove the tests still pass
+
+| command   | what it does                                                          |
+| --------- | --------------------------------------------------------------------- |
+| `/help`   | list every command                                                    |
+| `/status` | roles, reasoning level, backend health, session cost                  |
+| `/model`  | models per role, with availability, score and price                   |
+| `/verify` | run the verifiers and proof gate against the workspace                |
+| `/doctor` | probe backends and registries — first stop when something looks wrong |
+
+## Why LeanPi
+
+|                                                  |                                                                                                                                                                                                       |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 💸 **Pay for the model the task needs**          | A rename doesn't need the model you'd use for an architecture change. LeanPi rates each task's complexity and routes it to the cheapest capable model, using your quick, balanced and strong options. |
+| 🔌 **Use the subscriptions you already pay for** | On the first run it detects which vendor CLIs are installed and signed in (Claude Code, Codex, OpenCode), then assigns their models to roles. No setup wizard and no copying keys around.             |
+| ✅ **Done means proven**                         | A separate reviewer checks the executor's work. A proof gate then requires artifacts such as passing tests before a task counts as done. `/verify` re-runs the checks whenever you want.              |
+| 🪶 **Lean context, fewer tokens**                | Skills, MCP servers and LSPs load only when a task needs them. You don't pay to resend every tool schema with every prompt.                                                                           |
+| 🛡️ **Safe by default**                           | Permissions are set per scope (edit, shell, network, destructive git, package install), and a project can only make them stricter. For a whole session, use `--safety low\|medium\|high`.             |
+| 🏠 **Keep routing on your machine**              | `--laya` makes routing decisions with a local model. The decisions are free and never leave your machine.                                                                                             |
+
+## How it works
 
 ```mermaid
 flowchart LR
@@ -20,38 +61,30 @@ flowchart LR
     P -->|evidence| Done[Done]
 ```
 
-"Done" means verified by artifacts, not by the model saying so.
+Every turn shows the decision it made in the footer, for example
+`Auto: opus (Medium) — MEDIUM complexity — Executor lane`, so routing is never a
+black box.
 
-![LeanPi running in a terminal](docs/screenshots/main.png)
+## Benchmarks
 
-| a session: roles, routing, proof | diffs you can read |
-| --- | --- |
-| ![LeanPi session with role routing and verification](docs/screenshots/session.png) | ![LeanPi clear diff output](docs/screenshots/clear-diffs.png) |
+Four harnesses, one model (`opencode-go/deepseek-v4.1-flash`), cost per
+externally verified completion (2026-09-21):
 
-## Quick start
+| arm         | verified | cost per verified completion | LeanPi is cheaper by |
+| ----------- | -------: | ---------------------------: | -------------------: |
+| **LeanPi**  |      2/2 |                **$0.010521** |                    — |
+| stock Pi    |      2/2 |                    $0.014163 |            **25.7%** |
+| Codex CLI   |      1/2 |                    $0.023243 |            **54.7%** |
+| Claude Code |      1/2 |                    $0.045636 |            **76.9%** |
 
-```sh
-npx leanpi
-```
+**All runs, methodology and caveats → [`docs/benchmarks/`](docs/benchmarks/README.md)**
 
-Node 22+ is the only requirement. The first run detects which vendor CLIs are
-installed and signed in (Claude Code, Codex, OpenCode), writes
-`~/.config/leanpi/leanpi.config.yaml`, and opens a session. Then type what you
-want:
+## See it in action
 
-> refactor the auth middleware, and prove the tests still pass
+![A LeanPi session: roles, routing, verification and cost](docs/screenshots/session.png)
+![A background async subagent (claude-code, fresh context) still running while the session stays interactive](docs/screenshots/subagent.png)
 
-Install globally instead: `npm install -g leanpi && leanpi`.
-
-| command | what it does |
-| --- | --- |
-| `/help` | list every command |
-| `/status` | roles, reasoning level, backend health, session cost |
-| `/model` | models per role, with availability, score and price |
-| `/verify` | run the verifiers and proof gate against the workspace |
-| `/doctor` | probe backends and registries — first stop when something looks wrong |
-
-### JEV key (optional)
+## JEV key (optional)
 
 JEV is the control plane that makes routing decisions. Without a key LeanPi
 falls back to heuristics: it still works, but spends more per task. The first
@@ -67,22 +100,18 @@ leanpi --no-jev          # skip it deliberately
 **Configuration, permissions, safety levels, UI, Laya, subagents →
 [`docs/usage.md`](docs/usage.md)**
 
-## Benchmarks
+## FAQ
 
-Four harnesses, one model (`opencode-go/deepseek-v4.1-flash`), cost per
-externally verified completion (2026-09-21):
+**Does it replace Claude Code or Codex?** No, it uses them. LeanPi sits above the
+CLIs you already have and decides which one handles each task.
 
-| arm | verified | cost per verified completion | LeanPi is cheaper by |
-| --- | --: | --: | --: |
-| **LeanPi** | 2/2 | **$0.010521** | — |
-| stock Pi | 2/2 | $0.014163 | **25.7%** |
-| Codex CLI | 1/2 | $0.023243 | **54.7%** |
-| Claude Code | 1/2 | $0.045636 | **76.9%** |
+**Is it actually cheaper?** Cutting cost per _verified_ task is the goal, and
+the numbers above are what we've measured so far (caveats in [`docs/benchmarks/`](docs/benchmarks/README.md)). Run
+`pnpm bench` to measure it on your own tasks.
 
-⚠️ Small sample. A longer LeanPi-vs-stock-Pi run (n=5 each) is 5.9% cheaper,
-but its 95% CI is [0.32, 2.70]: **no winner is declared**.
-
-**All runs, methodology and caveats → [`docs/benchmarks/`](docs/benchmarks/README.md)**
+**What is Pi?** [Pi](https://github.com/earendil-works/pi) is the open-source
+coding-agent runtime LeanPi is built on. Pi extensions and commands keep
+working.
 
 ## Development
 
@@ -97,13 +126,23 @@ Node `>=22.19.0` (`.nvmrc` pins 22). Tests need no credentials or network.
 Pull request rules: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 ([`AGENTS.md`](AGENTS.md) for agents).
 
-| path | what |
-| --- | --- |
-| `src/` | the runtime: compiler, executor, reviewer, proof, JEV client, permissions |
-| `tests/` | every PRD's acceptance criteria |
-| `bench/` | benchmark harness, suites and recorded runs |
-| `skills/` | the bundled skill pack |
-| `docs/` | [roadmap](docs/PRDs/v1/ROADMAP.md), [PRD index](docs/PRDs/v1/INDEX.md), [architecture](docs/architecture/README.md), benchmarks, reports |
+| path      | what                                                                                                                                     |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/`    | the runtime: compiler, executor, reviewer, proof, JEV client, permissions                                                                |
+| `tests/`  | every PRD's acceptance criteria                                                                                                          |
+| `bench/`  | benchmark harness, suites and recorded runs                                                                                              |
+| `skills/` | the bundled skill pack                                                                                                                   |
+| `docs/`   | [roadmap](docs/PRDs/v1/ROADMAP.md), [PRD index](docs/PRDs/v1/INDEX.md), [architecture](docs/architecture/README.md), benchmarks, reports |
+
+## Contributing
+
+Contributions are welcome — bug reports, benchmarks, skills and code.
+
+1. Pick an [open issue](https://github.com/jonit-dev/lean-pi/issues) (or open one first for anything non-trivial)
+2. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) — every change ships with a test that proves it
+3. Open a PR; CI runs build, typecheck, lint and tests
+
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License & security
 
