@@ -30,8 +30,9 @@ cols=100
 rows=30
 task="cart discounts start a dollar too late - fix it and prove the tests pass"
 # The turn is over when the footer says so. This bounds the wait for a model
-# that never answers, and for a footer string that one day moves.
-turn_timeout="${TURN_TIMEOUT:-300}"
+# that never answers, and for a footer string that one day moves. The sample
+# task takes seconds; anything past this is a stall, not a slow model.
+turn_timeout="${TURN_TIMEOUT:-180}"
 socket="leanpi-demo"
 session="leanpi-demo"
 
@@ -90,11 +91,14 @@ JS
 
 # --- the terminal the demo is recorded from --------------------------------
 # `-f` keeps the operator's own tmux config out of the recording, and `-L` puts
-# this server on its own socket so their sessions are never touched.
+# this server on its own socket so their sessions are never touched. Both
+# extended-keys settings are what Pi wants of a tmux host; without them it
+# prints a warning into the demo telling the viewer to go edit ~/.tmux.conf.
 cat >"$work/tmux.conf" <<'CONF'
 set -g status off
 set -g escape-time 0
 set -g extended-keys on
+set -g extended-keys-format csi-u
 CONF
 
 # The fixture lives in a temp dir, so point sessions at one too: re-recording
@@ -124,6 +128,7 @@ trap cleanup EXIT
 	for _ in $(seq 1 $((turn_timeout / 2))); do
 		sleep 2
 		if tmux -L "$socket" capture-pane -p -t "$session" 2>/dev/null | grep -q "Turn took"; then
+			touch "$work/turn-finished"
 			break
 		fi
 	done
@@ -146,6 +151,13 @@ asciinema rec --headless --overwrite \
 	"$cast"
 
 wait
+
+# A turn that never finished records a cast of a half-done task. Refuse it
+# here rather than render a gif that quietly lies about what LeanPi does.
+[ -f "$work/turn-finished" ] || {
+	echo "record-demo: the turn did not finish within ${turn_timeout}s; cast kept at $cast, no gif rendered" >&2
+	exit 1
+}
 
 agg --font-size 14 --speed 1.5 --idle-time-limit 2 --theme asciinema "$cast" "$gif"
 

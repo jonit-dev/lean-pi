@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/jonit-dev/lean-pi/actions/workflows/ci.yml/badge.svg)](https://github.com/jonit-dev/lean-pi/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/leanpi?color=cb3837&logo=npm)](https://www.npmjs.com/package/leanpi) [![npm downloads](https://img.shields.io/npm/dm/leanpi)](https://www.npmjs.com/package/leanpi) [![Node](https://img.shields.io/node/v/leanpi?logo=node.js)](.nvmrc) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-![LeanPi running in a terminal](docs/screenshots/main.png)
+![A LeanPi task end to end: routing, the edit, the verifier's evidence, and the session cost](docs/demos/leanpi-demo.gif)
 
 </div>
 
@@ -42,7 +42,7 @@ and opens a session. Then type what you want:
 |                                                  |                                                                                                                                                                                                       |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 💸 **Pay for the model the task needs**          | A rename doesn't need the model you'd use for an architecture change. LeanPi rates each task's complexity and routes it to the cheapest capable model, using your quick, balanced and strong options. |
-| 🔌 **Use the subscriptions you already pay for** | On the first run it detects which vendor CLIs are installed and signed in (Claude Code, Codex, OpenCode), then assigns their models to roles. No setup wizard and no copying keys around.             |
+| 🔌 **Use the subscriptions you already pay for** | On the first run it detects which vendor CLIs are installed and signed in (Claude Code, Codex, OpenCode), then assigns their models to roles. No setup wizard and no copying keys around. Cheap plans can take the routine work so your premium quota lasts: [stacking subscriptions](docs/usage.md#stacking-subscriptions). |
 | ✅ **Done means proven**                         | A separate reviewer checks the executor's work. A proof gate then requires artifacts such as passing tests before a task counts as done. `/verify` re-runs the checks whenever you want.              |
 | 🪶 **Lean context, fewer tokens**                | Skills, MCP servers and LSPs load only when a task needs them. You don't pay to resend every tool schema with every prompt.                                                                           |
 | 🛡️ **Safe by default**                           | Permissions are set per scope (edit, shell, network, destructive git, package install), and a project can only make them stricter. For a whole session, use `--safety low\|medium\|high`.             |
@@ -115,6 +115,7 @@ git clone https://github.com/jonit-dev/lean-pi.git
 cd lean-pi
 pnpm install && pnpm build
 pnpm test && pnpm lint && pnpm typecheck
+pnpm record:demo   # re-record docs/demos/leanpi-demo.{cast,gif}
 ```
 
 Node `>=22.19.0` (`.nvmrc` pins 22). Tests need no credentials or network.

@@ -163,6 +163,39 @@ no key is ever written into the repo.
 
 Annotated example: [`leanpi.config.yaml`](../leanpi.config.yaml).
 
+## Stacking subscriptions
+
+Adding one more premium tier gets expensive fast. A better option is to stack
+one or two cheap plans under the premium ones you already pay for. LeanPi sends
+each task to the cheapest model that can handle it, so the cheap plans take the
+exploration, renames and routine edits that would otherwise use up your Claude
+or Codex quota. That quota then goes to planning, hard bugs and final review.
+Put the cheap models in `quick` and `review_quick`, and the premium ones in
+`strong` and `review_strong`.
+
+| Plan (list price, Sep 2026) | Role in the stack | Why |
+| --- | --- | --- |
+| OpenCode Go · $10/mo | `quick`: exploration, mechanical edits, first review | ~158k typical DeepSeek V4 Flash requests/month; 5-hour and weekly caps |
+| MiMo Standard · $16/mo | `balanced`: tasks too hard for Flash | MiMo V2.6-Pro; monthly pool only, no 5-hour or weekly cap |
+| Codex Pro 20x · $200/mo | Main premium implementer | Large pool; pick Luna/Terra for routine work and save Astra for hard tasks |
+| Claude Max 5x · $100/mo | `strong`: planning, ambiguous bugs, risky reviews | Scarcest quota; don't spend it on grep and lint fixes |
+
+```mermaid
+flowchart LR
+    T[Task] --> J{Complexity}
+    J -->|easy| Q[OpenCode Go<br/>DeepSeek Flash]
+    J -->|normal| B[MiMo V2.6-Pro]
+    J -->|hard| S[Claude / Codex]
+    Q --> R{Cheap review}
+    B --> R
+    R -->|confident| D[Done]
+    R -->|uncertain| S
+    S --> D
+```
+
+For $26/month, the two cheap plans absorb most of the volume. Upgrade a cheap
+tier only after you actually run out of it.
+
 ## Subagents
 
 LeanPi attaches [`pi-subagents`](https://pi.dev/packages/pi-subagents) (pinned
