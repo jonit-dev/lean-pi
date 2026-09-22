@@ -63,20 +63,39 @@ export function uiPrefsPath(env: UiPrefsEnv = process.env): string {
 	return join(base, "leanpi", "ui.json");
 }
 
-/** Folded unless the user said otherwise; an absent or unreadable file is "unsaid". */
-export function thinkingFoldEnabled(env: UiPrefsEnv = process.env): boolean {
+/** The whole prefs file; an absent or unreadable one is "nothing said". */
+function readUiPrefs(env: UiPrefsEnv): Record<string, unknown> {
 	try {
 		const parsed: unknown = JSON.parse(readFileSync(uiPrefsPath(env), "utf8"));
-		return (parsed as { thinkingFold?: unknown }).thinkingFold !== false;
+		return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
 	} catch {
-		return true;
+		return {};
 	}
 }
 
-/** Writes the choice; returns the file it wrote. The only key this file has. */
-export function setThinkingFold(enabled: boolean, env: UiPrefsEnv = process.env): string {
+/** Sets one key, keeping the others; returns the file it wrote. */
+function writeUiPref(key: string, value: unknown, env: UiPrefsEnv): string {
 	const path = uiPrefsPath(env);
 	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, `${JSON.stringify({ thinkingFold: enabled }, null, 2)}\n`);
+	writeFileSync(path, `${JSON.stringify({ ...readUiPrefs(env), [key]: value }, null, 2)}\n`);
 	return path;
+}
+
+/** Folded unless the user said otherwise. */
+export function thinkingFoldEnabled(env: UiPrefsEnv = process.env): boolean {
+	return readUiPrefs(env).thinkingFold !== false;
+}
+
+/** Writes the choice; returns the file it wrote. */
+export function setThinkingFold(enabled: boolean, env: UiPrefsEnv = process.env): string {
+	return writeUiPref("thinkingFold", enabled, env);
+}
+
+/** PRD-044: offer a PRD on PRD-worthy turns unless the user said "don't ask again". */
+export function prdSuggestEnabled(env: UiPrefsEnv = process.env): boolean {
+	return readUiPrefs(env).prdSuggest !== false;
+}
+
+export function setPrdSuggest(enabled: boolean, env: UiPrefsEnv = process.env): string {
+	return writeUiPref("prdSuggest", enabled, env);
 }

@@ -69,7 +69,7 @@ export async function openPrdLane(record: CompileRecord, options: PrdLaneOptions
 /** What `/help` prints for `/prd`; the lane module registers with the same text. */
 export const PRD_COMMAND_HELP = {
 	summary: "author, inspect and close the active PRD",
-	usage: '/prd create ["<objective>"] | /prd status | /prd close',
+	usage: '/prd create ["<objective>"] | /prd status | /prd close | /prd suggest [on|off]',
 };
 
 /**

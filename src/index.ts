@@ -29,7 +29,7 @@ import { registerSubagentsLimitCommand } from "./commands/subagents-limit.js";
 import { apiKeyFor, ConfigError, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
-import { clearCapabilityProviders, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
+import { clearCapabilityProviders, compileRecordOf, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
 import { clearRoutePins } from "./compiler/pins.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
@@ -67,6 +67,7 @@ import { createLspProvider } from "./lsp/index.js";
 import { LSP_TOOL_NAMES, registerLspTools } from "./lsp/tools.js";
 import { createPrdAuthor, registerPrdCommandsLazily } from "./prd/dispatch.js";
 import { readPrdState } from "./prd/state.js";
+import { prdSuggestEnabled, setPrdSuggest } from "./cli/ui-settings.js";
 import { aggregate } from "./verify/aggregate.js";
 import type { EvidenceRecord } from "./verify/evidence.js";
 import { homedir } from "node:os";
@@ -92,6 +93,10 @@ import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
 import { isModelRole, type JevProvider, type LeanPiConfig, type ModelRole } from "./core/types.js";
 import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
+
+/** PRD-044's answers; plain words, because not everyone knows what a PRD is. */
+const PRD_SUGGEST_YES = "Yes, write a plan first";
+const PRD_SUGGEST_NEVER = "No, and don't ask again";
 
 /**
  * The host's `ask` channel for an isolated worktree, built from Pi's own UI.
@@ -682,6 +687,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// line's own invitation made the user retype the turn that triggered it.
 		author: createPrdAuthor({ cwd, registry: surface.backends, env }),
 		defaultObjective: () => lastContext?.turn.text,
+		prefsEnv: env,
 	});
 	// The shared entry point captures upstream's limit after LeanPi registers.
 	let capturedSubagentLimit: CapturedLimit | undefined;
@@ -1052,6 +1058,30 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 				}),
 			);
 		}
+		// PRD-044: JEV judged the session's opening task PRD-worthy, so offer one
+		// before the loop runs it as a blind prompt. Only the first prompt of a
+		// session asks (this turn's message is not on the branch yet, so a resumed
+		// session has a user message there already), and the heuristic fallback
+		// answers PRD_REQUIRED on any doubt, so only a gate JEV answered may ask.
+		let prdMessage: string | undefined;
+		const gate = context.contract ? compileRecordOf(context.contract)?.telemetry.find((row) => row.site_id === "gate.prd_required") : undefined;
+		const firstPrompt = () => !ctx.sessionManager.getBranch().some((entry) => entry.type === "message" && entry.message.role === "user");
+		if (!owns && ctx.hasUI && context.contract?.task.prd_required && gate?.fallback_used === false && firstPrompt() && prdSuggestEnabled(env) && !readPrdState(cwd)) {
+			// Unattended, the dialog dismisses itself and the turn runs as asked.
+			const choice = await ctx.ui.select(
+				"Wait — this task would go better with a plan (a PRD: goals, steps and checks) before any code. Want me to write one first?",
+				[PRD_SUGGEST_YES, "No, just do it", PRD_SUGGEST_NEVER],
+				{ timeout: 15_000 },
+			);
+			if (choice === PRD_SUGGEST_YES) {
+				const created = await commands.dispatch("/prd create", { cwd });
+				const state = created.ok ? readPrdState(cwd) : null;
+				if (state) prdMessage = `${state.prdId} was written for this task at ${state.prdPath}. Execute from it: work through its acceptance criteria in order.`;
+				else ctx.ui.notify(`${created.text}\nContinuing without a plan.`, "warning");
+			} else if (choice === PRD_SUGGEST_NEVER) {
+				setPrdSuggest(false, env);
+			}
+		}
 		// Pi's blanket catalog, for any entry that still assembles one: the
 		// `leanpi` launcher passes `--no-skills` and `createLeanPiSession` sets
 		// `skillsOverride`, but a user running `pi --extension` by hand gets Pi's
@@ -1067,7 +1097,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		} else {
 			setLaneCollector(undefined);
 		}
-		return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
+		const message = prdMessage === undefined ? undefined : { customType: "leanpi-prd", content: prdMessage, display: true };
+		if (systemPrompt === event.systemPrompt && !message) return undefined;
+		return { ...(systemPrompt === event.systemPrompt ? {} : { systemPrompt }), ...(message ? { message } : {}) };
 	});
 
 	// A new run invalidates the previous recap on screen; the widget is cleared

@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { RequiredCapability } from "../compiler/contract.js";
 import type { ArtifactStore } from "../context/artifacts.js";
+import { prdSuggestEnabled, setPrdSuggest, type UiPrefsEnv } from "../cli/ui-settings.js";
 import type { CommandHandler, CommandRegistry, CommandResult } from "../commands/registry.js";
 import type { LeanPiConfig } from "../core/types.js";
 import type { JevClient } from "../jev/client.js";
@@ -39,6 +40,8 @@ export interface PrdCommandDeps {
 	jev?: JevClient;
 	hashWorkspace?: () => string;
 	now?: () => Date;
+	/** Where `/prd suggest` reads and writes its preference (PRD-044). */
+	prefsEnv?: UiPrefsEnv;
 }
 
 function unquote(value: string): string {
@@ -160,6 +163,15 @@ export function createPrdHandler(deps: PrdCommandDeps): CommandHandler {
 		};
 	}
 
+	/** PRD-044: the only way back after "No, don't ask again". */
+	function suggest(value: string): CommandResult {
+		const env = deps.prefsEnv ?? process.env;
+		if (value === "") return { ok: true, text: `PRD suggestions: ${prdSuggestEnabled(env) ? "on" : "off"}` };
+		if (value !== "on" && value !== "off") return { ok: false, text: "usage: /prd suggest [on|off]" };
+		const path = setPrdSuggest(value === "on", env);
+		return { ok: true, text: `PRD suggestions: ${value} (saved to ${path})` };
+	}
+
 	const handler = async (args: string): Promise<CommandResult> => {
 		const trimmed = args.trim();
 		const separator = trimmed.search(/\s/);
@@ -169,7 +181,8 @@ export function createPrdHandler(deps: PrdCommandDeps): CommandHandler {
 		if (subcommand === "create") return create(unquote(rest));
 		if (subcommand === "status") return status();
 		if (subcommand === "close") return close();
-		return { ok: false, text: 'usage: /prd create "<objective>" | /prd status | /prd close' };
+		if (subcommand === "suggest") return suggest(rest);
+		return { ok: false, text: `usage: ${PRD_COMMAND_HELP.usage}` };
 	};
 
 	return handler;
