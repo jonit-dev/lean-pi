@@ -175,6 +175,23 @@ One request, at the end of Phase 1:
      an OTP (`--otp=<code>`). That is fine for a manual first release; a CI
      publish would need a bypass-2FA token or a trusted-publisher setup.
 
+     **Confirmed the hard way (2026-09-22, releases 0.1.1 and 0.1.2).**
+     `npm publish` with this token fails `EOTP` — `npm token list --json` shows
+     `"bypass_2fa": false` for `leanpi-publish-2026-09`, and `true` for the
+     account's `threenative-github-actions-2026-09` token, whose
+     `{type: "package", name: null}` scope (npm's "all packages: write") does
+     cover `leanpi`. Two consequences worth keeping:
+     - The repo `.npmrc` listed **this** token, and a project `.npmrc`
+       overrides `~/.npmrc`, so it silently shadowed the account's bypass-2FA
+       token. It is now commented out with the reason inline; re-enable it the
+       moment the leanpi token gets the bypass toggle, since it is the
+       least-privilege option.
+     - `npm publish` reported `+ leanpi@0.1.1` and the packument lagged by
+       ~2 minutes on the CDN; `npm view` returned `ETARGET`/`404` throughout,
+       and only `curl https://registry.npmjs.org/leanpi/0.1.1` settled it. Do
+       not re-publish on a lagging read — npm rejects the duplicate with
+       "You cannot publish over the previously published versions".
+
    Superseded context, kept because it explains why nothing on disk worked:
    the ten pre-existing `.npmrc` files under `~/projects` carry only two
    distinct tokens (fingerprints `d006d3d6`, `deb7d363`), both `401
