@@ -15,10 +15,8 @@
  * §41's loop limit fired, and the task would land BLOCKED for a reason that was
  * actually a missing selection rule.
  */
-import { existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
 import type { ExecutionContract } from "../compiler/contract.js";
-import { runtimePlanOf, RUNTIME_VERIFIER_KINDS, type RuntimePlan } from "./plan.js";
+import { runtimePlanOf, RUNTIME_VERIFIER_KINDS } from "./plan.js";
 
 export type RuntimeVerifierKind = (typeof RUNTIME_VERIFIER_KINDS)[number];
 
@@ -29,35 +27,31 @@ export interface RuntimeSelectionOptions {
 	 * member of that enum, which changes nothing here).
 	 */
 	gap?: string;
-	/** The workspace root the declarations' relative paths resolve against. Defaults to `process.cwd()`. */
-	cwd?: string;
-}
-
-function baselineExists(plan: RuntimePlan, cwd: string): boolean {
-	const declared = plan.screenshot?.baseline;
-	if (declared === undefined) return false;
-	return existsSync(isAbsolute(declared) ? declared : resolve(cwd, declared));
 }
 
 /**
  * The runtime verifier kinds this contract's declarations select, in canonical
  * order. Pure: no JEV, no model, no network — the same contract selects the same
  * set on every run.
+ *
+ * A declared surface is always selected, even when its facility cannot run right
+ * now: a missing baseline or an absent browser is the verifier's `unavailable`
+ * record, not a reason for the check to vanish. Selection decides *what the
+ * contract declared*, never whether the environment happens to satisfy it — a
+ * rule that consulted the filesystem here would compile a configured screenshot
+ * into no required check and report a false success.
  */
 export function selectRuntimeVerifiers(contract: ExecutionContract | undefined, options: RuntimeSelectionOptions = {}): RuntimeVerifierKind[] {
 	const plan = runtimePlanOf(contract);
-	const cwd = options.cwd ?? process.cwd();
 	const selected = new Set<RuntimeVerifierKind>();
 	if (plan.smoke) selected.add("runtime_smoke");
 	if (plan.cli) selected.add("cli_invocation");
 	if (plan.browser) selected.add("browser_test");
-	// A baseline is what makes a comparison possible; without one the screenshot
-	// verifier could only report `unavailable`, so it is not selected.
-	if (plan.screenshot && baselineExists(plan, cwd)) selected.add("screenshot_compare");
+	if (plan.screenshot) selected.add("screenshot_compare");
 	switch (options.gap) {
 		case "UI_VERIFICATION_REQUIRED":
 			if (plan.browser) selected.add("browser_test");
-			if (plan.screenshot && baselineExists(plan, cwd)) selected.add("screenshot_compare");
+			if (plan.screenshot) selected.add("screenshot_compare");
 			break;
 		case "RUNTIME_TEST_REQUIRED":
 			if (plan.smoke) selected.add("runtime_smoke");

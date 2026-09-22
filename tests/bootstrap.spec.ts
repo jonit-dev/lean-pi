@@ -203,10 +203,11 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 
 		// Every request offered the five baseline tools plus PRD-014's expand
 		// affordance, which the tool-output pipeline needs whenever it can turn a
-		// large result into an `artifact://` reference. The LSP group stays inactive.
+		// large result into an `artifact://` reference. The LSP group stays
+		// inactive; the pi-subagents parent tools are active once attached.
 		expect(stub.requests).toHaveLength(6);
 		for (const request of stub.requests) {
-			expect(toolNamesOf(request.body)).toEqual(["artifact", "edit", "execute", "read", "search", "write"]);
+			expect(toolNamesOf(request.body)).toEqual(["artifact", "bg_wait", "edit", "execute", "read", "search", "subagent", "write"]);
 		}
 
 		// write → search → read → edit → execute, each observed at the next request.

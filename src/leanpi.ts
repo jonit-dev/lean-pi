@@ -5,4 +5,4 @@
  * puts `[Extensions] dist` on the user's first screen. This file exists so the
  * name reads `leanpi`; it adds nothing else.
  */
-export { activate as default } from "./index.js";
+export { default } from "./index.js";

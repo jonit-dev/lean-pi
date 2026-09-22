@@ -19,7 +19,7 @@
  * which is the FR-055 separation this record exists to carry.
  */
 import type { LeanPiConfig } from "../core/types.js";
-import { billingOf, type BackendCall } from "./collect.js";
+import { billingOf, type BackendCall, type CallUsage } from "./collect.js";
 import type { CallRow, RunCost, RunUsage } from "./record.js";
 
 /** USD per million tokens. */
@@ -113,17 +113,60 @@ export function priceQuota(call: BackendCall, cost: CostConfig): number {
 	return numberOf(cost.quota_shadow_usd?.[call.quotaClass]);
 }
 
+/** A measured bucket exists when any token count it carries is positive; reasoning overlaps output, so this is an OR, never a sum. */
+export function hasMeasuredUsage(call: CallRow): boolean {
+	return (
+		(call.inputTokens ?? 0) > 0 ||
+		(call.cachedInputTokens ?? 0) > 0 ||
+		(call.cacheWriteTokens ?? 0) > 0 ||
+		(call.outputTokens ?? 0) > 0 ||
+		(call.reasoningTokens ?? 0) > 0
+	);
+}
+
+function declaredRate(value: unknown): boolean {
+	return typeof value === "number" && Number.isFinite(value);
+}
+
+/** True when a bucket the call *used* had no declared rate, so its `$0` is missing accounting, not a zero-rate measurement. */
+export function hasMissingRates(cost: CostConfig, backend: string, model: string, usage: CallUsage): boolean {
+	const override = cost.models?.[model];
+	const declared = cost.backends?.[backend];
+	const output = declaredRate(override?.output) || declaredRate(declared?.output);
+	const input = usage.inputTokens ?? usage.tokens ?? 0;
+	return (
+		(input > 0 && !(declaredRate(override?.input) || declaredRate(declared?.input))) ||
+		((usage.cachedInputTokens ?? 0) > 0 && !(declaredRate(override?.cachedInput) || declaredRate(declared?.cacheRead))) ||
+		((usage.cacheWriteTokens ?? 0) > 0 && !(declaredRate(override?.cacheWrite) || declaredRate(declared?.cacheWrite))) ||
+		((usage.outputTokens ?? 0) > 0 && !output) ||
+		((usage.reasoningTokens ?? 0) > 0 && !output)
+	);
+}
+
 /**
- * The metered calls this store cannot value: they carry tokens and were recorded
- * at $0 because nothing on the rate card matched their model. Read off the
- * stored rows rather than re-priced — the row is what the total was computed
- * from, and a reader holding a record has no access to the config that priced
- * it. A subscription or local call is legitimately $0 and is not in here.
+ * The metered calls this store cannot value: they carry usage and were recorded
+ * at $0 because a rate they needed was missing. New rows say so in `pricing`;
+ * a row written before that field falls back to `$0` with honest uncertainty.
+ * Read off the stored rows rather than re-priced — a reader holding a record has
+ * no access to the config that priced it. A subscription or local call is
+ * legitimately $0 and is not in here.
  */
 export function unpricedCalls(calls: readonly CallRow[]): CallRow[] {
 	return calls.filter(
-		(call) => (call.billing ?? "metered") === "metered" && call.inputTokens + call.outputTokens > 0 && call.costUsd === 0,
+		(call) =>
+			(call.billing ?? "metered") === "metered" &&
+			hasMeasuredUsage(call) &&
+			(call.pricing === undefined ? call.costUsd === 0 : call.pricing === "missing"),
 	);
+}
+
+/**
+ * The metered calls that recorded no usage at all — not even a token count, so
+ * `unpricedCalls` cannot flag them. The provider may have failed before a
+ * session existed; the row is unknown, not free, and a report has to say which.
+ */
+export function unmeasuredCalls(calls: readonly CallRow[]): CallRow[] {
+	return calls.filter((call) => (call.billing ?? "metered") === "metered" && !hasMeasuredUsage(call));
 }
 
 /**

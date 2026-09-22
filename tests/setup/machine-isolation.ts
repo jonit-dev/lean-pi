@@ -15,9 +15,17 @@
  * `HOME` stays real, because the specs that do assert against the machine's own
  * skill roots (`~/.claude`, `~/.agents/skills`) are opt-in — `LEANPI_REAL_SKILLS`
  * and `LEANPI_PRD_REAL_SKILLS` — and need the real one when they are asked for.
+ *
+ * `$PI_CODING_AGENT_DIR` moves too, to its own empty directory. The shared
+ * `attach` export runs `pi-subagents` on every session, and upstream resolves
+ * its config from `getAgentDir()` — the process environment — independently of
+ * the SDK's `agentDir`. Without this, a fixture session would create and write
+ * `~/.pi/agent/extensions/subagent/config.json`, an ambient real-config write.
+ * A subprocess smoke sets it in the child environment as well.
  */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "leanpi-suite-xdg-"));
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "leanpi-suite-agent-"));

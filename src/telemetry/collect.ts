@@ -274,6 +274,9 @@ export function createRunCollector(init: { taskId: string; sessionId: string }):
 			// rather than being dropped; every richer field is reported by the backend.
 			totals.input_tokens += usage.inputTokens ?? usage.tokens ?? 0;
 			totals.cached_input_tokens += usage.cachedInputTokens ?? 0;
+			// Absent on a store written before this field existed; a run that never
+			// reports a cache write keeps the old shape rather than gaining a zero.
+			if (usage.cacheWriteTokens !== undefined) totals.cache_write_tokens = (totals.cache_write_tokens ?? 0) + usage.cacheWriteTokens;
 			totals.output_tokens += usage.outputTokens ?? 0;
 			totals.reasoning_tokens += usage.reasoningTokens ?? 0;
 			totals.subscription_usage += usage.subscriptionUsage ?? (billingOf(call) === "subscription" ? 1 : 0);

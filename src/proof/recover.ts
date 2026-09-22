@@ -17,14 +17,18 @@ import type { ArtifactStore } from "../context/artifacts.js";
 import {
 	captureArtifact,
 	DEFAULT_SCOPES,
+	quoteScope,
 	resolveCommand,
 	verifierFor,
 	verifierOutcome,
+	type ScopeSpec,
 	type VerifierContext,
 	type VerifierDescriptor,
 } from "../verify/descriptors.js";
 import type { EvidenceRecord, EvidenceStatus, EvidenceStore, VerifierResult } from "../verify/evidence.js";
 import type { ShellExec } from "../verify/run.js";
+import type { BrowserFacility } from "../runtime/browser.js";
+import type { RuntimePlan } from "../runtime/plan.js";
 import type { ProofAction, ProofActionExecutor } from "./actions.js";
 import type { ProofCriterion } from "./packet.js";
 import type { ProofGapCategory } from "./questions.js";
@@ -107,6 +111,10 @@ export interface RecoverDeps {
 	timeoutMs?: number;
 	exec?: ShellExec;
 	artifacts?: ArtifactStore;
+	/** PRD-022's runtime plan for this recovery, so a gathered runtime verifier reads the contract's declarations. */
+	runtime?: RuntimePlan;
+	/** The host's browser adapter, threaded to a gathered browser/screenshot verifier. */
+	browserFacility?: BrowserFacility | null;
 	review?: ProofReview;
 	/** Lets the caller mirror each ladder verdict into `TaskState.review`. */
 	onReviewVerdict?: (verdict: ProofReviewVerdict) => void;
@@ -141,7 +149,10 @@ async function runVerifierRound(request: RecoverRequest, deps: RecoverDeps): Pro
 		return blocked(`no evidence store is attached: a ${kind} run would produce a record nothing could read`);
 	}
 
-	const scope = request.criterion.scope?.trim() ?? DEFAULT_SCOPES[kind] ?? "";
+	// The criterion's scope is raw data (a declared pattern, or the compiler's
+	// literal path list); quoting happens once inside `resolveCommand`, so this
+	// path cannot disagree with selection.
+	const scope: ScopeSpec = request.criterion.scope ?? DEFAULT_SCOPES[kind] ?? "";
 	// Attribution is stamped here rather than by `selectVerifiers`: the whole point
 	// of this round is a record for the criterion whose coverage was short.
 	const descriptor: VerifierDescriptor = {
@@ -149,11 +160,13 @@ async function runVerifierRound(request: RecoverRequest, deps: RecoverDeps): Pro
 		command: resolveCommand(kind, scope, deps.commands ?? {}),
 		mandatory: true,
 		criterion: [request.criterion.id],
-		scope,
+		scope: quoteScope(scope),
 	};
 	const context: VerifierContext = {
 		cwd: deps.cwd ?? process.cwd(),
 		timeoutMs: deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+		...(deps.runtime ? { runtime: deps.runtime } : {}),
+		...(deps.browserFacility !== undefined ? { browserFacility: deps.browserFacility } : {}),
 		...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 		...(deps.exec ? { exec: deps.exec } : {}),
 	};

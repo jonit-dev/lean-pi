@@ -33,6 +33,8 @@ interface WidgetCall {
 function fakePi(): {
 	pi: Record<string, unknown>;
 	handlers: Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>;
+	/** Pi commands `activate()`'s bridge registered, so the real handler is drivable. */
+	commands: Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>;
 	notices: string[];
 	widgets: WidgetCall[];
 	/** Notify and widget calls in the order they happened, for the ordering assertion. */
@@ -42,6 +44,7 @@ function fakePi(): {
 	ctx: Record<string, unknown>;
 } {
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
+	const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
 	const notices: string[] = [];
 	const widgets: WidgetCall[] = [];
 	const events: Array<{ kind: "notify" | "widget"; text: string }> = [];
@@ -50,6 +53,7 @@ function fakePi(): {
 	let name: string | undefined;
 	return {
 		handlers,
+		commands,
 		notices,
 		widgets,
 		events,
@@ -58,7 +62,7 @@ function fakePi(): {
 		pi: {
 			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, handler),
 			registerTool: () => {},
-			registerCommand: () => {},
+			registerCommand: (commandName: string, definition: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(commandName, definition),
 			registerProvider: () => {},
 			setModel: async () => true,
 			setThinkingLevel: () => {},
@@ -74,7 +78,10 @@ function fakePi(): {
 			cwd: process.cwd(),
 			sessionManager: {
 				getSessionId: () => "pi-session",
+				// `getEntries()` is every branch; `getBranch()` is the active
+				// ancestry. Restore must read the latter, so the fake carries both.
 				getEntries: () => [],
+				getBranch: () => [],
 			},
 			getContextUsage: () => ({ tokens: 1234, contextWindow: 200_000, percent: 1 }),
 			modelRegistry: { find: () => undefined },
@@ -124,6 +131,20 @@ const NATIVE = [
 	"",
 ].join("\n");
 
+// The recap's role resolves nowhere while the config is otherwise valid: the
+// single bound backend is disabled, so the role chain has nothing to fall to.
+// This is the state a manual `/recap` must report truthfully.
+const NO_ROLE = [
+	"backends:",
+	"  local: { type: native, baseUrl: https://example.test, enabled: false }",
+	"models:",
+	"  quick: { backend: local, model: cheap }",
+	"lsp: { mode: off }",
+	"jev: { mode: disabled }",
+	"recap: { role: quick }",
+	"",
+].join("\n");
+
 /** A mutable scripted runner: the answer can change between drives. */
 function stubRunner(): { run: RecapRunner; calls: RecapRequest[]; script: { text?: string; throws?: boolean } } {
 	const calls: RecapRequest[] = [];
@@ -146,6 +167,28 @@ function recapWidgets(widgets: readonly WidgetCall[]): Array<string[] | undefine
 
 function message(role: "user" | "assistant", text: string): unknown {
 	return { role, content: [{ type: "text", text }], timestamp: Date.now() };
+}
+
+/** Seed a recap entry on the session, on both the all-branches and active-branch reads. */
+function seedBranch(ctx: Record<string, unknown>, entries: unknown[]): void {
+	const manager = ctx.sessionManager as { getEntries: () => unknown[]; getBranch: () => unknown[] };
+	manager.getEntries = () => entries;
+	manager.getBranch = () => entries;
+}
+
+/** A message entry as `getBranch()` returns it (root-to-leaf). */
+function branchMessage(role: "user" | "assistant", text: string): unknown {
+	return { type: "message", message: message(role, text) };
+}
+
+/** An assistant entry that only asked for a tool: not a completed answer. */
+function toolCallEntry(): unknown {
+	return { type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "read", id: "c1" }], timestamp: Date.now() } };
+}
+
+/** A custom entry exactly as `appendEntry` persists it. */
+function customEntry(data: unknown): unknown {
+	return { type: "custom", customType: RECAP_ENTRY_TYPE, data };
 }
 
 /** A project whose only backend is a stub OpenAI-compatible server. */
@@ -323,15 +366,18 @@ describe("recap wiring (PRD-036 Phase 2)", () => {
 
 		await handlers.get("agent_end")?.({ messages: [message("user", "ask"), message("assistant", "answer")] }, ctx);
 		await handlers.get("agent_settled")?.({}, ctx);
-		expect(entries).toHaveLength(1);
+		// Two entries per successful turn: the durable input written before the
+		// call, then the sentence it produced.
+		expect(entries).toHaveLength(2);
 		expect(entries[0]?.customType).toBe(RECAP_ENTRY_TYPE);
-		expect((entries[0]?.data as { recap?: string } | undefined)?.recap).toBe("Persisted for the resume.");
+		expect((entries[0]?.data as { ask?: string } | undefined)?.ask).toBe("ask");
+		expect((entries[1]?.data as { recap?: string } | undefined)?.recap).toBe("Persisted for the resume.");
 
 		// A second activation reads the persisted entry back with no model call.
 		const second = fakePi();
 		const secondStub = stubRunner();
 		const seed = { type: "custom", customType: RECAP_ENTRY_TYPE, data: { version: 1, recap: "Persisted for the resume." } };
-		(second.ctx.sessionManager as { getEntries: () => unknown[] }).getEntries = () => [seed];
+		seedBranch(second.ctx, [seed]);
 		clearLanes();
 		activate(second.pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: secondStub.run });
 
@@ -354,7 +400,9 @@ describe("recap wiring (PRD-036 Phase 2)", () => {
 
 		expect(text).toBe("Real call, real parse.");
 		expect(harness.widgets.at(-1)?.[0]).toContain("Real call, real parse.");
-		expect(harness.entries).toHaveLength(1);
+		expect(harness.entries).toHaveLength(2);
+		expect((harness.entries[0]?.data as { ask?: string } | undefined)?.ask).toBe("wire the recap");
+		expect((harness.entries[1]?.data as { recap?: string } | undefined)?.recap).toBe("Real call, real parse.");
 		expect(harness.names).toEqual(["End To End"]);
 
 		// The spend is visible in the store `/status` sums, not bypassed through a
@@ -404,6 +452,411 @@ describe("recap wiring (PRD-036 Phase 2)", () => {
 		await second.handlers.get("agent_end")?.({ messages: [message("user", "ask"), message("assistant", "answer")] }, second.ctx);
 		await second.handlers.get("agent_settled")?.({}, second.ctx);
 		expect(secondStub.calls).toHaveLength(0);
+		clearLanes();
+	}, 30_000);
+
+	// PRD-040 Phase 4 (recap lifecycle): the controller distinguishes a turn-start
+	// hide from a session reset. A resumed session replays its own persisted recap
+	// from cache, and an in-flight generation from the session that went away can
+	// neither repaint nor be replayed after the switch.
+	it("shows the persisted recap on resume and '/recap' repeats it without a model call", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, notices, widgets, ctx } = fakePi();
+		const stub = stubRunner();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+		const seed = { type: "custom", customType: RECAP_ENTRY_TYPE, data: { version: 1, recap: "Persisted for the resume." } };
+		seedBranch(ctx, [seed]);
+
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+		await commands.get("recap")?.handler("", ctx);
+
+		// Replayed from cache: no model call, and certainly not a false no-turn.
+		expect(stub.calls).toHaveLength(0);
+		expect(notices.join("\n")).not.toContain("nothing to recap yet");
+		expect(notices.join("\n")).toContain("Persisted for the resume.");
+		expect(recapWidgets(widgets).some((content) => content?.[0]?.includes("Persisted for the resume."))).toBe(true);
+		clearLanes();
+	});
+
+	it("does not leak session A's recap into an empty session B after a switch", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		stub.script.text = "RECAP: Session A work.";
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		const messages = [message("user", "session A ask"), message("assistant", "session A answer")];
+		await handlers.get("agent_end")?.({ messages }, ctx);
+		await handlers.get("agent_settled")?.({}, ctx);
+		expect(stub.calls).toHaveLength(1);
+
+		// A fresh session with no persisted entry replaces the one that went away.
+		seedBranch(ctx, []);
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+		const callsBefore = stub.calls.length;
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(callsBefore);
+		expect(notices.join("\n")).not.toContain("Session A work.");
+		expect(notices.join("\n")).toContain("nothing to recap yet");
+		clearLanes();
+	});
+
+	it("discards a pending recap from the previous session after a switch", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, widgets, ctx } = fakePi();
+		let release: (text: string) => void = () => {};
+		const gate = new Promise<string>((resolve) => {
+			release = resolve;
+		});
+		const run: RecapRunner = async () => gate;
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: run });
+
+		await handlers.get("agent_end")?.({ messages: [message("user", "session A ask"), message("assistant", "session A answer")] }, ctx);
+		const inFlight = handlers.get("agent_settled")?.({}, ctx);
+		seedBranch(ctx, [
+			{ type: "custom", customType: RECAP_ENTRY_TYPE, data: { version: 1, recap: "Session B persisted." } },
+		]);
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+		release("RECAP: Stale Session A answer that must not appear.");
+		await inFlight;
+
+		const painted = recapWidgets(widgets).map((content) => content?.[0] ?? "").join("\n");
+		expect(painted).toContain("Session B persisted.");
+		expect(painted).not.toContain("Stale Session A answer");
+		clearLanes();
+	});
+
+	it("reports a generation failure after a real turn instead of a false no-turn", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		stub.script.throws = true;
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await handlers.get("agent_end")?.({ messages: [message("user", "real ask"), message("assistant", "real answer")] }, ctx);
+		await handlers.get("agent_settled")?.({}, ctx);
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(2);
+		expect(notices.join("\n")).not.toContain("nothing to recap yet");
+		expect(notices.join("\n")).toMatch(/generation failed/i);
+		clearLanes();
+	});
+
+	it("still reports a true no-turn when there is no input and no cached recap", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(0);
+		expect(notices.join("\n")).toContain("nothing to recap yet");
+		clearLanes();
+	});
+
+	// PRD-040 P4-R (branch ancestry): restore reads the *active* branch, not every
+	// branch in the session. A newer recap written on a sibling branch must not
+	// answer for the branch the user is actually on.
+	it("restores the active branch's recap, not a newer sibling's", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, widgets, ctx } = fakePi();
+		const stub = stubRunner();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		const branchA = { type: "custom", customType: RECAP_ENTRY_TYPE, data: { version: 1, recap: "Branch A recap." } };
+		const siblingB = { type: "custom", customType: RECAP_ENTRY_TYPE, data: { version: 1, recap: "Branch B recap." } };
+		const manager = ctx.sessionManager as { getEntries: () => unknown[]; getBranch: () => unknown[] };
+		// B is newer in the append-only log, but A is the active ancestry.
+		manager.getEntries = () => [branchA, siblingB];
+		manager.getBranch = () => [branchA];
+
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+
+		expect(stub.calls).toHaveLength(0);
+		expect(recapWidgets(widgets).some((content) => content?.[0]?.includes("Branch A recap."))).toBe(true);
+		expect(recapWidgets(widgets).some((content) => content?.[0]?.includes("Branch B recap."))).toBe(false);
+		clearLanes();
+	});
+
+	// Navigating the session tree moves the active leaf. The recap cached for the
+	// branch that was active must not be replayed for the branch just navigated to.
+	it("refreshes the cached recap from the branch a session_tree navigation lands on", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		const branchA = { type: "custom", customType: RECAP_ENTRY_TYPE, data: { version: 1, recap: "Branch A recap." } };
+		const siblingB = { type: "custom", customType: RECAP_ENTRY_TYPE, data: { version: 1, recap: "Branch B recap." } };
+		const manager = ctx.sessionManager as { getEntries: () => unknown[]; getBranch: () => unknown[] };
+		manager.getEntries = () => [branchA, siblingB];
+		manager.getBranch = () => [siblingB];
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+
+		// Pi's navigateTree moves the leaf to the older sibling: the active branch is A.
+		manager.getBranch = () => [branchA];
+		await handlers.get("session_tree")?.({ type: "session_tree", newLeafId: "a", oldLeafId: "b" }, ctx);
+		await commands.get("recap")?.handler("", ctx);
+
+		// No model call: the cache was refreshed from the new branch, so `/recap`
+		// replays A rather than the stale B from the branch that went away.
+		expect(stub.calls).toHaveLength(0);
+		expect(notices.join("\n")).toContain("Branch A recap.");
+		expect(notices.join("\n")).not.toContain("Branch B recap.");
+		clearLanes();
+	});
+
+	// A recap call that was in flight on the previous branch must not append or
+	// repaint after the user navigates away from it.
+	it("does not let a pending prior-branch recap repaint or persist after navigation", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, widgets, entries, ctx } = fakePi();
+		let release: (text: string) => void = () => {};
+		const gate = new Promise<string>((resolve) => {
+			release = resolve;
+		});
+		const run: RecapRunner = async () => gate;
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: run });
+
+		// A recap for the branch active now (A) is in flight.
+		await handlers.get("agent_end")?.({ messages: [message("user", "branch A ask"), message("assistant", "branch A answer")] }, ctx);
+		const inFlight = handlers.get("agent_settled")?.({}, ctx);
+
+		// The user navigates to sibling B, which carries its own persisted recap.
+		const branchB = { type: "custom", customType: RECAP_ENTRY_TYPE, data: { version: 1, recap: "Branch B recap." } };
+		(ctx.sessionManager as { getBranch: () => unknown[] }).getBranch = () => [branchB];
+		await handlers.get("session_tree")?.({ type: "session_tree", newLeafId: "b", oldLeafId: "a" }, ctx);
+		release("RECAP: Stale branch A answer.");
+		await inFlight;
+
+		const painted = recapWidgets(widgets).map((content) => content?.[0] ?? "").join("\n");
+		expect(painted).toContain("Branch B recap.");
+		expect(painted).not.toContain("Stale branch A answer");
+		expect(entries.some((entry) => (entry.data as { recap?: string } | undefined)?.recap === "Stale branch A answer.")).toBe(false);
+		clearLanes();
+	});
+
+	// A completed turn whose recap role resolves nowhere must still be remembered,
+	// so a manual `/recap` names the real reason (unavailable) rather than claiming
+	// there was no first turn.
+	it("reports an unavailable recap role after a completed turn, never a false no-turn", async () => {
+		const { cwd, env } = project(NO_ROLE);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await handlers.get("agent_end")?.({ messages: [message("user", "real ask"), message("assistant", "real answer")] }, ctx);
+		await handlers.get("agent_settled")?.({}, ctx);
+		await commands.get("recap")?.handler("", ctx);
+
+		// The role resolves nowhere, so no model call ever happens...
+		expect(stub.calls).toHaveLength(0);
+		// ...but the turn is remembered and the reason is the truthful one.
+		expect(notices.join("\n")).not.toContain("nothing to recap yet");
+		// The reason names the role, not the off switch or the drawing surface.
+		expect(notices.join("\n")).toContain("role is unavailable");
+		clearLanes();
+	});
+
+	// PRD-040 (durable recap input): a resumed branch whose turns never persisted
+	// a recap still has a turn. The native path writes user/assistant messages to
+	// Pi's transcript, so restore reads the active branch's newest completed pair
+	// without a model call; `/recap` then buys the one sentence.
+	it("restores a completed native turn from the active branch when no recap was persisted", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		stub.script.text = "RECAP: Generated from the resumed transcript.";
+		seedBranch(ctx, [branchMessage("user", "native ask"), branchMessage("assistant", "native answer")]);
+		const manager = ctx.sessionManager as { getEntries: () => unknown[]; getBranch: () => unknown[] };
+		manager.getEntries = () => [branchMessage("user", "unrelated sibling goal"), ...manager.getBranch()];
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+		// Restore itself never spends: the sentence is only bought on demand.
+		expect(stub.calls).toHaveLength(0);
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(1);
+		expect(stub.calls[0]?.brief).toContain("THIS TURN: native ask");
+		expect(stub.calls[0]?.brief).toContain("native answer");
+		expect(stub.calls[0]?.brief).not.toContain("unrelated sibling goal");
+		expect(notices.join("\n")).toContain("Generated from the resumed transcript.");
+		clearLanes();
+	});
+
+	it.each([
+		{ version: 1, recap: "Older cached recap." },
+		{ version: 1, ask: "older ask", did: "older answer" },
+	])("restores completed native work newer than a saved recap/input entry (%j)", async (older) => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		stub.script.text = "RECAP: Latest completed native work.";
+		seedBranch(ctx, [customEntry(older), branchMessage("user", "newest ask"), branchMessage("assistant", "newest answer")]);
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+		expect(stub.calls).toHaveLength(0);
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(1);
+		expect(stub.calls[0]?.brief).toContain("THIS TURN: newest ask");
+		expect(stub.calls[0]?.brief).toContain("newest answer");
+		expect(notices.join("\n")).toContain("Latest completed native work.");
+		clearLanes();
+	});
+
+	it("falls back to the prior completed pair when the branch ends on an unanswered user", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, ctx } = fakePi();
+		const stub = stubRunner();
+		stub.script.text = "RECAP: Prior pair.";
+		seedBranch(ctx, [
+			branchMessage("user", "first ask"),
+			branchMessage("assistant", "first answer"),
+			branchMessage("user", "trailing unanswered"),
+		]);
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(1);
+		expect(stub.calls[0]?.brief).toContain("THIS TURN: first ask");
+		expect(stub.calls[0]?.brief).toContain("first answer");
+		expect(stub.calls[0]?.brief).not.toContain("trailing unanswered");
+		clearLanes();
+	});
+
+	it("does not invent a turn from an empty, user-only or tool-call-only branch", async () => {
+		const branches: unknown[][] = [
+			[],
+			[branchMessage("user", "only a question")],
+			[branchMessage("user", "ask"), toolCallEntry()],
+		];
+		for (const branch of branches) {
+			const { cwd, env } = project(NATIVE);
+			const { pi, handlers, commands, notices, ctx } = fakePi();
+			const stub = stubRunner();
+			seedBranch(ctx, branch);
+			clearLanes();
+			activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+			await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+			await commands.get("recap")?.handler("", ctx);
+
+			expect(stub.calls).toHaveLength(0);
+			expect(notices.join("\n")).toContain("nothing to recap yet");
+			clearLanes();
+		}
+	});
+
+	it("does not borrow a completed turn from a sibling branch", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		const manager = ctx.sessionManager as { getEntries: () => unknown[]; getBranch: () => unknown[] };
+		// The append-only log has a completed pair; the active ancestry does not.
+		manager.getEntries = () => [branchMessage("user", "sibling ask"), branchMessage("assistant", "sibling answer")];
+		manager.getBranch = () => [];
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(0);
+		expect(notices.join("\n")).toContain("nothing to recap yet");
+		clearLanes();
+	});
+
+	it("replays a new-format persisted recap on resume with no model call", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		seedBranch(ctx, [customEntry({ version: 1, ask: "a", did: "b", recap: "New format persisted." })]);
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await handlers.get("session_start")?.({ reason: "resume" }, ctx);
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(0);
+		expect(notices.join("\n")).toContain("New format persisted.");
+		clearLanes();
+	});
+
+	// An external-harness turn is `action: "handled"` before Pi writes any
+	// user/assistant message, so the transcript cannot recover it. The custom
+	// input entry is the durable record; a failed recap still leaves it for a
+	// later manual `/recap` on the resumed session.
+	it("recovers an external turn whose recap failed, from the real appended input on resume", async () => {
+		const { cwd, env } = project(EXTERNAL);
+		const first = fakePi();
+		const failing = stubRunner();
+		failing.script.throws = true;
+		clearLanes();
+		activate(first.pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: failing.run });
+		await first.handlers.get("input")?.({ text: "external ask", source: "interactive" }, first.ctx);
+
+		expect(failing.calls).toHaveLength(1);
+		expect(first.entries).toHaveLength(1);
+		expect((first.entries[0]?.data as { ask?: string } | undefined)?.ask).toBe("external ask");
+
+		const second = fakePi();
+		const working = stubRunner();
+		working.script.text = "RECAP: Generated for the external turn.";
+		// The old cached recap is older than the real input entry appended above.
+		seedBranch(second.ctx, [customEntry({ version: 1, recap: "Old cached recap." }), ...first.entries.map((entry) => customEntry(entry.data))]);
+		clearLanes();
+		activate(second.pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: working.run });
+		await second.handlers.get("session_start")?.({ reason: "resume" }, second.ctx);
+
+		// The newest entry is input-only: nothing is replayed yet.
+		expect(working.calls).toHaveLength(0);
+		expect(recapWidgets(second.widgets).some((content) => content?.[0]?.includes("Old cached recap."))).toBe(false);
+		await second.commands.get("recap")?.handler("", second.ctx);
+
+		// The manual command generates for the latest turn, not the old cache.
+		expect(working.calls).toHaveLength(1);
+		expect(working.calls[0]?.brief).toContain("THIS TURN: external ask");
+		expect(second.notices.join("\n")).toContain("Generated for the external turn.");
+		expect(second.notices.join("\n")).not.toContain("Old cached recap.");
+		clearLanes();
+	}, 30_000);
+
+	it("retains a completed external turn across /recap off then on", async () => {
+		const { cwd, env } = project(`${EXTERNAL}recap:\n  enabled: false\n`);
+		const { pi, handlers, commands, notices, ctx } = fakePi();
+		const stub = stubRunner();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+		await handlers.get("input")?.({ text: "off then on ask", source: "interactive" }, ctx);
+		expect(stub.calls).toHaveLength(0);
+
+		await commands.get("recap")?.handler("on", ctx);
+		stub.script.text = "RECAP: Retained across the switch.";
+		await commands.get("recap")?.handler("", ctx);
+
+		expect(stub.calls).toHaveLength(1);
+		expect(stub.calls[0]?.brief).toContain("THIS TURN: off then on ask");
+		expect(notices.join("\n")).toContain("Retained across the switch.");
 		clearLanes();
 	}, 30_000);
 });

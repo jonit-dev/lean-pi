@@ -163,6 +163,12 @@ describe("/help, /status and /config (PRD-016 Phase 1)", () => {
 		// A key nobody overrides reports the default as its source.
 		expect(rendered.text).toMatch(/thresholds\.gate_prd_required\s+0\.5\s+built-in default/);
 
+		// An explicitly configured limit displaces the compiler's complexity-derived
+		// bound, not a fixed number: the losing value says so rather than claiming 2/1.
+		const limited = surfaceFixture({ config: { ...CONFIG, limits: { executionAttempts: 3 } } });
+		const limitedRendered = await limited.dispatch("/config");
+		expect(limitedRendered.text).toMatch(/limits\.executionAttempts\s+3\s+project \S+leanpi\.config\.yaml\s+complexity-derived/);
+
 		// A new session reading the edited file sees the new value.
 		writeFileSync(
 			fixture.configPath,

@@ -38,10 +38,22 @@ export function registerRecapCommand(registry: CommandRegistry, deps: RecapComma
 			// The widget is the report; the echoed text is the same sentence.
 			const host = context.recapHost;
 			if (host === undefined) return { ok: false, text: "recap needs an interactive session to draw in" };
-			const text = await recap.regenerate(host);
-			return text === undefined
-				? { ok: false, text: "nothing to recap yet — the recap appears after the first turn" }
-				: { ok: true, text: `recap: ${text}` };
+			const result = await recap.regenerate(host);
+			if (result.status === "ok" || result.status === "cached") return { ok: true, text: `recap: ${result.recap}` };
+			if (result.status === "failed") {
+				// A real turn produced input and the call did not come back: that is
+				// a generation failure, not an empty session.
+				return { ok: false, text: "recap generation failed — the previous recap is unchanged" };
+			}
+			if (result.status === "unavailable") {
+				// Each cause gets its own line: "off or cannot draw" named neither
+				// the unresolved role nor which switch to flip.
+				if (result.reason === "off") return { ok: false, text: "recap: automatic generation is off for this session — run /recap on to enable it" };
+				if (result.reason === "no_ui") return { ok: false, text: "recap needs an interactive session to draw in" };
+				if (result.reason === "superseded") return { ok: false, text: "recap was superseded by a newer turn — run /recap again" };
+				return { ok: false, text: "recap's model role is unavailable — no backend resolves it" };
+			}
+			return { ok: false, text: "nothing to recap yet — no completed turn is available" };
 		},
 	});
 }

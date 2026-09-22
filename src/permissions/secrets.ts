@@ -2,10 +2,11 @@
  * Secret containment (PRD-017 Phase 3, ROADMAP §48).
  *
  * Two mechanical rules, both applied in the guard: values named like secrets
- * never reach the executor or an artifact store, and a process LeanPi spawns
- * receives an allowlisted environment rather than the parent's environment. A
- * vendor CLI therefore authenticates from its own configuration instead of
- * anything LeanPi forwards.
+ * never reach the executor or an artifact store, and the guarded `execute`
+ * tool's child receives an allowlisted environment rather than the parent's.
+ * The verifier and external-harness spawns are deliberately not allowlisted:
+ * they run trusted, operator-configured commands (a language toolchain, a vendor
+ * CLI) that may need a credential from the environment, so they inherit it.
  *
  * ponytail: name-matched value redaction only (plus explicitly configured
  * secret names). It cannot catch a secret LeanPi never saw as a value — upgrade

@@ -11,6 +11,9 @@ import type { Api } from "@earendil-works/pi-ai";
 // `ThinkingLevel` is the subset a request can ask for.
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ResolvedPermissions } from "../permissions/trust.js";
+// The runtime plan's shape is owned by `runtime/plan.ts`; the config only carries
+// it. A type-only import, so this module stays free of the runtime lane.
+import type { RuntimePlan } from "../runtime/plan.js";
 
 /**
  * Pi's session thinking levels, in ascending effort. A config value outside this
@@ -60,6 +63,12 @@ export type ModelsConfig = Partial<Record<ModelRole, ModelBinding>> & { speciali
 export interface VerifyConfig {
 	commands: Partial<Record<string, string>>;
 	timeoutMs?: number;
+	/**
+	 * PRD-022's runtime declarations (smoke/CLI/browser/screenshot). The compiler
+	 * copies this into `verification.runtime`, which is what selects and drives the
+	 * runtime verifiers. An untrusted project contributes no runtime block.
+	 */
+	runtime?: RuntimePlan;
 }
 
 /** Configuration of one backend. Local/self-hosted backends are ordinary `native` entries. */
@@ -149,6 +158,23 @@ export interface CapabilitiesConfig {
 export interface LimitsConfig {
 	executionAttempts?: number;
 	semanticReviewRounds?: number;
+	/**
+	 * Overrides the complexity-derived escalation ceiling. Absent keeps the
+	 * compiler's per-complexity default; a configured value must be a
+	 * non-negative integer (PRD-007 §33).
+	 */
+	max_escalations?: number;
+	/** Where the executor works: `none` in place, `worktree` in an owned checkout (PRD-022). */
+	isolation?: "none" | "worktree";
+}
+
+/**
+ * The `workspace:` block (PRD-022). `worktreeRoot` overrides where an isolated
+ * run's checkout is created; relative paths resolve against the owning
+ * repository. The default is `<primary-repo>/.worktrees`.
+ */
+export interface WorkspaceConfig {
+	worktreeRoot?: string;
 }
 
 /** Calibration surface §10 requires: thresholds are configuration, never literals in a branch. */
@@ -189,6 +215,29 @@ export interface RecapConfig {
 	role?: ModelRole;
 }
 
+/**
+ * The top-level `routing:` block (PRD-020): the calibration and policy knobs
+ * `resolveRoutingConfig` reads. Carried through `loadConfig` so a file's values
+ * reach the router instead of being dropped in favour of the shipped defaults.
+ */
+export interface RoutingBlockConfig {
+	predicted_input_tokens?: number;
+	predicted_output_tokens?: number;
+	predicted_cached_input_fraction?: number;
+	effort_token_multiplier?: Partial<Record<"minimal" | "low" | "medium" | "high", number>>;
+	effort_by_complexity?: Partial<Record<"LOW" | "MEDIUM" | "HIGH", "minimal" | "low" | "medium" | "high">>;
+	retry_effort_threshold?: number;
+	matrix_retry_rate?: number;
+	min_bucket_runs?: number;
+	/** Candidates within this many USD may be reordered by `routing.quota_preference`. */
+	tie_band_usd?: number;
+	delegation_slice_threshold?: number;
+	local_gpu_seconds?: number;
+	latency_ms?: number;
+	/** Per-site switches, keyed by `routing.<site>` id. */
+	sites?: Partial<Record<string, boolean>>;
+}
+
 /** Context engine budgets (PRD-014): artifact threshold, compaction trigger, state ceiling. */
 export interface ContextConfig {
 	artifact_threshold_bytes: number;
@@ -217,6 +266,8 @@ export interface LeanPiConfig {
 	capability: CapabilitySetting;
 	/** The declared `cost:` block; PRD-015 reads it through `resolveCostConfig`. */
 	cost?: CostBlockConfig;
+	/** The declared `routing:` block (PRD-020); absent means the shipped defaults. */
+	routing?: RoutingBlockConfig;
 	/** Turn recap (PRD-036): the one extra model call per turn, and the role it runs on. */
 	recap: Required<RecapConfig>;
 	/** Verifier command overrides and timeout; the table in `verify/descriptors.ts` is the default. */
@@ -224,5 +275,17 @@ export interface LeanPiConfig {
 	/** Effective permission state: built-in defaults merged with user scope, then project scope (PRD-017). */
 	permissions: ResolvedPermissions;
 	thresholds: ThresholdsConfig;
-	limits: Required<LimitsConfig>;
+	/**
+	 * Bounded-execution limits. Every ceiling stays absent when the operator did
+	 * not configure it, so the compiler's complexity-derived defaults still apply:
+	 * an absent value is not the same as an explicit `0`.
+	 */
+	limits: {
+		executionAttempts?: number;
+		semanticReviewRounds?: number;
+		max_escalations?: number;
+		isolation: "none" | "worktree";
+	};
+	/** The declared `workspace:` block (PRD-022); absent keys fall back to the documented defaults. */
+	workspace?: WorkspaceConfig;
 }

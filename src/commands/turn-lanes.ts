@@ -6,11 +6,15 @@
  * Order is load-bearing: `compiler` puts the contract on the turn context and
  * `executor` is the only thing that consumes it.
  */
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { BackendRegistry, detectSubscriptions, subscriptionDeviations } from "../backends/index.js";
 import { compileRecordOf, compileTask } from "../compiler/index.js";
 import type { JevClient } from "../jev/client.js";
 import type { LeanPiConfig, ModelRole } from "../core/types.js";
 import { runExecutor, type ExecutorDeps } from "../executor/index.js";
+import { runIsolated, ensureGitIgnored, worktreePath, worktreeRootOf, type CleanupResult, type WorktreePatch } from "../runtime/index.js";
+import type { WorktreePermissionRequest } from "../runtime/index.js";
 import { selectSkills } from "../capabilities/skill-select.js";
 import type { SkillControl, SkillRecord } from "../capabilities/skills.js";
 import { createFileSearch } from "../exploration/gather.js";
@@ -24,7 +28,7 @@ import { scoutTask } from "../scout/index.js";
 import { itemsOf, remainingWork, type TodoCarrier } from "../todo/index.js";
 import { EvidenceStore } from "../verify/evidence.js";
 import { workspaceHash } from "../verify/hash.js";
-import { registerOwnedLanes, type Lane, type TurnContext } from "./session.js";
+import { registerOwnedLanes, type Lane, type TurnContext, type TurnInput } from "./session.js";
 import { feedInvocation, type RunCollector } from "../telemetry/index.js";
 
 /**
@@ -67,6 +71,39 @@ export interface TurnLaneDeps {
 	execute?: boolean;
 	/** The environment subscription detection reads (PATH and the vendors' keys). */
 	env?: NodeJS.ProcessEnv;
+	/** PRD-022's browser adapter, threaded to the runtime verifiers this turn selects. */
+	browserFacility?: import("../runtime/browser.js").BrowserFacility | null;
+	/** PRD-017's `ask` channel for an isolated worktree, so an `ask` decision can be confirmed. */
+	worktreeConfirm?: (request: WorktreePermissionRequest) => boolean | Promise<boolean>;
+}
+
+/** A fresh run id per isolated turn; matches PRD-022's single-safe-path-segment rule. */
+let isolationCounter = 0;
+function isolationRunId(): string {
+	isolationCounter += 1;
+	return `run-${Date.now().toString(36)}-${isolationCounter}`;
+}
+
+/**
+ * Write a run's surfaced patch outside its disposable worktree, keyed by run id.
+ * The `.patch` carries the whole captured patch (tracked diff plus untracked
+ * manifest and hashes); the `.diff`, when there is a tracked diff, is a plain
+ * unified diff the operator can apply by hand.
+ */
+function persistIsolationPatch(repoRoot: string, patch: WorktreePatch): { patchPath: string; diffPath?: string } {
+	const dir = join(repoRoot, ".leanpi", "patches");
+	mkdirSync(dir, { recursive: true });
+	ensureGitIgnored(repoRoot, ".leanpi");
+	const patchPath = join(dir, `${patch.runId}.patch`);
+	writeFileSync(patchPath, `${JSON.stringify(patch, null, 2)}\n`);
+	// The complete diff (tracked edits and new files) when available, so the one
+	// displayed `git apply` command reproduces the whole run — including a
+	// new-files-only outcome, which the tracked-only diff omitted entirely.
+	const applyable = patch.completeDiff ?? patch.diff;
+	if (applyable.trim().length === 0) return { patchPath };
+	const diffPath = join(dir, `${patch.runId}.diff`);
+	writeFileSync(diffPath, applyable);
+	return { patchPath, diffPath };
 }
 
 /** Stage 0 + §8: the deterministic packet, then the compiled contract. */
@@ -123,6 +160,19 @@ export function skillLane(deps: TurnLaneDeps): Lane {
 	};
 }
 
+/**
+ * The workspace state the gate reads, hashed now over the task's touched scope.
+ * A fresh hash is not a stale one: `workspaceHash` is content-based, so the same
+ * bytes reproduce the verifier's stamp exactly. It only differs when the bytes
+ * actually changed after verification — which is exactly when the evidence must
+ * read as stale. A hash failure (an unreadable or cyclic path) propagates: it
+ * must never fall back to the verifier's stamp, which would let stale evidence
+ * certify a workspace the gate could not read.
+ */
+function gateWorkspaceHash(cwd: string, executor: NonNullable<TurnContext["executor"]>): string {
+	return workspaceHash(cwd, executor.changedFiles);
+}
+
 /** §28-§34: the only consumer of a compiled contract. */
 export function executorLane(deps: TurnLaneDeps): Lane {
 	// One pool for the lane's lifetime, which is the session's: a per-turn
@@ -140,6 +190,77 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 	return {
 		name: "executor",
 		async run(turn, context) {
+			const contract = context.contract;
+			if (!contract || deps.execute === false) return;
+			// PRD-022's isolation wraps execution, verification, review and any gate
+			// recovery as one unit: the gate must run before the isolated workspace is
+			// reclaimed, or it would stamp that tree's hash on a main-checkout run.
+			if (contract.limits.isolation === "worktree" && ownsExecutionLoop(deps.config)) {
+				const runId = isolationRunId();
+				const runRoot = worktreeRootOf(deps.config, deps.cwd);
+				const runPath = worktreePath(deps.cwd, runId, runRoot);
+				let patch: WorktreePatch | undefined;
+				let patchPath: string | undefined;
+				let diffPath: string | undefined;
+				let cleanupResult: CleanupResult | undefined;
+				/** The turn-context shape the outcome renderer reads; retention keeps the checkout's exact path and reason. */
+				const isolationState = () => ({
+					runId,
+					...(patchPath ? { patchPath } : {}),
+					...(diffPath ? { diffPath } : {}),
+					paths: patch?.paths ?? [],
+					removed: cleanupResult?.removed ?? false,
+					...(cleanupResult && !cleanupResult.removed
+						? { retained: { path: cleanupResult.path, reason: cleanupResult.reason, paths: cleanupResult.paths } }
+						: {}),
+				});
+				// The per-turn host channel wins over the static lane dep: the UI's
+				// `confirm` is only reachable while a turn is in flight.
+				const worktreeConfirm = context.worktreeConfirm ?? deps.worktreeConfirm;
+				try {
+					await runIsolated(runId, {
+						repoRoot: deps.cwd,
+						root: runRoot,
+						permissions: deps.config.permissions,
+						...(worktreeConfirm ? { confirm: worktreeConfirm } : {}),
+						// Persist on success *and* on failure, before reclamation.
+						onPatch: (surfaced) => {
+							patch = surfaced;
+							const persisted = persistIsolationPatch(deps.cwd, surfaced);
+							patchPath = persisted.patchPath;
+							diffPath = persisted.diffPath;
+						},
+						// The actual cleanup outcome, not an assumption: a retained checkout
+						// is surfaced with its path and the paths it could not account for.
+						onCleanup: (result) => {
+							cleanupResult = result;
+						},
+						run: (workCwd) => executeAndGate(context, turn, workCwd),
+					});
+					context.isolation = isolationState();
+				} catch (error) {
+					// A refusal (deny/declined) happens before any directory exists; a run
+					// that threw still reports whatever it managed to persist or retain.
+					if (patchPath || cleanupResult) {
+						context.isolation = isolationState();
+					} else if (existsSync(runPath)) {
+						context.isolation = {
+							runId,
+							paths: [],
+							removed: false,
+							retained: { path: runPath, reason: "the run did not reach cleanup; its checkout was kept", paths: [] },
+						};
+					}
+					throw error;
+				}
+				return;
+			}
+			await executeAndGate(context, turn, deps.cwd);
+		},
+	};
+
+	/** The executor, the proof gate and the goal boundary, all in `workCwd`. */
+	async function executeAndGate(context: TurnContext, turn: TurnInput, workCwd: string): Promise<void> {
 			const contract = context.contract;
 			if (!contract || deps.execute === false) return;
 			// PRD-023's pre-generation hook: the governor picks the files that enter
@@ -168,11 +289,12 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 			context.onProgress?.(`running ${contract.routing.executor_class} on ${registry.selectBackend(contract.routing.executor_class)[0]?.name ?? "no available backend"}`);
 			context.executor = await runExecutor(contract, {
 				registry,
-				cwd: deps.cwd,
+				cwd: workCwd,
 				config: deps.config,
 				store,
 				...(deps.jev ? { jev: deps.jev } : {}),
 				...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
+				...(deps.browserFacility !== undefined ? { browserFacility: deps.browserFacility } : {}),
 				...(context.exploration ? { selection: { excerpts: excerptsOf(context.exploration) } } : {}),
 				...(deps.worker ? { worker: deps.worker } : {}),
 				...(deps.exec ? { exec: deps.exec } : {}),
@@ -196,10 +318,12 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 					? attributed
 					: contract.task.acceptance_criteria.map((criterion) => ({ id: criterion.id, text: criterion.text, required: [...contract.verification.required] }));
 			context.proof = await evaluateProofGate(criteria, {
-				// The hash the verifier stamped the records with, not a fresh one: a
-				// recomputed hash would read every record as stale and the gate could
-				// never be satisfied.
-				workspaceHash: context.executor.workspaceHash ?? workspaceHash(deps.cwd, context.executor.changedFiles),
+				// Re-hash the same touched scope now. `workspaceHash` is deterministic
+				// and content-based, so an unchanged workspace reproduces the verifier's
+				// stamp and its records stay fresh; if the external reviewer (or any
+				// worker after verification) changed a byte, the hash moves and the gate
+				// sees the evidence as stale instead of stamping old bytes as current.
+				workspaceHash: gateWorkspaceHash(workCwd, context.executor),
 				evidence: context.executor.evidence,
 				changedFiles: context.executor.changedFiles,
 				// A completed turn that answered instead of editing has its answer
@@ -215,10 +339,11 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 				// result is captured into. Without them the gate could name a gap and
 				// never close one, which is the state every blocked proof was in.
 				store,
-				cwd: deps.cwd,
+				cwd: workCwd,
 				...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 				...(deps.verifyCommands ? { commands: deps.verifyCommands } : {}),
 				...(deps.exec ? { exec: deps.exec } : {}),
+				...(deps.browserFacility !== undefined ? { browserFacility: deps.browserFacility } : {}),
 				...(deps.jev ? { jev: deps.jev } : {}),
 				// PRD-011's verdict for this turn is the review the gate asks for;
 				// without it a reviewer that already passed still reads as
@@ -242,7 +367,7 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 			const goal = goals.load();
 			if (goal?.active && context.executor) {
 				context.goal = await evaluateGoal(goal, {
-					workspaceHash: workspaceHash(deps.cwd, context.executor.changedFiles),
+					workspaceHash: context.executor.workspaceHash ?? workspaceHash(workCwd, context.executor.changedFiles),
 					records: context.executor.evidence,
 					config: deps.config,
 					cwd: deps.cwd,
@@ -253,8 +378,7 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 					goals,
 				});
 			}
-		},
-	};
+	}
 }
 
 /**

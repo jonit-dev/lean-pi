@@ -18,6 +18,7 @@ import {
 	clearCapabilityProviders,
 	compileTask,
 	createJevClient,
+	grantTrust,
 	loadConfig,
 	registerBaselineTools,
 	registerCapabilityProvider,
@@ -172,6 +173,10 @@ export interface LspHarness {
 
 /** A config object carrying an `lsp` block, built the way the loader builds one. */
 export function configFor(cwd: string, lsp?: Record<string, unknown>): LeanPiConfig {
+	// A project-local language-server stub is an executable the repository ships,
+	// so it is only reachable once the project is trusted (SURF-3). The fixtures
+	// model a trusted checkout; `tests/lsp/trust.spec.ts` covers the other side.
+	grantTrust(cwd);
 	return loadConfig(cwd, {
 		configPath: null,
 		backends: { local: { type: "native", baseUrl: "http://127.0.0.1:1/v1" } },
@@ -184,6 +189,7 @@ export function configFor(cwd: string, lsp?: Record<string, unknown>): LeanPiCon
 export async function harness(options: HarnessOptions = {}): Promise<LspHarness> {
 	const cwd = options.cwd ?? tsRepo().cwd;
 	const stub = options.jev === "disabled" ? undefined : await startStubJev(options.responders ?? []);
+	grantTrust(cwd);
 	const config = loadConfig(cwd, {
 		configPath: null,
 		backends: { local: { type: "native", baseUrl: "http://127.0.0.1:1/v1" } },

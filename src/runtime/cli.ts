@@ -23,6 +23,9 @@ import { startProcess } from "./proc.js";
 
 const DEFAULT_CLI_TIMEOUT_MS = 60_000;
 
+/** How long the capture may keep draining after the owned group has been killed. */
+const CLI_DRAIN_MS = 2_000;
+
 /** A trailing newline is not an output difference; anything else is. */
 function withoutTrailingNewline(value: string): string {
 	return value.replace(/\n+$/, "");
@@ -48,7 +51,7 @@ function mismatches(expect: CliExpectation, result: { code: number | null; signa
 export function cliInvocationVerifier(): VerifierRunner {
 	return {
 		async run(descriptor: VerifierDescriptor, context: VerifierContext): Promise<VerifierResult> {
-			const plan = currentRuntimePlan().cli;
+			const plan = context.runtime ? context.runtime.cli : currentRuntimePlan().cli;
 			const command = descriptor.command.trim().length > 0 ? descriptor.command.trim() : (plan?.command?.trim() ?? "");
 			const notRun = (reason: string) =>
 				verifierOutcome(descriptor, "not_run", { reason, artifactRef: captureArtifact(context.artifacts, descriptor.kind, reason) });
@@ -60,7 +63,17 @@ export function cliInvocationVerifier(): VerifierRunner {
 
 			const invocation = startProcess(command, { cwd: context.cwd, ...(plan.stdin !== undefined ? { stdin: plan.stdin } : {}) });
 			const outcome = await invocation.awaitReadiness({ timeoutMs });
-			if (outcome === "timeout") await invocation.terminate();
+			// The leader exiting does not mean the invocation is done: a descendant
+			// it spawned can inherit the stdio pipes and hold them open forever.
+			// Terminating the owned group reaches that descendant even after leader
+			// exit; the bounded drain then guarantees this verifier cannot hang on a
+			// pipe nobody will close.
+			await invocation.terminate();
+			// `exit` precedes the final buffered stdout; wait for the streams to close
+			// (or reach the bound) so the captured output is as complete as it can be.
+			// A drain that hit the bound means a detached descendant still holds the
+			// pipes: the capture is partial, so it cannot be certified as if whole.
+			const drained = await invocation.closed(CLI_DRAIN_MS);
 
 			const stdout = invocation.capture("stdout");
 			const stderr = invocation.capture("stderr");
@@ -72,6 +85,14 @@ export function cliInvocationVerifier(): VerifierRunner {
 				const reason = `the invocation timed out after ${timeoutMs}ms and its process group was terminated`;
 				return verifierOutcome(descriptor, "fail", {
 					exitCode: null,
+					reason,
+					artifactRef: captureArtifact(context.artifacts, descriptor.kind, `${reason}\n${body}`.slice(-32_768)),
+				});
+			}
+			if (drained === "timeout") {
+				const reason = `the invocation's process group was terminated but its inherited output streams did not close within ${CLI_DRAIN_MS}ms; the captured output is incomplete and cannot be certified`;
+				return verifierOutcome(descriptor, "error", {
+					exitCode: ended.code,
 					reason,
 					artifactRef: captureArtifact(context.artifacts, descriptor.kind, `${reason}\n${body}`.slice(-32_768)),
 				});

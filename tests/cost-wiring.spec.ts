@@ -116,14 +116,15 @@ describe("PRD-028 follow-up — the wiring the cost audit found open", () => {
 		// The audit's last accounting gap: with Pi's own loop as the executor the
 		// record used to be emitted before the loop spent anything, so a native turn
 		// either wrote nothing or wrote zeros. It is written at `agent_end` now, from
-		// the loop's own messages.
+		// the loop's own messages. Known usage plus explicit rates make the cost a
+		// hand-calculated equality, not a `> 0`.
 		const backend = await startStubBackend([
-			{ toolCalls: [{ name: "write", args: { path: "a.txt", content: "x\n" } }] },
-			{ text: "done" },
+			{ toolCalls: [{ name: "write", args: { path: "a.txt", content: "x\n" } }], usage: { prompt_tokens: 1000, completion_tokens: 50 } },
+			{ text: "done", usage: { prompt_tokens: 1200, completion_tokens: 60, cached_tokens: 200, cache_write_tokens: 100 } },
 		]);
 		const { cwd, agentDir } = fixtureRepo();
 		writeConfig(cwd, {
-			backends: { local: nativeBackend(backend.baseUrl) },
+			backends: { local: nativeBackend(backend.baseUrl, { cost: { input: 3, cacheRead: 0.3, cacheWrite: 3.75, output: 15 } }) },
 			models: { balanced: { backend: "local", model: "cheap-fast" } },
 		});
 		const session = await bootSession({ cwd, agentDir });
@@ -137,6 +138,12 @@ describe("PRD-028 follow-up — the wiring the cost audit found open", () => {
 			expect(rows[0]!.execution.tool_calls).toBe(1);
 			expect(rows[0]!.executor_backend).toBe("local");
 			expect(rows[0]!.executor_model).toBe("cheap-fast");
+			// Hand-calculated from the declared rates and the loop's own usage:
+			//   (1000*3 + 50*15)/1e6 + (900*3 + 200*0.3 + 100*3.75 + 60*15)/1e6
+			expect(rows[0]!.cost.api_usd).toBe(0.007785);
+			// The native path runs no automatic gate chain, and the record says so
+			// rather than implying parity with an executor-lane turn.
+			expect(rows[0]!.result).toEqual({ verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: false });
 		} finally {
 			session.session.dispose();
 			await backend.close();

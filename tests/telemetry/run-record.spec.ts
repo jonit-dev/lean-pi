@@ -10,14 +10,16 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { clearLanes, registerLane } from "../../src/commands/session.js";
+import { compileTask } from "../../src/compiler/index.js";
 import { aggregateTelemetry } from "../../src/telemetry/aggregate.js";
 import { billedRefs, createRunCollector, feedInvocation } from "../../src/telemetry/collect.js";
-import { emitRunTelemetry } from "../../src/telemetry/emit.js";
+import { emitRunTelemetry, runTurnWithTelemetry } from "../../src/telemetry/emit.js";
 import { resolveCostConfig } from "../../src/telemetry/pricing.js";
 import type { RunTelemetry } from "../../src/telemetry/record.js";
 import { appendRun, readRuns, telemetryPath } from "../../src/telemetry/store.js";
 import { startStubJev, typedAnswers, type StubJev, type StubJevResponder } from "../helpers/stub-jev.js";
-import { fixtureConfig, fixtureCwd, registerFixtureSites, runFixtureTask } from "./fixture.js";
+import { FIXTURE_PACKET, fixtureConfig, fixtureCwd, registerFixtureSites, runFixtureTask } from "./fixture.js";
 
 /** The stub answers the first two sites (400 + 600 JEV tokens) and refuses the third. */
 const responder: StubJevResponder = (body) => {
@@ -307,5 +309,84 @@ describe("run telemetry record (PRD-015)", () => {
 		expect(collector.calls()[1]).toMatchObject({ type: "native", billing: "local" });
 		// The billed executor is the last executor-role call, read off the calls.
 		expect(billedRefs(collector.calls()).executor?.model).toBe("local");
+	});
+});
+
+describe("a compiled turn that throws still accounts for what it spent (PRD-040 P4-F)", () => {
+	let stub: StubJev;
+	beforeAll(async () => {
+		stub = await startStubJev([responder]);
+	});
+	afterAll(async () => {
+		await stub.close();
+	});
+
+	it("emits exactly one failed record carrying the real calls and usage", async () => {
+		const cwd = fixtureCwd();
+		registerFixtureSites();
+		const config = fixtureConfig(cwd, { jevUrl: stub.url });
+		const collector = createRunCollector({ taskId: "thrown", sessionId: "s-thrown" });
+		// One call really spent before the lane threw.
+		collector.add({
+			backend: "api",
+			model: "claude-sonnet-4",
+			type: "native",
+			role: "balanced",
+			billing: "metered",
+			usage: { inputTokens: 1_234, outputTokens: 56 },
+		});
+		clearLanes();
+		registerLane({
+			name: "fixture.throwing",
+			async run(turn, context) {
+				context.contract = await compileTask(turn.text, FIXTURE_PACKET);
+				throw new Error("the gate could not hash a touched path");
+			},
+		});
+
+		await expect(
+			runTurnWithTelemetry(
+				{ text: "Implement deterministic verification for the fixture task" },
+				{ config, cwd },
+				{
+					collector,
+					verdict: { verification: "pass", proof_gate: "pass", reviewer: "pass", success: true },
+				},
+			),
+		).rejects.toThrow(/could not hash/);
+
+		const lines = storedLines(cwd);
+		expect(lines).toHaveLength(1);
+		// The failed turn claims nothing: no verification, proof, review or success.
+		expect(lines[0]?.result).toEqual({ verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: false });
+		// ...but the call that really ran is accounted for, not fabricated.
+		expect(lines[0]?.usage.input_tokens).toBe(1_234);
+		expect(lines[0]?.usage.output_tokens).toBe(56);
+		expect(lines[0]?.calls).toHaveLength(1);
+		expect(lines[0]?.calls[0]?.inputTokens).toBe(1_234);
+		clearLanes();
+	});
+
+	it("writes no row when the turn threw before compiling a contract", async () => {
+		const cwd = fixtureCwd();
+		registerFixtureSites();
+		const config = fixtureConfig(cwd, { jevUrl: stub.url });
+		const collector = createRunCollector({ taskId: "no-contract", sessionId: "s-none" });
+		clearLanes();
+		registerLane({ name: "fixture.no-contract", async run() { throw new Error("no contract was compiled"); } });
+
+		await expect(
+			runTurnWithTelemetry({ text: "x" }, { config, cwd }, { collector, verdict: { verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: false } }),
+		).rejects.toThrow(/no contract was compiled/);
+		expect(readRuns(cwd)).toEqual([]);
+		clearLanes();
+	});
+
+	it("keeps a successful run at exactly one row", async () => {
+		const cwd = fixtureCwd();
+		registerFixtureSites();
+		await runFixtureTask({ cwd, taskId: "fixture-success", sessionId: "s-ok", success: true, config: fixtureConfig(cwd, { jevUrl: stub.url }) });
+		expect(storedLines(cwd)).toHaveLength(1);
+		expect(storedLines(cwd)[0]?.result.success).toBe(true);
 	});
 });

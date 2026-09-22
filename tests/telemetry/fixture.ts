@@ -124,7 +124,7 @@ export function fixtureConfig(cwd: string, options: FixtureConfigOptions = {}): 
 	} as unknown as LeanPiConfig;
 }
 
-const PACKET: TaskPacket = {
+export const FIXTURE_PACKET: TaskPacket = {
 	repository: { languages: ["typescript"], project_type: "single", package_manager: "pnpm", dirty: false },
 	task: { user_request: "Implement deterministic verification for the fixture task" },
 	workspace: { changed_files: [], likely_modules: [], test_runners: ["vitest"], lsp_available: false, git_branch: "main" },
@@ -165,7 +165,7 @@ export async function runFixtureTask(options: FixtureRunOptions): Promise<Fixtur
 	registerLane({
 		name: "fixture.executor",
 		async run(turn, context) {
-			const contract = await compileTask(turn.text, PACKET);
+			const contract = await compileTask(turn.text, FIXTURE_PACKET);
 			// PRD-005's provider fills the disclosed slots during the compile; with no
 			// provider registered the fixture stands in for it.
 			context.contract = {

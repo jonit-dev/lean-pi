@@ -9,18 +9,23 @@
  */
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { BackendRegistry, runWorkerTurn, type BackendInvocation } from "../../src/backends/index.js";
 import { commandRegistry } from "../../src/commands/registry.js";
-import { loadConfig } from "../../src/core/config.js";
+import { ConfigError, loadConfig } from "../../src/core/config.js";
 import type { LeanPiConfig } from "../../src/core/types.js";
 import { readDecisions } from "../../src/jev/log.js";
 import { aggregateTelemetry } from "../../src/telemetry/aggregate.js";
-import { callsFromMessages } from "../../src/telemetry/collect.js";
-import { registerCostCommand } from "../../src/telemetry/cost.js";
-import { priceCall, priceRun, resolveCostConfig } from "../../src/telemetry/pricing.js";
+import { callsFromMessages, createRunCollector, feedInvocation, type CallUsage } from "../../src/telemetry/collect.js";
+import { registerCostCommand, renderRun } from "../../src/telemetry/cost.js";
+import { emitRunTelemetry } from "../../src/telemetry/emit.js";
+import { priceCall, priceRun, resolveCostConfig, type CostConfig } from "../../src/telemetry/pricing.js";
+import type { CallRow } from "../../src/telemetry/record.js";
 import { appendRun, readRuns, telemetryPath } from "../../src/telemetry/store.js";
 import { startStubJev, typedAnswers, type StubJev, type StubJevResponder } from "../helpers/stub-jev.js";
+import { startStubBackend } from "../helpers/stub-backend.js";
 import { fixtureConfig, fixtureCwd, registerFixtureSites, runFixtureTask } from "./fixture.js";
-import { fixtureRepo, writeConfig } from "../helpers/fixtures.js";
+import { fixtureRepo, gitInit, nativeBackend, writeConfig } from "../helpers/fixtures.js";
+import { fixtureContract, runRecord } from "../routing/fixture.js";
 
 const responder: StubJevResponder = (body) => {
 	const ids = Object.keys((body.questions ?? {}) as Record<string, unknown>);
@@ -72,7 +77,7 @@ describe("/cost (PRD-015)", () => {
 		const detail = await commandRegistry.dispatch("/cost cost-task-1", { cwd });
 		expect(detail.ok).toBe(true);
 		expect(detail.text).toContain("task cost-task-1 (session session-cost)");
-		expect(detail.text).toContain("usage: input=10000 cached_input=20000 output=2000 reasoning=0 jev=1000 local_gpu_s=10 external_harness_calls=1 subscription=1");
+		expect(detail.text).toContain("usage: input=10000 cached_input=20000 cache_write=0 output=2000 reasoning=0 jev=1000 local_gpu_s=10 external_harness_calls=1 subscription=1");
 		expect(detail.text).toContain("cost: api=$0.066000 jev=$0.000200 quota=$0.050000 effective=$0.126200");
 		expect(detail.text).toContain("execution: wall=1200ms tool_calls=4 file_reads=3 repeated_reads=1 retries=1 escalations=0 compactions=1");
 		expect(detail.text).toContain("result: verification=pass proof_gate=pass reviewer=pass success=true");
@@ -189,10 +194,14 @@ describe("/cost (PRD-015)", () => {
 		const config = fixtureConfig(cwd, { jevUrl: stub.url });
 		await runFixtureTask({ cwd, taskId: "scoped-1", sessionId: "session-a", success: true, config });
 		// A second run whose executor ran on a model the rate card does not list:
-		// same emitted shape, one call left at $0 with its tokens intact.
+		// one call left at $0 with its tokens intact. No `pricing` provenance, the
+		// way a row written before that field existed reads — the fallback the
+		// report has to keep honest rather than treat as a zero rate.
 		const base = readRuns(cwd, { sessionId: "session-a" })[0]!;
 		const priced = base.calls.find((call) => call.billing === "metered")!;
-		appendRun(cwd, { ...base, task_id: "scoped-2", session_id: "session-b", calls: [{ ...priced, model: "gpt-5-unlisted", costUsd: 0 }] });
+		const unlisted = { ...priced, model: "gpt-5-unlisted", costUsd: 0 };
+		delete unlisted.pricing;
+		appendRun(cwd, { ...base, task_id: "scoped-2", session_id: "session-b", calls: [unlisted] });
 
 		// Registered without a session id: the report covers both sessions and says so.
 		registerCostCommand(commandRegistry, { cwd });
@@ -201,11 +210,11 @@ describe("/cost (PRD-015)", () => {
 		expect(report.text).toContain("runs: 2");
 		expect(report.text).not.toContain("session total:");
 		expect(report.text).toContain("all sessions total:");
-		expect(report.text).toContain("unpriced: 1 metered call(s) with no configured rate (api/gpt-5-unlisted)");
+		expect(report.text).toContain("unpriced: 1 metered call(s) with missing or unrecorded rates (api/gpt-5-unlisted)");
 
 		// The single-record view discloses it too; the priced run says nothing.
 		const unpriced = await commandRegistry.dispatch("/cost scoped-2", { cwd });
-		expect(unpriced.text).toContain("unpriced: 1 metered call(s) with no configured rate (api/gpt-5-unlisted)");
+		expect(unpriced.text).toContain("unpriced: 1 metered call(s) with missing or unrecorded rates (api/gpt-5-unlisted)");
 		const detail = await commandRegistry.dispatch("/cost scoped-1", { cwd });
 		expect(detail.text).not.toContain("unpriced:");
 
@@ -265,5 +274,293 @@ describe("A4 + COST-1 — the declared cost surface round-trips through loadConf
 		);
 		expect(priced.jev_usd).toBe(0.2);
 		expect(priced.effective_cost).toBe(0.202);
+	});
+});
+
+/**
+ * COST-4: a configured monetary rate is an operator's declaration, so an
+ * invalid one is a named load error naming the key — never a silent clamp to
+ * 0 that makes a typo look free, and never a negative rate that credits spend.
+ * A legitimate `0` stays valid.
+ */
+describe("COST-4 — invalid monetary rates fail load with a named ConfigError", () => {
+	const BASE = {
+		backends: { api: { type: "native", baseUrl: "http://127.0.0.1:9/v1" } },
+		models: { balanced: { backend: "api", model: "m" } },
+	};
+
+	function tryLoad(block: Record<string, unknown>): { ok: boolean; config?: LeanPiConfig; error?: Error } {
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, { ...BASE, ...block });
+		try {
+			return { ok: true, config: loadConfig(cwd, {}, { XDG_CONFIG_HOME: join(agentDir, "xdg") }) };
+		} catch (error) {
+			return { ok: false, error: error as Error };
+		}
+	}
+
+	function expectRejected(block: Record<string, unknown>, pathFragment: string): void {
+		const result = tryLoad(block);
+		expect(result.ok).toBe(false);
+		expect(result.error).toBeInstanceOf(ConfigError);
+		expect(result.error?.message).toContain(pathFragment);
+	}
+
+	it("rejects a negative per-model rate and names the offending key", () => {
+		expectRejected({ cost: { models: { m: { input: -3 } } } }, "cost.models.m.input");
+	});
+
+	it("rejects a non-finite per-model rate", () => {
+		expectRejected({ cost: { models: { m: { output: Number.POSITIVE_INFINITY } } } }, "cost.models.m.output");
+	});
+
+	it("rejects a negative run-level policy rate", () => {
+		expectRejected({ cost: { local_usd_per_gpu_sec: -0.001 } }, "cost.local_usd_per_gpu_sec");
+		expectRejected({ cost: { latency_usd_per_sec: -1 } }, "cost.latency_usd_per_sec");
+	});
+
+	it("rejects a negative or non-finite quota shadow price", () => {
+		expectRejected({ cost: { quota_shadow_usd: { premium: -0.05 } } }, "cost.quota_shadow_usd.premium");
+		expectRejected({ cost: { quota_shadow_usd: { premium: Number.NaN } } }, "cost.quota_shadow_usd.premium");
+	});
+
+	it("rejects a negative JEV rate", () => {
+		expectRejected({ jev: { usd_per_mtok: -0.2 } }, "jev.usd_per_mtok");
+	});
+
+	it("rejects a negative backend cache-write rate", () => {
+		const block = { backends: { api: { type: "native", baseUrl: "http://127.0.0.1:9/v1", cost: { input: 1, cacheWrite: -2 } } } };
+		expectRejected(block, "backends.api.cost.cacheWrite");
+	});
+
+	it("accepts a legitimate zero rate and prices from it", () => {
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			...BASE,
+			cost: { models: { m: { input: 0 } }, local_usd_per_gpu_sec: 0 },
+			jev: { usd_per_mtok: 0 },
+		});
+		const config = loadConfig(cwd, {}, { XDG_CONFIG_HOME: join(agentDir, "xdg") });
+		expect(resolveCostConfig(config).models?.m?.input).toBe(0);
+		expect(resolveCostConfig(config).jev_usd_per_mtok).toBe(0);
+	});
+});
+
+describe("COST-2 — a native run's cache-write tokens survive to the stored record", () => {
+	it("carries cacheWrite from the Pi loop through invocation, store, pricing and the breakdown", async () => {
+		// A real Pi loop against the stub HTTP provider: the usage chunk is the
+		// actual boundary where cache-write tokens enter LeanPi.
+		const stub = await startStubBackend([
+			{ text: "done", usage: { prompt_tokens: 1_000, completion_tokens: 100, cached_tokens: 200, cache_write_tokens: 400 } },
+		]);
+		const { cwd } = fixtureRepo();
+		gitInit(cwd);
+		writeConfig(cwd, {
+			backends: {
+				local: nativeBackend(stub.baseUrl, { model: "local-code", cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } }),
+			},
+			models: { quick: { backend: "local", model: "local-code" } },
+		});
+		const config = loadConfig(cwd);
+		const captured: BackendInvocation[] = [];
+		const registry = new BackendRegistry(config, { onInvocation: (record) => captured.push(record) });
+
+		const outcome = await runWorkerTurn({ objective: "say done", role: "quick" }, { registry, cwd });
+		await stub.close();
+		expect(outcome.status).toBe("completed");
+
+		// Normalization: the invocation the run emitted carries the quantity.
+		expect(captured).toHaveLength(1);
+		expect(captured[0]!.usage?.cacheWriteTokens).toBe(400);
+
+		// Feed exactly that invocation through the accumulator and the one writer.
+		const collector = createRunCollector({ taskId: "cost2", sessionId: "session-cost2" });
+		feedInvocation(collector, captured[0]!);
+		const record = emitRunTelemetry(
+			collector,
+			fixtureContract({ complexity: "LOW", executor_class: "quick" }),
+			{ verification: "pass", proof_gate: "pass", reviewer: "pass", success: true },
+			{ cwd, cost: resolveCostConfig(config) },
+		);
+		expect(record).toBeDefined();
+
+		// Persisted round-trip: the stored row and run totals expose it.
+		const stored = readRuns(cwd)[0]!;
+		expect(stored.calls).toHaveLength(1);
+		expect(stored.calls[0]!.cacheWriteTokens).toBe(400);
+		expect(stored.usage.cache_write_tokens).toBe(400);
+
+		// Hand-computed: input 400 @ $3, cache read 200 @ $0.3, cache write
+		// 400 @ $3.75, output 100 @ $15 = (1200 + 60 + 1500 + 1500)/1e6.
+		expect(stored.cost.api_usd).toBe(0.00426);
+		// Dropping cache writes would price $0.00276; input and output are not
+		// counted a second time through the cache buckets.
+		expect(stored.usage.input_tokens).toBe(400);
+		expect(stored.usage.cached_input_tokens).toBe(200);
+		expect(stored.usage.output_tokens).toBe(100);
+
+		// Rendered breakdown names the cache-write quantity.
+		expect(renderRun(stored)).toContain("cache_write=400");
+	});
+});
+
+/**
+ * COST-3: the dollar total cannot express a subscription pool call or a local
+ * GPU-second — both price at 0 — nor a metered call that recorded no usage.
+ * The aggregate report names those volumes and labels the figure as a
+ * configured valuation, so $0 is never read as "nothing happened" or "free".
+ */
+describe("COST-3 — the aggregate report names the volume a dollar total cannot", () => {
+	function call(overrides: Partial<CallRow>): CallRow {
+		return {
+			timestamp: "2026-09-21T00:00:00.000Z",
+			backend: "b",
+			backend_type: "native",
+			model: "m",
+			role: "balanced",
+			inputTokens: 0,
+			outputTokens: 0,
+			costUsd: 0,
+			...overrides,
+		};
+	}
+
+	it("shows subscription/local volume, labels unmeasured metered calls, and marks the figure a valuation", async () => {
+		const cwd = fixtureCwd();
+		appendRun(cwd, {
+			...runRecord({ backend: "claude", model: "premium", success: true }, 1),
+			task_id: "sub-only",
+			session_id: "s-sub",
+			calls: [call({ backend: "claude", backend_type: "external_harness", model: "premium", role: "review_quick", billing: "subscription" })],
+		});
+		appendRun(cwd, {
+			...runRecord({ backend: "local", model: "local-code", local_gpu_seconds: 10, success: true }, 2),
+			task_id: "local-only",
+			session_id: "s-local",
+			calls: [call({ backend: "local", model: "local-code", billing: "local" })],
+		});
+		// A metered call that recorded no usage: unknown, not free.
+		const ghost = runRecord({ backend: "api", model: "ghost", success: false }, 3);
+		appendRun(cwd, {
+			...ghost,
+			task_id: "unmeasured",
+			session_id: "s-unmeasured",
+			usage: { ...ghost.usage, external_harness_calls: 0, subscription_usage: 0, local_gpu_seconds: 0 },
+			calls: [call({ backend: "api", model: "ghost", billing: "metered" })],
+		});
+
+		registerCostCommand(commandRegistry, { cwd });
+		const report = await commandRegistry.dispatch("/cost", { cwd });
+		expect(report.ok).toBe(true);
+		// Legitimate zero-cost volume is named, not hidden behind $0.000000.
+		expect(report.text).toContain("subscription 1 call(s)");
+		expect(report.text).toContain("local 1 call(s)");
+		expect(report.text).toContain("10 local gpu-s");
+		// A metered call with no recorded usage is labelled unmeasured.
+		expect(report.text).toContain("unmeasured: 1 metered call(s)");
+		// The total is a configured valuation, never presented as an invoice.
+		expect(report.text).toContain("configured post-run valuation");
+		// The truth is preserved: those runs cost $0.
+		expect(report.text).toContain("all sessions total: $0.000000");
+	});
+});
+
+/**
+ * COST-3 review: a metered call's `$0` has three different meanings — the
+ * operator declared a zero (or a rate so small the charge rounds to zero), the
+ * model has no configured rate at all, or the call reported no usage. Guessing
+ * from `costUsd === 0` mislabels the first as unknown and misses the cache-only
+ * case entirely. The writer records the provenance, and the report reads it.
+ */
+describe("COST-3 — the report classifies a zero by provenance, not by the number", () => {
+	function emit(cwd: string, cost: CostConfig, usage: CallUsage, model = "m", backend = "api"): void {
+		const collector = createRunCollector({ taskId: `prov-${Math.random().toString(36).slice(2)}`, sessionId: "s-prov" });
+		collector.add({ backend, model, type: "native", role: "balanced", usage });
+		emitRunTelemetry(collector, fixtureContract({ complexity: "LOW", executor_class: "quick" }), {
+			verification: "pass",
+			proof_gate: "pass",
+			reviewer: "pass",
+			success: true,
+		}, { cwd, cost });
+	}
+
+	async function report(cwd: string): Promise<string> {
+		registerCostCommand(commandRegistry, { cwd });
+		const result = await commandRegistry.dispatch("/cost", { cwd });
+		expect(result.ok).toBe(true);
+		return result.text;
+	}
+
+	it("persists the measured cache-read and reasoning buckets on the call row", () => {
+		const cwd = fixtureCwd();
+		emit(cwd, { models: { m: { input: 1, cachedInput: 1, output: 1 } } }, {
+			inputTokens: 10,
+			cachedInputTokens: 20,
+			cacheWriteTokens: 30,
+			outputTokens: 40,
+			reasoningTokens: 5,
+		});
+		const row = readRuns(cwd)[0]!.calls[0]!;
+		expect(row.cachedInputTokens).toBe(20);
+		expect(row.reasoningTokens).toBe(5);
+	});
+
+	it("does not call a configured zero rate 'no configured rate'", async () => {
+		const cwd = fixtureCwd();
+		emit(cwd, { models: { m: { input: 0, output: 0 } } }, { inputTokens: 1_000, outputTokens: 100 });
+		expect(await report(cwd)).not.toContain("unpriced");
+	});
+
+	it("does not call a declared rate that rounds a positive charge to zero 'unknown'", async () => {
+		const cwd = fixtureCwd();
+		emit(cwd, { models: { m: { input: 0.000001, output: 0.000001 } } }, { inputTokens: 1, outputTokens: 0 });
+		expect(await report(cwd)).not.toContain("unpriced");
+	});
+
+	it("discloses a cache-write-only call whose cache rate is missing", async () => {
+		const cwd = fixtureCwd();
+		emit(cwd, { models: { m: { input: 3 } } }, { cacheWriteTokens: 400 });
+		const text = await report(cwd);
+		expect(text).toContain("unpriced");
+		expect(text).toContain("api/m");
+	});
+
+	it("classifies a cache-read-only call with a missing cache rate as unpriced, not unmeasured", async () => {
+		const cwd = fixtureCwd();
+		emit(cwd, { models: { m: { input: 3 } } }, { cachedInputTokens: 500 });
+		const text = await report(cwd);
+		expect(text).toContain("unpriced");
+		expect(text).not.toContain("unmeasured");
+	});
+
+	it("still discloses a metered call with no usage at all", async () => {
+		const cwd = fixtureCwd();
+		emit(cwd, { models: { m: { input: 3 } } }, {});
+		expect(await report(cwd)).toContain("unmeasured");
+	});
+
+	it("reads an old record with no provenance field with honest uncertainty", async () => {
+		const cwd = fixtureCwd();
+		const legacy = runRecord({ backend: "api", model: "m", success: false }, 9);
+		appendRun(cwd, {
+			...legacy,
+			task_id: "legacy",
+			session_id: "s-legacy",
+			calls: [
+				{
+					timestamp: "2026-09-21T00:00:00.000Z",
+					backend: "api",
+					backend_type: "native",
+					model: "m",
+					role: "balanced",
+					inputTokens: 500,
+					outputTokens: 10,
+					costUsd: 0,
+				},
+			],
+		});
+		const text = await report(cwd);
+		expect(text).toContain("missing or unrecorded rates");
+		expect(text).not.toContain("no configured rate");
 	});
 });

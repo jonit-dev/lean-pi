@@ -10,6 +10,8 @@
  * never a silent omission.
  */
 import type { ArtifactStore } from "../context/artifacts.js";
+import type { BrowserFacility } from "../runtime/browser.js";
+import type { RuntimePlan } from "../runtime/plan.js";
 import type { EvidenceStatus, VerifierResult } from "./evidence.js";
 import { execShell, type ShellExec, type ShellRunResult } from "./run.js";
 
@@ -78,6 +80,19 @@ export interface VerifierContext {
 	artifacts?: ArtifactStore;
 	/** Test seam: command execution is injectable so specs never shell out. */
 	exec?: ShellExec;
+	/**
+	 * PRD-022's runtime declarations for this verification, read per-run rather
+	 * than from the process-global binder: two overlapping verifications must not
+	 * see each other's plan. `undefined` means "no per-run plan supplied" and the
+	 * legacy global is consulted; an empty plan means "declared nothing".
+	 */
+	runtime?: RuntimePlan;
+	/**
+	 * The host's browser adapter for this verification. `undefined` falls back to
+	 * the process-global facility (or `globalThis.browser`); `null` disables it.
+	 * Threading it per context is what keeps two sessions from clobbering one.
+	 */
+	browserFacility?: BrowserFacility | null;
 }
 
 export interface VerifierRunner {
@@ -108,16 +123,104 @@ export function captureArtifact(artifacts: ArtifactStore | undefined, kind: stri
 	return artifacts.store(payload, pathSafe, kind);
 }
 
-/** A template with `{{scope}}` and no scope is empty, not a command with a hole in it. */
+/** Characters a scope token may carry unquoted: shell-inert, plus the glob metacharacters a surface may legitimately use. */
+const SHELL_SAFE_TOKEN = /^[A-Za-z0-9_@%+=:,./*?[\]-]+$/;
+
+/** The same, minus the glob metacharacters: a literal path containing `*`, `?` or `[]` must not be expanded. */
+const SHELL_LITERAL_TOKEN = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/**
+ * POSIX single-quote a scope token, or return it unchanged when every character
+ * is shell-inert. A glob keeps its metacharacters unquoted so the shell expands
+ * it for the runner, exactly as before; anything that could execute (`;`, `$`,
+ * backticks, quotes, spaces, redirection) is quoted into one inert argument.
+ */
+export function shellQuote(token: string): string {
+	if (token.length === 0) return "";
+	if (SHELL_SAFE_TOKEN.test(token)) return token;
+	return `'${token.replaceAll("'", () => "'\\''")}'`;
+}
+
+/** Quote a literal path: the glob metacharacters are literal here, so they are never left for the shell to expand. */
+function shellLiteral(token: string): string {
+	if (token.length === 0) return "";
+	if (SHELL_LITERAL_TOKEN.test(token)) return token;
+	return `'${token.replaceAll("'", () => "'\\''")}'`;
+}
+
+/**
+ * A verifier scope is *data*, and its two shapes mean different things:
+ *
+ * - a `string` is a single declared surface — a glob pattern (`src/**\/*.ts`)
+ *   is passed through for the shell to expand, as the default runner expects;
+ * - a `string[]` is a list of literal surfaces (the changed test paths the
+ *   compiler derived), so every token is quoted literally and a filename
+ *   containing `*`, `?` or `[]` is never treated as a pattern.
+ *
+ * Quoting happens exactly once, here, at the command boundary. Callers pass raw
+ * scope data and never pre-quote, which is what keeps a compiler-produced
+ * multi-path scope from being quoted a second time.
+ */
+export type ScopeSpec = string | readonly string[];
+
+/** Render a scope to the shell token list the command template receives. */
+export function quoteScope(scope: ScopeSpec): string {
+	return typeof scope === "string" ? shellQuote(scope) : scope.map(shellLiteral).join(" ");
+}
+
+/**
+ * Scope substitution supports unquoted arguments. Quotes and heredocs have
+ * different expansion rules, so reject those templates instead of parsing shell.
+ */
+export class AmbiguousScopeTemplateError extends Error {
+	constructor(template: string) {
+		super(`verifier command template uses quotes or a heredoc around {{scope}}: ${template}. Use an unquoted scope argument in a command without heredocs; each scope token is quoted automatically.`);
+		this.name = "AmbiguousScopeTemplateError";
+	}
+}
+
+/** A tiny quote-state scan (not a shell parser): is `{{scope}}` inside a quote? */
+function assertScopePlaceholderUnquoted(template: string): void {
+	// Shell quotes inside an unquoted heredoc do not protect command substitutions.
+	if (template.includes("<<")) throw new AmbiguousScopeTemplateError(template);
+	const placeholder = "{{scope}}";
+	let quote: '"' | "'" | null = null;
+	for (let index = 0; index < template.length; index += 1) {
+		if (template.startsWith(placeholder, index)) {
+			if (quote !== null) throw new AmbiguousScopeTemplateError(template);
+			index += placeholder.length - 1;
+			continue;
+		}
+		const char = template[index]!;
+		if (quote === "'") {
+			if (char === "'") quote = null;
+			continue;
+		}
+		if (quote === '"') {
+			if (char === "\\") index += 1;
+			else if (char === '"') quote = null;
+			continue;
+		}
+		if (char === '"' || char === "'") quote = char;
+	}
+}
+
+/**
+ * A template with `{{scope}}` and no scope is empty, not a command with a hole
+ * in it. The scope is already a shell-quoted token list (see `quoteScope`), so
+ * substitution is literal — the function replacer also keeps `$&` and friends
+ * from being read as replacement patterns.
+ */
 function applyScope(template: string, scope: string): string {
 	const trimmed = template.trim();
 	if (!trimmed.includes("{{scope}}")) return trimmed;
-	return scope.trim().length === 0 ? "" : trimmed.replaceAll("{{scope}}", scope).trim();
+	assertScopePlaceholderUnquoted(trimmed);
+	return scope.trim().length === 0 ? "" : trimmed.replaceAll("{{scope}}", () => scope).trim();
 }
 
 /** The command a kind runs for a scope, with config overrides on top of the table. */
-export function resolveCommand(kind: string, scope: string, overrides: Partial<Record<string, string>> = {}): string {
-	return applyScope(overrides[kind] ?? DEFAULT_COMMANDS[kind] ?? "", scope);
+export function resolveCommand(kind: string, scope: ScopeSpec, overrides: Partial<Record<string, string>> = {}): string {
+	return applyScope(overrides[kind] ?? DEFAULT_COMMANDS[kind] ?? "", quoteScope(scope));
 }
 
 export type ShellParse = (run: ShellRunResult) => { status?: EvidenceStatus; reason?: string } | undefined;

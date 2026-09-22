@@ -30,7 +30,7 @@ function payload(reason: string, command: string, ended: string, captured: strin
 export function runtimeSmokeVerifier(): VerifierRunner {
 	return {
 		async run(descriptor: VerifierDescriptor, context: VerifierContext): Promise<VerifierResult> {
-			const plan = currentRuntimePlan().smoke;
+			const plan = context.runtime ? context.runtime.smoke : currentRuntimePlan().smoke;
 			const command = descriptor.command.trim().length > 0 ? descriptor.command.trim() : (plan?.command?.trim() ?? "");
 			const notRun = (reason: string) =>
 				verifierOutcome(descriptor, "not_run", { reason, artifactRef: captureArtifact(context.artifacts, descriptor.kind, reason) });

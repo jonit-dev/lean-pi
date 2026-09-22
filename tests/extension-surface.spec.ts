@@ -9,14 +9,15 @@
  * `before_agent_start` and then let Pi's own loop answer the same prompt a
  * second time.
  */
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { activate } from "../src/index.js";
-import { clearLanes } from "../src/commands/session.js";
+import { activate, grantTrust, readRuns } from "../src/index.js";
+import { clearLanes, registerLane } from "../src/commands/session.js";
 import { loadConfig } from "../src/core/config.js";
 import { LEANPI_RECAP_WIDGET_KEY } from "../src/cli/recap-widget.js";
+import { fixtureContract } from "./routing/fixture.js";
 
 interface Registered {
 	description?: string;
@@ -232,6 +233,30 @@ describe("who runs the turn", () => {
 		expect(await handlers.get("input")?.({ text: "rename the helper", source: "interactive" }, ctx)).toBeUndefined();
 		clearLanes();
 	});
+
+	it("records exactly one failed row when the interactive turn throws after compiling", async () => {
+		const { cwd, env } = project(EXTERNAL);
+		const { pi, handlers, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+		// Replace the owned lanes with one that compiles and then fails, the way
+		// the gate's unreadable-path hash does after the worker and reviewer ran.
+		clearLanes();
+		registerLane({
+			name: "test.throwing",
+			async run(_turn, context) {
+				context.contract = fixtureContract({ complexity: "LOW", executor_class: "balanced" });
+				throw new Error("the gate could not hash a touched path");
+			},
+		});
+
+		await expect(handlers.get("input")?.({ text: "do it", source: "interactive" }, ctx)).rejects.toThrow(/could not hash/);
+
+		const rows = readRuns(cwd);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.result.success).toBe(false);
+		clearLanes();
+	});
 });
 
 describe("--no-jev", () => {
@@ -276,5 +301,37 @@ describe("the JEV warning at session start", () => {
 
 		expect(notices.filter((notice) => notice.includes("typesafe.ai"))).toHaveLength(0);
 		clearLanes();
+	});
+});
+
+describe("SURF-4: default skill roots respect project trust", () => {
+	/** A project and a separate user home, so the two skill sources cannot alias. */
+	function untrustedProject(): { cwd: string; env: NodeJS.ProcessEnv } {
+		const cwd = mkdtempSync(join(tmpdir(), "leanpi-skilltrust-"));
+		const home = mkdtempSync(join(tmpdir(), "leanpi-skilltrust-home-"));
+		writeFileSync(join(cwd, "leanpi.config.yaml"), NATIVE);
+		mkdirSync(join(cwd, ".claude/skills/proj-secret"), { recursive: true });
+		writeFileSync(
+			join(cwd, ".claude/skills/proj-secret/SKILL.md"),
+			"---\nname: proj-secret\ndescription: shipped by the checkout\n---\n\nbody\n",
+		);
+		return { cwd, env: { HOME: home, PATH: "", XDG_CONFIG_HOME: join(home, ".config") } };
+	}
+
+	async function indexedSkills(cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+		const { pi, commands, notices, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+		await commands.get("skills")?.handler("all", ctx);
+		clearLanes();
+		return notices.join("\n");
+	}
+
+	it("drops the project's own .claude/skills while untrusted, and keeps it once trusted", async () => {
+		const { cwd, env } = untrustedProject();
+		expect(await indexedSkills(cwd, env)).not.toContain("proj-secret");
+		// The same project, now trusted: the repository's own skills are indexable.
+		grantTrust(cwd, env);
+		expect(await indexedSkills(cwd, env)).toContain("proj-secret");
 	});
 });

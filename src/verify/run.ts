@@ -5,6 +5,11 @@
  * so a `vitest` or `tsc` that spawns its own children is not left behind. A
  * command that cannot start at all is reported as a failure to launch, never a
  * thrown turn.
+ *
+ * The child inherits the full environment on purpose: a verifier runs a trusted,
+ * operator-configured command that may need a toolchain or registry credential
+ * from it. This is not the guarded `execute` tool's allowlisted environment
+ * (PRD-017); only that path filters.
  */
 import { spawn } from "node:child_process";
 

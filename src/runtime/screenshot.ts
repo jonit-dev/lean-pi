@@ -26,7 +26,7 @@ const DEFAULT_RATIO_THRESHOLD = 0.01;
 export function screenshotCompareVerifier(): VerifierRunner {
 	return {
 		async run(descriptor: VerifierDescriptor, context: VerifierContext): Promise<VerifierResult> {
-			const plan = currentRuntimePlan().screenshot;
+			const plan = context.runtime ? context.runtime.screenshot : currentRuntimePlan().screenshot;
 			const notRun = (reason: string) =>
 				verifierOutcome(descriptor, "not_run", { reason, artifactRef: captureArtifact(context.artifacts, descriptor.kind, reason) });
 			if (!plan || plan.url === undefined) return notRun("the contract declares no `verification.runtime.screenshot` url to capture");
@@ -36,7 +36,7 @@ export function screenshotCompareVerifier(): VerifierRunner {
 				const reason = `unavailable: the stored baseline ${baselinePath} is missing, so no comparison was made`;
 				return verifierOutcome(descriptor, "unavailable", { reason, artifactRef: captureArtifact(context.artifacts, descriptor.kind, reason) });
 			}
-			const facility = browserFacility();
+			const facility = context.browserFacility !== undefined ? (context.browserFacility ?? undefined) : browserFacility();
 			if (!facility) {
 				const reason = "unavailable: no browser facility is exposed by this host, so no screenshot could be captured";
 				return verifierOutcome(descriptor, "unavailable", { reason, artifactRef: captureArtifact(context.artifacts, descriptor.kind, reason) });
@@ -48,6 +48,7 @@ export function screenshotCompareVerifier(): VerifierRunner {
 			try {
 				const tab = await facility.open({ viewport, deviceScaleFactor: plan.deviceScaleFactor ?? DEFAULT_DEVICE_SCALE_FACTOR });
 				try {
+					await tab.goto(plan.url);
 					captured = Buffer.from(await tab.screenshot());
 				} finally {
 					await tab.close().catch(() => {

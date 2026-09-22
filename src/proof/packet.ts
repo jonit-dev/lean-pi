@@ -15,6 +15,7 @@
 import type { ArtifactStore } from "../context/artifacts.js";
 import type { ExecutionContract } from "../compiler/contract.js";
 import type { EvidenceRecord, EvidenceStatus, EvidenceView, ModelAssertion } from "../verify/evidence.js";
+import { quoteScope, type ScopeSpec } from "../verify/descriptors.js";
 import { normalizeVerifierKind, verificationBlockOf } from "../verify/select.js";
 
 /**
@@ -35,8 +36,8 @@ export interface ProofCriterion {
 	 * to it, which the coverage rule treats as unprovable rather than as proved.
 	 */
 	required: readonly string[];
-	/** The concrete surface this criterion's verifiers cover. */
-	scope?: string;
+	/** The concrete surface this criterion's verifiers cover: a declared pattern or the compiler's literal path list. */
+	scope?: ScopeSpec;
 }
 
 export interface ProofPacket {
@@ -112,7 +113,7 @@ export function criteriaOf(contract: ExecutionContract): ProofCriterion[] {
 		criteria.push({
 			id: entry.id,
 			required,
-			...(entry.scope && entry.scope.trim().length > 0 ? { scope: entry.scope } : {}),
+			...(entry.scope !== undefined && quoteScope(entry.scope).trim().length > 0 ? { scope: entry.scope } : {}),
 		});
 	}
 	return criteria;
@@ -144,12 +145,13 @@ export function buildPacket(criterion: ProofCriterion, view: ProofEvidenceView, 
 		.map((line) => line.trim())
 		.find((line) => line.length > 0);
 
+	const scopeText = criterion.scope === undefined ? null : quoteScope(criterion.scope);
 	return {
 		criterion: {
 			id: criterion.id,
 			text: criterion.text ?? null,
 			required: [...criterion.required],
-			scope: criterion.scope && criterion.scope.trim().length > 0 ? criterion.scope : null,
+			scope: scopeText !== null && scopeText.trim().length > 0 ? scopeText : null,
 		},
 		changes: (context.changedFiles ?? []).map((path) => ({ path, description: reported ?? "changed" })),
 		evidence,

@@ -78,14 +78,14 @@ function trace(reason: string, url: string, steps: readonly TraceStep[], viewpor
 export function browserTestVerifier(): VerifierRunner {
 	return {
 		async run(descriptor: VerifierDescriptor, context: VerifierContext): Promise<VerifierResult> {
-			const plan = currentRuntimePlan().browser;
+			const plan = context.runtime ? context.runtime.browser : currentRuntimePlan().browser;
 			const notRun = (reason: string) =>
 				verifierOutcome(descriptor, "not_run", { reason, artifactRef: captureArtifact(context.artifacts, descriptor.kind, reason) });
 			if (!plan || plan.url === undefined) return notRun("the contract declares no `verification.runtime.browser` url to drive");
 			if ((plan.selectors ?? []).length === 0 && (plan.text ?? []).length === 0) {
 				return notRun("the contract declares no browser assertion (selectors or text) to check");
 			}
-			const facility = browserFacility();
+			const facility = context.browserFacility !== undefined ? (context.browserFacility ?? undefined) : browserFacility();
 			if (!facility) {
 				const reason = "unavailable: no browser facility is exposed by this host, so no rendered UI evidence could be collected";
 				return verifierOutcome(descriptor, "unavailable", { reason, artifactRef: captureArtifact(context.artifacts, descriptor.kind, reason) });

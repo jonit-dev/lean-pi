@@ -14,6 +14,7 @@ import { EventEmitter } from "node:events";
 import type * as ChildProcessModule from "node:child_process";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawnProcess } from "../src/backends/harness.js";
 import { startProcess } from "../src/runtime/proc.js";
 import { execShell } from "../src/verify/run.js";
 
@@ -85,8 +86,52 @@ describe("execShell timeout teardown", () => {
 	});
 });
 
-describe("startProcess terminate", () => {
+describe("spawnProcess timeout teardown", () => {
+	const request = { command: "noop", args: [], cwd: process.cwd(), stdin: null, env: process.env, timeoutMs: 5 };
+
 	it("signals neither the OS nor the child for a reserved or invalid PID", async () => {
+		for (const pid of RESERVED_OR_INVALID) {
+			const child = new FakeChild(pid);
+			nextChild = child;
+			const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+			// The fake never exits on its own; release the `close` wait so the
+			// timeout branch is the only thing under test.
+			const close = setTimeout(() => child.emit("close", null, "SIGKILL"), 25);
+
+			const result = await spawnProcess(request);
+			clearTimeout(close);
+
+			expect(result.timedOut, `pid ${pid} timed out`).toBe(true);
+			expect(killSpy.mock.calls, `pid ${pid} process.kill`).toEqual([]);
+			expect(child.killCalls, `pid ${pid} child.kill`).toEqual([]);
+			vi.restoreAllMocks();
+		}
+	});
+
+	it("group-kills an owned PID > 1 and falls back to child.kill only when the group signal throws", async () => {
+		const owned = new FakeChild(4242);
+		nextChild = owned;
+		const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+		const firstClose = setTimeout(() => owned.emit("close", null, "SIGKILL"), 25);
+		await spawnProcess(request);
+		clearTimeout(firstClose);
+		expect(killSpy.mock.calls.map(([target, signal]) => [target, signal])).toEqual([[-4242, "SIGKILL"]]);
+		expect(owned.killCalls).toEqual([]);
+		vi.restoreAllMocks();
+
+		const throwing = new FakeChild(4242);
+		nextChild = throwing;
+		vi.spyOn(process, "kill").mockImplementation(() => {
+			throw new Error("ESRCH");
+		});
+		const secondClose = setTimeout(() => throwing.emit("close", null, "SIGKILL"), 25);
+		await spawnProcess(request);
+		clearTimeout(secondClose);
+		expect(throwing.killCalls).toEqual(["SIGKILL"]);
+	});
+});
+
+describe("startProcess terminate", () => {	it("signals neither the OS nor the child for a reserved or invalid PID", async () => {
 		for (const pid of RESERVED_OR_INVALID) {
 			const child = new FakeChild(pid);
 			nextChild = child;

@@ -40,6 +40,7 @@
 		"skills",
 		"themes",
 		"src/capability/models.json",
+		"src/cli/fold-cache.ts",
 		"src/cli/spinner.ts",
 		"src/core/instructions/ponytail.md",
 		"src/core/instructions/ponytail.lock.json",
@@ -69,6 +70,7 @@
 		"@earendil-works/pi-tui": "^0.87.0",
 		"@hk_net/pi-usage-bars": "^0.6.0",
 		"pi-claude-code-ui": "^1.0.83",
+		"pi-subagents": "0.70.1",
 		"typebox": "^1.0.0",
 		"yaml": "^2.8.1"
 	},

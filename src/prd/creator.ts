@@ -13,7 +13,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defaultSkillRoots, loadSkillBody, scanSkills, type SkillRecord, type SkillRoot } from "../capabilities/skills.js";
+import { defaultRuntimeSkillRoots, loadSkillBody, scanSkills, type SkillRecord, type SkillRoot } from "../capabilities/skills.js";
 import type { LeanPiConfig } from "../core/types.js";
 import { isProjectLocal } from "../permissions/trust.js";
 import { noteLaneModuleLoad } from "./dispatch.js";
@@ -50,7 +50,7 @@ export function skillRootsFor(cwd: string, config: LeanPiConfig): SkillRoot[] {
 	if (declared.length > 0) {
 		return declared.map((path): SkillRoot => ({ path, class: isProjectLocal(cwd, path) ? "project" : "user" }));
 	}
-	return defaultSkillRoots(cwd);
+	return defaultRuntimeSkillRoots(cwd, config.permissions.trust.trusted);
 }
 
 function recordOf(input: SkillResolutionInput): SkillRecord | undefined {

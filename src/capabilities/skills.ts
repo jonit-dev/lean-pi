@@ -65,6 +65,18 @@ export function defaultSkillRoots(cwd: string, home: string = homedir()): SkillR
 	return roots;
 }
 
+/**
+ * The default roots a *runtime* consumer indexes — the session registry,
+ * `/doctor` and PRD authoring — as opposed to `defaultSkillRoots`, which is the
+ * full inventory. An untrusted project contributes no project-local root: the
+ * loader already strips declared ones, so falling back to the raw defaults
+ * would put `<cwd>/.claude/skills` back on the disclosure surface. User,
+ * plugin and bundled roots always survive; only `class === "project"` is gated.
+ */
+export function defaultRuntimeSkillRoots(cwd: string, trusted: boolean, home?: string): SkillRoot[] {
+	return defaultSkillRoots(cwd, home).filter((root) => trusted || root.class !== "project");
+}
+
 /** `$HOME/.claude/plugins/cache/<vendor>/<plugin>/<version>/skills`. */
 export function pluginSkillRoots(home: string = homedir()): string[] {
 	const cache = join(home, ".claude/plugins/cache");

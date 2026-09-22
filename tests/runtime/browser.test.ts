@@ -159,13 +159,15 @@ describe("AC-4 — screenshot_compare compares against the stored baseline", () 
 
 	it("passes an unchanged page", async () => {
 		const { root, server } = await pageWorkspace();
-		setBrowserFacility(fakeBrowser({ page: PAGE, capture: UNCHANGED }).facility);
+		const browser = fakeBrowser({ page: PAGE, capture: UNCHANGED });
+		setBrowserFacility(browser.facility);
 		const artifacts = createArtifactStore({ sessionDir: tempDir("leanpi-runtime-artifacts-") });
 		try {
 			const result = await verifyRuntime(shotContract(server.url), root, { artifacts, timeoutMs: 30_000 });
 
 			expect(result.status).toBe("pass");
 			const record = result.records.find((entry) => entry.kind === "screenshot_compare");
+			expect(browser.visited).toEqual([server.url]);
 			expect(record?.status).toBe("pass");
 			// The artifact is a real PNG of the compared capture.
 			expect(decodePng(artifacts.expand(record!.artifactRef!)).width).toBe(200);

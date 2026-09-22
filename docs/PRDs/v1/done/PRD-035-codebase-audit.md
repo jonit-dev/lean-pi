@@ -11,7 +11,7 @@
 AUDIT-ONLY. Entry points are `bin/leanpi.js` → `src/cli/{bootstrap,launch}.ts` and the Pi extension `activate()` / `createLeanPiSession()` in `src/index.ts`. No source, test, config, lockfile or existing document was edited; no commit, push, PR, production service or real credential was used. Findings are for another lane to fix.
 
 ## Solution
-Read-only static review plus the smallest runnable probes, the `complexity-optimizer` scanner, a targeted SRP/KISS/DRY pass, an existing-test seam review that maps critical missing coverage to proposed tests, and a cross-check of configured rates against publicly published list prices (2026-09-21; no account/billing access). Baseline gate outcomes are recorded as evidence for the audited commit, not as gates, and do not apply to concurrent uncommitted primary-checkout edits. The report `docs/audits/2026-09-21-codebase-audit.md` is the sole verification evidence for this PRD.
+Read-only static review plus the smallest runnable probes, the `complexity-optimizer` scanner, a targeted SRP/KISS/DRY pass, an existing-test seam review that maps critical missing coverage to proposed tests, and a cross-check of configured rates against publicly published list prices (2026-09-21; no account/billing access). Baseline gate outcomes are recorded as evidence for the audited commit, not as gates, and do not apply to concurrent uncommitted primary-checkout edits. The report `docs/audits/done/2026-09-21-codebase-audit.md` is the sole verification evidence for this PRD.
 
 ## Acceptance Criteria
 - [x] AC-1: report written with scope, baseline outcomes, prioritised findings and grouped remainder, each with `file:line` evidence — E1: report A1–A5, T1.
@@ -31,22 +31,22 @@ Integration: unchanged — documentation-only audit.
 #### Phase 1: Audit and report
 **Status:** DONE
 **ACs:** AC-1, AC-2, AC-3, AC-4
-**Files:** `docs/audits/2026-09-21-codebase-audit.md` (new); this PRD (new, moved to `done/`).
+**Files:** `docs/audits/done/2026-09-21-codebase-audit.md` (new); this PRD (new, moved to `done/`).
 
 #### Phase 2: Complexity, SRP/KISS/DRY, follow-up review
 **Status:** DONE
 **ACs:** AC-5, AC-6, AC-7
-**Files:** `docs/audits/2026-09-21-codebase-audit.md`; this PRD.
+**Files:** `docs/audits/done/2026-09-21-codebase-audit.md`; this PRD.
 
 #### Phase 3: Cost-accounting audit
 **Status:** DONE
 **ACs:** AC-8
-**Files:** `docs/audits/2026-09-21-codebase-audit.md`; this PRD. Findings COST-1–COST-4 appended; report front summary, top-five and fix order updated. Scope is the committed snapshot `40e5507`; concurrent uncommitted primary-checkout edits were excluded and not read.
+**Files:** `docs/audits/done/2026-09-21-codebase-audit.md`; this PRD. Findings COST-1–COST-4 appended; report front summary, top-five and fix order updated. Scope is the committed snapshot `40e5507`; concurrent uncommitted primary-checkout edits were excluded and not read.
 
 #### Phase 4: Test-gap map, value-chain plan, price cross-check, integration
 **Status:** DONE
 **ACs:** AC-8, AC-9
-**Files:** `docs/audits/2026-09-21-codebase-audit.md`; this PRD. Report front synthesised (assessment, ≤5 priorities, jump links); official-price cross-check and COST-5 added to the cost audit; the critical test-coverage/value-chain plan appended with proposed-only scenarios; PRD scope/ACs updated. No source, test, config or lockfile changed.
+**Files:** `docs/audits/done/2026-09-21-codebase-audit.md`; this PRD. Report front synthesised (assessment, ≤5 priorities, jump links); official-price cross-check and COST-5 added to the cost audit; the critical test-coverage/value-chain plan appended with proposed-only scenarios; PRD scope/ACs updated. No source, test, config or lockfile changed.
 
 ## Cleanup
 Both audit-owned checkouts were removed after arm exit, process/data checks and delivery of both documents to the primary checkout: `/home/joao/projects/lean-pi/.worktrees/audit-codebase` and `/home/joao/projects/lean-pi/.worktrees/audit-value-chain`. Git registrations and directories are confirmed absent. The audit checkout contained only disposable installed dependencies, build output and empty test-state directories; the test-review checkout was clean. Existing task worktrees and concurrent primary source edits were preserved.

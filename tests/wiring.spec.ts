@@ -104,10 +104,11 @@ describe("activation wiring", () => {
 			expect(LSP_TOOL_NAMES.length).toBeGreaterThan(0);
 			// The five baseline names stay the activation's surface claim (§44); the
 			// LSP group is registered and inactive, and the expand affordance the
-			// tool-output pipeline needs is active with the baseline.
+			// tool-output pipeline needs is active with the baseline, joined by the
+			// pi-subagents parent tools when that package is attached (PRD-041).
 			expect([...session.activation.tools].sort()).toEqual(["edit", "execute", "read", "search", "write"]);
 			const active = (session.session as unknown as { getActiveToolNames(): string[] }).getActiveToolNames();
-			expect(active.sort()).toEqual(["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME].sort());
+			expect(active.sort()).toEqual(["edit", "execute", "read", "search", "write", ARTIFACT_TOOL_NAME, "subagent", "bg_wait"].sort());
 			for (const name of LSP_TOOL_NAMES) expect(active).not.toContain(name);
 		} finally {
 			session.session.dispose();
@@ -274,6 +275,42 @@ describe("activation wiring", () => {
 		}
 	});
 
+	it("propagates the lane's own failure when the context observer throws (PRD-040 P4-F)", async () => {
+		// A lane that threw after compiling is published through `onContext` so the
+		// failed turn can still be billed. That observer is a reporter: when it
+		// throws, the caller must still see the lane's original error, not the
+		// reporter's. Only this error path swallows it; the success paths are not.
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend("http://127.0.0.1:9/v1") },
+			models: { balanced: { backend: "local", model: "cheap-model" } },
+		});
+		const config = loadConfig(cwd);
+		clearLanes();
+		registerLane({
+			name: "test.throwing",
+			async run() {
+				throw new Error("the lane failed first");
+			},
+		});
+		try {
+			await expect(
+				runTurn(
+					{ text: "do the thing" },
+					{
+						config,
+						cwd,
+						onContext: () => {
+							throw new Error("the observer blew up");
+						},
+					},
+				),
+			).rejects.toThrow(/the lane failed first/);
+		} finally {
+			clearLanes();
+		}
+	});
+
 	it("runs the compiled class on the interactive loop's model (PRD-004 §14)", async () => {
 		// The user's own path: Pi's `before_agent_start` runs the lanes, and the model
 		// the request carries is the class's — not the session default.
@@ -363,17 +400,16 @@ describe("activation wiring", () => {
 			setRoutePins({ prd_required: false }, "wiring-spec");
 			registerTurnLanes(lanes(true));
 			const passing = await runTurn({ text: "fix the parse bug" }, { config, cwd });
-			expect(passing.contract!.verification.criteria).toEqual([{ id: "AC-1", verifiers: ["affected_tests"], scope: "tests/parse.spec.ts" }]);
+			expect(passing.contract!.verification.criteria).toEqual([{ id: "AC-1", verifiers: ["affected_tests"], scope: ["tests/parse.spec.ts"] }]);
 			expect(passing.proof!.criteria.map((criterion) => criterion.id)).toEqual(["AC-1"]);
 			// The gate reads this turn's own evidence: the verifier the executor ran
 			// reported `targeted_test` pass, and AC-1's packet carries it.
 			expect(passing.proof!.criteria[0]!.coverage.satisfied).toBe(true);
 			expect(passing.proof!.criteria[0]!.coverage.unsatisfied).toEqual([]);
-			// Whatever the verdict, it is one of PRD-010's four and never a fabricated
-			// pass: this fixture cannot run the `runtime_smoke` its MEDIUM contract
-			// requires, so the turn is gated as unproved.
-			expect(["PASS", "MISSING_PROOF", "BLOCKED", "FAILED"]).toContain(passing.proof!.decision);
-			expect(passing.proof!.decision).not.toBe("PASS");
+			// D1 fixed: a MEDIUM contract that declares no runtime plan no longer
+			// requires an unsatisfiable `runtime_smoke`, so the passing targeted test
+			// and the passing review settle the criterion on PASS.
+			expect(passing.proof!.decision).toBe("PASS");
 
 			// The negative control: a failing verifier cannot satisfy the criterion.
 			clearLanes();

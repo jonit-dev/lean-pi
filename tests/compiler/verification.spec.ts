@@ -35,7 +35,8 @@ describe("B1 — the compiled verification block names its targeted surface", ()
 		);
 
 		expect(contract.verification.required).toContain("affected_tests");
-		expect(contract.verification.criteria).toEqual([{ id: "AC-1", verifiers: ["affected_tests"], scope: "tests/parse.spec.ts" }]);
+		// The surface is structured literal data, quoted only at the shell boundary.
+		expect(contract.verification.criteria).toEqual([{ id: "AC-1", verifiers: ["affected_tests"], scope: ["tests/parse.spec.ts"] }]);
 	});
 
 	it("does not require a targeted test no surface can name", async () => {

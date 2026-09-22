@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { parseBackendPool } from "../../src/backends/registry.js";
 import { loadRanking } from "../../src/capability/index.js";
+import { ConfigError } from "../../src/core/config.js";
 import { loadConfig, type LeanPiConfig } from "../../src/index.js";
 import { defaultClearingSource } from "../../src/routing/candidates.js";
 import { resolveRoutingConfig } from "../../src/routing/config.js";
@@ -52,5 +53,43 @@ describe("FR-047 — specialists reach the router through a config file", () => 
 
 		const clearing = defaultClearingSource(withMap)({ required: { min_coding_index: 70 }, config: withMap });
 		expect(clearing.candidates.map((candidate) => candidate.roles)).toEqual([["balanced", "strong"]]);
+	});
+});
+
+/**
+ * COST-4 + reachability: the `routing:` block is a documented configuration
+ * surface, so its values must reach `resolveRoutingConfig` through a real file,
+ * and an out-of-range cached fraction is a named load error rather than a
+ * silently ignored key.
+ */
+describe("the routing: block reaches the resolved surface; invalid fraction fails load", () => {
+	function loadRouting(routing: unknown): LeanPiConfig {
+		const cwd = tempDir("leanpi-routing-load-");
+		writeConfig(cwd, {
+			backends: { local: nativeBackend("http://127.0.0.1:1/v1") },
+			models: { balanced: { backend: "local", model: "balanced-model" } },
+			routing,
+		});
+		return loadConfig(cwd);
+	}
+
+	it("carries the declared routing values through loadConfig", () => {
+		const routing = resolveRoutingConfig(loadRouting({ predicted_cached_input_fraction: 0.25, tie_band_usd: 0.5 }));
+		expect(routing.predicted_cached_input_fraction).toBe(0.25);
+		expect(routing.tie_band_usd).toBe(0.5);
+	});
+
+	it("accepts a legitimate zero cached fraction", () => {
+		expect(resolveRoutingConfig(loadRouting({ predicted_cached_input_fraction: 0 })).predicted_cached_input_fraction).toBe(0);
+	});
+
+	it("rejects a cached fraction outside [0,1] with a named error", () => {
+		expect(() => loadRouting({ predicted_cached_input_fraction: 2 })).toThrowError(ConfigError);
+		expect(() => loadRouting({ predicted_cached_input_fraction: -0.1 })).toThrowError(/routing\.predicted_cached_input_fraction/);
+	});
+
+	it("rejects an override-injected fraction outside [0,1] at resolution", () => {
+		const config = loadRouting({ predicted_cached_input_fraction: 0.25 });
+		expect(() => resolveRoutingConfig({ ...config, routing: { predicted_cached_input_fraction: 2 } })).toThrowError(ConfigError);
 	});
 });

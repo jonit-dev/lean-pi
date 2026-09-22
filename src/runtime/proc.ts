@@ -19,6 +19,14 @@ const PORT_POLL_MS = 50;
 
 const READY_GRACE_MS = 5_000;
 
+/** A timer that never keeps the event loop alive, so a bounded wait cannot pin a process. */
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		const timer = setTimeout(resolve, ms);
+		timer.unref?.();
+	});
+}
+
 export type ReadinessOutcome = "ready" | "exited" | "timeout";
 
 export interface ReadinessSignal {
@@ -40,6 +48,18 @@ export interface StartedProcess {
 	capture(stream?: "stdout" | "stderr"): string;
 	/** The exit, or `null` while the program is still running. */
 	exit(): ProcessExit | null;
+	/**
+	 * Resolves once the child's stdio streams have closed, or after `timeoutMs`
+	 * (unbounded when omitted). `exit` fires before the final buffered
+	 * stdout/stderr is emitted, so a verifier that reads `capture` on `exit` can
+	 * miss the tail of a fast-exiting program; awaiting this first makes the
+	 * capture complete. The bound exists because a descendant that escaped the
+	 * owned process group can hold an inherited pipe open forever: the capture
+	 * must drain or reach a deadline, never hang. `"timeout"` says the drain was
+	 * cut short — the captured bytes are not the whole output, so a caller must
+	 * not certify them as if they were.
+	 */
+	closed(timeoutMs?: number): Promise<"drained" | "timeout">;
 	/** `ready` on the first signal that fires, `exited` when the program died first, `timeout` at the deadline. */
 	awaitReadiness(signal: ReadinessSignal): Promise<ReadinessOutcome>;
 	/** SIGTERM to the group, SIGKILL after `graceMs`; resolves when the child has been reaped. */
@@ -66,6 +86,13 @@ export function startProcess(command: string, options: StartProcessOptions): Sta
 	const exited = new Promise<ProcessExit>((resolve) => {
 		resolveExit = resolve;
 	});
+	// `close` fires after `exit`, once the stdio streams are drained; the capture
+	// is only complete at that point.
+	let resolveClosed: () => void = () => {};
+	const closed = new Promise<void>((resolve) => {
+		resolveClosed = resolve;
+	});
+	child.on("close", () => resolveClosed());
 	const append = (stream: "stdout" | "stderr", chunk: Buffer): void => {
 		const text8 = chunk.toString("utf8");
 		if (text.length < MAX_CAPTURE_CHARS) text += text8;
@@ -95,45 +122,62 @@ export function startProcess(command: string, options: StartProcessOptions): Sta
 	const running = (): boolean => exit === null;
 
 	const reaped = async (graceMs: number): Promise<void> => {
-		if (exit !== null) return;
-		// Snapshot the validated PID once; both signal phases use it across the awaits.
-		// Reserved/invalid PIDs are rejected because `kill(-1)` is a broadcast.
+		// Snapshot the validated PID once; every signal phase uses it. Reserved or
+		// invalid PIDs are rejected before any signal, because `kill(-1)` is a
+		// broadcast to every process the user owns.
 		const pid = child.pid;
 		if (pid !== undefined && (!Number.isSafeInteger(pid) || pid <= 1)) return;
-		const killed = new Promise<void>((resolve) => {
+		const group = pid !== undefined;
+		// The leader's exit does not end ownership: a descendant that inherited the
+		// group (and its stdio) can outlive it, so the group is signalled even when
+		// `exit` is already set. A direct `child.kill` cannot reach that descendant;
+		// the negative-PID group signal is the only thing that can.
+		const signal = (sig: NodeJS.Signals): void => {
+			if (group) {
+				try {
+					process.kill(-pid!, sig);
+					return;
+				} catch {
+					// The group is already gone (or was never created): fall back to
+					// the leader, which is a no-op once it has exited.
+				}
+			}
+			child.kill(sig);
+		};
+		// Give the group `graceMs` to die after TERM; `exited` short-circuits it when
+		// the leader goes first, but descendants are still signalled afterwards.
+		const granted = new Promise<void>((resolve) => {
 			const timer = setTimeout(resolve, graceMs);
 			void exited.then(() => {
 				clearTimeout(timer);
 				resolve();
 			});
 		});
-		if (pid !== undefined) {
-			try {
-				process.kill(-pid, "SIGTERM");
-			} catch {
-				child.kill("SIGTERM");
-			}
-		} else {
-			child.kill("SIGTERM");
-		}
-		await killed;
-		if (exit !== null) return;
-		if (pid !== undefined) {
-			try {
-				process.kill(-pid, "SIGKILL");
-			} catch {
-				child.kill("SIGKILL");
-			}
-		} else {
-			child.kill("SIGKILL");
-		}
-		await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, READY_GRACE_MS))]);
+		signal("SIGTERM");
+		await granted;
+		// No early return when `exit` is set: a leader that ignored nothing and died
+		// on TERM can still leave a TERM-ignoring descendant holding the group.
+		signal("SIGKILL");
+		await Promise.race([exited, delay(READY_GRACE_MS)]);
 	};
 
 	return {
 		pid: child.pid,
 		capture: (stream) => (stream === undefined ? text : stream === "stdout" ? out : err),
 		exit: () => exit,
+		closed: (timeoutMs) => {
+			const drained = closed.then((): "drained" => "drained");
+			if (timeoutMs === undefined) return drained;
+			// On the bound, release our local handles to the inherited pipes so a
+			// detached descendant holding them cannot keep this process alive; the
+			// timer is unref'd so the losing race does not pin the loop either.
+			const timedOut = delay(timeoutMs).then((): "timeout" => {
+				child.stdout?.destroy();
+				child.stderr?.destroy();
+				return "timeout";
+			});
+			return Promise.race([drained, timedOut]);
+		},
 		async awaitReadiness(signal: ReadinessSignal): Promise<ReadinessOutcome> {
 			// `g`/`y` would make `test` stateful across calls; the pattern is re-created without them.
 			const pattern = signal.log === undefined ? undefined : new RegExp(signal.log.source, signal.log.flags.replace(/[gy]/g, ""));

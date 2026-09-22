@@ -18,6 +18,7 @@ import type { ExecutionContract } from "../compiler/contract.js";
 import type { ArtifactStore } from "../context/artifacts.js";
 import type { LeanPiConfig } from "../core/types.js";
 import type { JevClient } from "../jev/client.js";
+import type { BrowserFacility } from "../runtime/browser.js";
 import { evaluateProofGate } from "../proof/gate.js";
 import { criteriaOf } from "../proof/packet.js";
 import { EvidenceStore } from "../verify/evidence.js";
@@ -31,6 +32,8 @@ export interface VerifyCommandDeps {
 	contract: () => ExecutionContract | undefined;
 	artifacts?: ArtifactStore;
 	jev?: Pick<JevClient, "ask" | "fallbackCount">;
+	/** The host's browser adapter, threaded to the runtime verifiers this run may select. */
+	browserFacility?: BrowserFacility | null;
 }
 
 export async function runVerifyCommand(deps: VerifyCommandDeps): Promise<CommandResult> {
@@ -41,6 +44,7 @@ export async function runVerifyCommand(deps: VerifyCommandDeps): Promise<Command
 	const verification = await verifyTask(contract, deps.cwd, {
 		store,
 		config: deps.config,
+		...(deps.browserFacility !== undefined ? { browserFacility: deps.browserFacility } : {}),
 		...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 		...(deps.jev ? { jev: deps.jev } : {}),
 	});
@@ -57,6 +61,7 @@ export async function runVerifyCommand(deps: VerifyCommandDeps): Promise<Command
 			config: deps.config,
 			store,
 			cwd: deps.cwd,
+			...(deps.browserFacility !== undefined ? { browserFacility: deps.browserFacility } : {}),
 			...(deps.artifacts ? { artifacts: deps.artifacts } : {}),
 			...(deps.jev ? { jev: deps.jev } : {}),
 		},

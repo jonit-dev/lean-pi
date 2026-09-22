@@ -44,6 +44,25 @@ export interface TurnContext {
 	executor?: ExecutorOutcome;
 	/** PRD-010's verdict for the contract's criteria, when the gate ran. */
 	proof?: ProofGateResult;
+	/**
+	 * PRD-022's isolated run, when `limits.isolation: worktree` put the executor,
+	 * verifier and gate in their own checkout: the run id and where its captured
+	 * patch was persisted, so the caller can surface an explicit apply step.
+	 */
+	isolation?: {
+		runId: string;
+		patchPath?: string;
+		diffPath?: string;
+		paths: string[];
+		removed: boolean;
+		/** Present when cleanup retained the checkout: where it is and why, for both success and failed turns. */
+		retained?: { path: string; reason: string; paths: string[] };
+	};
+	/**
+	 * PRD-017's `ask` channel for this turn's isolated worktree, when a host
+	 * supplied one. `undefined` means no prompt channel: an `ask` posture refuses.
+	 */
+	worktreeConfirm?: (request: import("../runtime/worktree.js").WorktreePermissionRequest) => boolean | Promise<boolean>;
 	/** PRD-013's boundary verdict for the active goal, when one was active. */
 	goal?: GoalEvaluation;
 	/** PRD-012's lane, opened by the executor lane when the gate dispatched to it. */
@@ -80,6 +99,8 @@ export interface TurnDeps {
 	runtime?: ModelRuntime;
 	/** The session's todo list (PRD-025); the prompt carries it when it has items. */
 	todo?: TodoCarrier;
+	/** The host's `ask` channel for an isolated worktree (PRD-017); absent means an `ask` refuses. */
+	worktreeConfirm?: (request: import("../runtime/worktree.js").WorktreePermissionRequest) => boolean | Promise<boolean>;
 	/** PRD-014's working-state sources; absent means the stub record. */
 	workingStateSources?: WorkingStateSources;
 	/**
@@ -235,9 +256,25 @@ export async function runTurn(turn: TurnInput, deps: TurnDeps): Promise<TurnCont
 		skills: [],
 		prefix: "",
 		...(deps.todo ? { todo: deps.todo } : {}),
+		...(deps.worktreeConfirm ? { worktreeConfirm: deps.worktreeConfirm } : {}),
 		...(deps.workingStateSources ? { workingStateSources: deps.workingStateSources } : {}),
 	};
-	await runLanes(turn, context);
+	try {
+		await runLanes(turn, context);
+	} catch (error) {
+		// A lane threw after it had already compiled or executed. The state on the
+		// context is real work the run spent on, so publish it before rethrowing:
+		// the telemetry wrapper bills the failed turn from this partial context.
+		// The observer is a reporter: a throwing one must not replace the lane's
+		// own failure, so it is protected on this error path only. The success
+		// paths below are unchanged.
+		try {
+			deps.onContext?.(context);
+		} catch {
+			// the lane's error is the failure the caller must see
+		}
+		throw error;
+	}
 	// PRD-018 AC-10: the turn's compiled mode decides which LSP tool group the
 	// session exposes, applied before the request so the worker's tool list is the
 	// mode's. A turn that compiled nothing exposes none: the seven tools stay
@@ -252,6 +289,17 @@ export async function runTurn(turn: TurnInput, deps: TurnDeps): Promise<TurnCont
 		applyLspTools(lspSession, context.contract ? (lspSelectionOf(context.contract)?.mode ?? "LSP_OFF") : "LSP_OFF");
 	}
 	if (!deps.session) {
+		deps.onContext?.(context);
+		return context;
+	}
+
+	// LeanPi owns the execution loop: the executor lane already ran the worker,
+	// verifier, reviewer and gate against the contract. Re-entering Pi's loop here
+	// would be a second model call after the proof — spend the ledger does not
+	// attribute to the worker, and an edit that could mutate the bytes just
+	// verified. Both a completed and a blocked outcome own the turn; only the
+	// native path (no executor outcome) reaches Pi's request below.
+	if (context.executor !== undefined) {
 		deps.onContext?.(context);
 		return context;
 	}
