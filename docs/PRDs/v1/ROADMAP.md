@@ -1968,6 +1968,8 @@ High-consequence actions require higher confidence thresholds.
 
 **FR-151 — SHOULD:** Provide `/doctor` for backend/capability diagnostics.
 
+**FR-152 — SHOULD:** Launch Pi with long prompt-cache retention (`PI_CACHE_RETENTION=long`) unless the operator sets `PI_CACHE_RETENTION`, when measurement shows it does not raise cost per verified completion.
+
 ---
 
 # 52. Cost Telemetry

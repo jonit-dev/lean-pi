@@ -337,10 +337,16 @@ export function sourceCheckout(root: string = packageRoot()): boolean {
  * an installed package the version is fixed by the dependency, so `pi update`
  * cannot move it and the banner only asks for something the operator cannot do
  * from the session that showed it.
+ *
+ * `PI_CACHE_RETENTION` turns on pi-ai's one-hour prompt cache for the native
+ * API-key path, whose 2x write cost buys a prefix that survives the gaps a
+ * coding session produces (long tool calls, long reasoning turns). Pi defaults
+ * to `short`; any value the operator already set, including `short`, wins.
  */
 export function launchEnv(flags: LeanPiFlags, jevWarned: boolean, base: NodeJS.ProcessEnv = process.env, root: string = packageRoot()): NodeJS.ProcessEnv {
 	return {
 		...base,
+		...(base.PI_CACHE_RETENTION === undefined ? { PI_CACHE_RETENTION: "long" } : {}),
 		...(flags.allowMissingJev ? { LEANPI_NO_JEV: "1" } : {}),
 		...(flags.provider === undefined ? {} : { LEANPI_LAYAY_PROVIDER: flags.provider }),
 		...(jevWarned ? { LEANPI_JEV_WARNED: "1" } : {}),

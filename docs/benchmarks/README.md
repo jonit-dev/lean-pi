@@ -2,6 +2,16 @@
 
 ## Results
 
+### Long prompt-cache retention — September 22, 2026
+
+PRD-046's AC-3: the LeanPi arm on the four-task validated suite, same model,
+`PI_CACHE_RETENTION=short` vs `long`. **`long` is not more expensive** —
+**$0.024343** per verified completion against `short`'s **$0.031927**, both
+**4/4** — so `launchEnv()` ships `long` by default. The 23.8% gap is reasoning-
+and turn-variance at n=1 per task, not a proven cache effect.
+
+Full record: **[`docs/benchmarks/2026-09-22-cache-retention.md`](2026-09-22-cache-retention.md)**
+
 ### Four-way harness comparison — September 21, 2026
 
 All four harnesses on **one model through one provider**

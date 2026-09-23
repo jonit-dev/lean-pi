@@ -12,7 +12,8 @@ import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { compactUiAttached } from "../../src/core/tools.js";
 import { bundledExtensions, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension } from "../../src/cli/launch.js";
-import { tempDir } from "../helpers/fixtures.js";
+import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
+import { startStubBackend } from "../helpers/stub-backend.js";
 
 describe("the leanpi launcher", () => {
 	it("runs Pi's own CLI with this package's extension in front of the user's argv", () => {
@@ -186,9 +187,9 @@ describe("the leanpi launcher", () => {
 		// no `.git`, so the package root says which one this is.
 		const flags = { allowMissingJev: true, safety: "high" as const, ui: "compact" as const, rest: [] };
 		const installed = launchEnv(flags, true, { PATH: "/bin" }, tempDir("leanpi-installed-"));
-		expect(installed).toEqual({ PATH: "/bin", PI_SKIP_VERSION_CHECK: "1", LEANPI_NO_JEV: "1", LEANPI_JEV_WARNED: "1", LEANPI_SAFETY: "high" });
+		expect(installed).toEqual({ PATH: "/bin", PI_SKIP_VERSION_CHECK: "1", PI_CACHE_RETENTION: "long", LEANPI_NO_JEV: "1", LEANPI_JEV_WARNED: "1", LEANPI_SAFETY: "high" });
 		const checkout = launchEnv(flags, true, { PATH: "/bin" }, PACKAGE_ROOT);
-		expect(checkout).toEqual({ PATH: "/bin", LEANPI_NO_JEV: "1", LEANPI_JEV_WARNED: "1", LEANPI_SAFETY: "high" });
+		expect(checkout).toEqual({ PATH: "/bin", PI_CACHE_RETENTION: "long", LEANPI_NO_JEV: "1", LEANPI_JEV_WARNED: "1", LEANPI_SAFETY: "high" });
 		expect(sourceCheckout(PACKAGE_ROOT)).toBe(true);
 	});
 
@@ -223,5 +224,52 @@ describe("the leanpi launcher", () => {
 		// by a second implementation answering to no gate of ours.
 		const owned = ["pi-lsp", "pi-output-limits", "pi-mcp-adapter", "pi-context-view", "rpiv-todo"];
 		for (const name of owned) expect(plan.args.join(" ")).not.toContain(name);
+	});
+});
+
+/**
+ * PRD-046: the retention flag has to survive all the way to the provider request.
+ *
+ * `launchEnv()` returning the key proves nothing — Pi is the one that reads it.
+ * So this boots a real Pi session against a stub provider with the environment
+ * the spawned child would have, and asserts on the body Pi actually sent.
+ */
+async function bodyWithRetention(base: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+	const backend = await startStubBackend([{ text: "ok" }]);
+	const { cwd } = fixtureRepo();
+	writeConfig(cwd, {
+		backends: { local: nativeBackend(backend.baseUrl) },
+		models: { balanced: { backend: "local", model: "cheap-fast" } },
+	});
+	const env = launchEnv(parseLeanPiFlags([]), false, base, PACKAGE_ROOT);
+	const previous = process.env.PI_CACHE_RETENTION;
+	if (env.PI_CACHE_RETENTION === undefined) delete process.env.PI_CACHE_RETENTION;
+	else process.env.PI_CACHE_RETENTION = env.PI_CACHE_RETENTION;
+	try {
+		const session = await bootSession({ cwd, agentDir: tempDir("leanpi-cache-agent-") });
+		try {
+			await session.runTurn("say ok");
+		} finally {
+			session.session.dispose();
+		}
+		return backend.requests[0]!.body;
+	} finally {
+		if (previous === undefined) delete process.env.PI_CACHE_RETENTION;
+		else process.env.PI_CACHE_RETENTION = previous;
+		await backend.close();
+	}
+}
+
+describe("long prompt-cache retention on the native path (PRD-046)", () => {
+	it("sends long retention by default, and not when the operator sets short", async () => {
+		const long = await bodyWithRetention({});
+		expect(long.prompt_cache_retention).toBe("24h");
+		expect(typeof long.prompt_cache_key).toBe("string");
+
+		// The operator's own value wins: `short` must reach Pi unchanged, so the
+		// extra write cost of a 1h TTL is never paid against their wishes.
+		const short = await bodyWithRetention({ PI_CACHE_RETENTION: "short" });
+		expect(short.prompt_cache_retention).toBeUndefined();
+		expect(short.prompt_cache_key).toBeUndefined();
 	});
 });
