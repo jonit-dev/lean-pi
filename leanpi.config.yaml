@@ -17,6 +17,8 @@ backends:
       cacheRead: 0.003
   codex:
     type: external_harness
+  claude:
+    type: external_harness
 models:
   quick:
     backend: opencode-go
@@ -25,8 +27,8 @@ models:
     backend: opencode-go
     model: deepseek-v4.1-flash
   strong:
-    backend: opencode-go
-    model: deepseek-v4.1-flash
+    backend: claude
+    model: opus
   specialist:
     backend: codex
     model: gpt-6-astra
@@ -44,3 +46,5 @@ capability:
   roles:
     specialist:
       pin: gpt-6-astra
+    strong:
+      pin: opus

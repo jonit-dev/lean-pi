@@ -33,6 +33,9 @@ importers:
       pi-claude-code-ui:
         specifier: ^1.0.83
         version: 1.0.83(@earendil-works/pi-coding-agent@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-tui@0.87.1)(@sinclair/typebox@0.34.52)
+      pi-patty-bg-tasks:
+        specifier: 1.1.6
+        version: 1.1.6(@earendil-works/pi-agent-core@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-ai@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-coding-agent@0.87.1(ws@8.21.3)(zod@4.6.5))
       pi-subagents:
         specifier: 0.70.1
         version: 0.70.1(@earendil-works/pi-agent-core@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-ai@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-coding-agent@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-tui@0.87.1)
@@ -1131,6 +1134,13 @@ packages:
       '@earendil-works/pi-coding-agent': '*'
       '@earendil-works/pi-tui': '*'
       '@sinclair/typebox': '*'
+
+  pi-patty-bg-tasks@1.1.6:
+    resolution: {integrity: sha512-RuYGIvkO6hqXqT1DUBRKMZuvMP4A90QubnzaCMl+iwZTeIYlHnAFeXbXG3zyVKObNPnnNZ1N7WY4VCKKrh/GUg==}
+    peerDependencies:
+      '@earendil-works/pi-agent-core': '*'
+      '@earendil-works/pi-ai': '*'
+      '@earendil-works/pi-coding-agent': '*'
 
   pi-subagents@0.70.1:
     resolution: {integrity: sha512-cWNjguyrTfx6VmFzD+jCWIzJK3mBL5zjAhw5Z1E+5I3Iq5O2gCSmM0DphGDY6fh9w7eUewH1OR6Vsi/+Uje6oQ==}
@@ -2475,6 +2485,12 @@ snapshots:
       '@shikijs/cli': 4.4.3
       '@sinclair/typebox': 0.34.52
       diff: 9.0.0
+
+  pi-patty-bg-tasks@1.1.6(@earendil-works/pi-agent-core@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-ai@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-coding-agent@0.87.1(ws@8.21.3)(zod@4.6.5)):
+    dependencies:
+      '@earendil-works/pi-agent-core': 0.87.1(ws@8.21.3)(zod@4.6.5)
+      '@earendil-works/pi-ai': 0.87.1(ws@8.21.3)(zod@4.6.5)
+      '@earendil-works/pi-coding-agent': 0.87.1(ws@8.21.3)(zod@4.6.5)
 
   pi-subagents@0.70.1(@earendil-works/pi-agent-core@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-ai@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-coding-agent@0.87.1(ws@8.21.3)(zod@4.6.5))(@earendil-works/pi-tui@0.87.1):
     dependencies:

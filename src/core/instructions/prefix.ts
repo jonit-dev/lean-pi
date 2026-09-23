@@ -7,8 +7,9 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LeanPiConfig } from "../types.js";
+import type { LeanPiConfig, PrefixVariant } from "../types.js";
 import { PACKAGE_ROOT } from "../package-info.js";
+import { BASELINE_TOOL_NAMES } from "../tools.js";
 
 /** Size ceiling for the rendered prefix (§6.1 "short enough to preserve prefix efficiency"). */
 export const PREFIX_MAX_BYTES = 8192;
@@ -73,11 +74,23 @@ export const OUTPUT_STYLE = [
 ].join("\n");
 
 /**
- * The output style alone when Ponytail is disabled; otherwise the marker line,
- * the vendored body, then the style.
+ * The one instruction the `minimal` variant keeps: what the tools are, and how
+ * to finish. Also the tool protocol every variant carries, so it is rendered
+ * from one place.
+ */
+export const TOOL_PROTOCOL = `Tool protocol: ${BASELINE_TOOL_NAMES.join(", ")}. Read before editing; verify with the project's own runner.`;
+
+/**
+ * The STATIC prefix for the configured variant (PRD-037): `full` is the marker
+ * line, the vendored body, the working rules, then the style; `lean` drops the
+ * body; `minimal` is the tool protocol alone. `ponytail: false` still means
+ * `lean`, so the older switch keeps working.
  * Byte-stable for a given vendored file — no task data, no timestamps.
  */
 export function buildStaticPrefix(config: Pick<LeanPiConfig, "instructions">): string {
-	if (config.instructions.ponytail === false) return `${WORKING_RULES}\n\n${OUTPUT_STYLE}`;
+	const { ponytail, variant } = config.instructions;
+	const resolved: PrefixVariant = variant ?? (ponytail === false ? "lean" : "full");
+	if (resolved === "minimal") return TOOL_PROTOCOL;
+	if (resolved === "lean") return `${WORKING_RULES}\n\n${OUTPUT_STYLE}`;
 	return `${PONYTAIL_MARKER}\n\n${readVendoredPonytail()}\n\n${WORKING_RULES}\n\n${OUTPUT_STYLE}`;
 }

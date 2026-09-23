@@ -166,8 +166,13 @@ export interface SelectedSkill {
 	body: string;
 }
 
+/** Which executor prefix `buildStaticPrefix` renders (PRD-037). */
+export type PrefixVariant = "full" | "lean" | "minimal";
+
 export interface InstructionsConfig {
 	ponytail?: boolean;
+	/** `full` is the shipped default; `lean` drops the vendored body; `minimal` keeps only the tool protocol. */
+	variant?: PrefixVariant;
 }
 
 export interface SkillsConfig {
@@ -281,7 +286,7 @@ export interface LeanPiConfig {
 	configPath: string | null;
 	backends: Record<string, BackendConfig>;
 	models: ModelsConfig;
-	instructions: Required<InstructionsConfig>;
+	instructions: InstructionsConfig & { ponytail: boolean };
 	jev: Required<Omit<JevConfig, "apiKey">> & { apiKey: string | null };
 	capabilities: Required<CapabilitiesConfig>;
 	skills: Required<Omit<SkillsConfig, "state">> & { state: NonNullable<SkillsConfig["state"]> };

@@ -165,6 +165,38 @@ describe("PRD-017 Phase 1 — classification returns the whole scope set", () =>
 		expect(scopesOf("mcp:fs/read_file", { path: "a.txt" }, root)).toEqual(["mcp:fs/read_file"]);
 	});
 
+	it("holds the background shell's fire-and-forget form to the same reach as execute", () => {
+		// `pi-patty-bg-tasks` adds `bash_bg` (and overrides `bash`). Classified by the
+		// catch-all it would be `shell:bash_bg`, losing the network/install/out-of-root
+		// scopes its command implicates — a `curl` that never asks for network.
+		expect(scopesOf("bash_bg", { command: "curl http://127.0.0.1:8080/" }, root).sort()).toEqual([
+			"network:curl http://127.0.0.1:8080/",
+			"shell:curl http://127.0.0.1:8080/",
+		]);
+		expect(scopesOf("bash_bg", { command: "npm install evil-pkg" }, root).sort()).toEqual([
+			"package_install:npm install evil-pkg",
+			"shell:npm install evil-pkg",
+		]);
+		expect(scopesOf("bash", { command: "git push --force origin main" }, root).sort()).toEqual([
+			"git_destructive:git push --force origin main",
+			"network:git push --force origin main",
+			"shell:git push --force origin main",
+		]);
+	});
+
+	it("classifies a monitor's command as shell and its ws source as network", () => {
+		expect(scopesOf("monitor", { command: "tail -f deploy.log | grep ERROR" }, root)).toEqual(["shell:tail -f deploy.log | grep ERROR"]);
+		// A socket is egress even though no command line carries it; `shell: allow`
+		// must not buy it.
+		expect(scopesOf("monitor", { ws: { url: "wss://events.example.com/stream" } }, root)).toEqual(["network:wss://events.example.com/stream"]);
+		// Neither source named: the conservative catch-all still holds.
+		expect(scopesOf("monitor", { description: "no source" }, root)).toEqual(["shell:monitor"]);
+	});
+
+	it("classifies agent_bg as subagent reach, not shell", () => {
+		expect(scopesOf("agent_bg", { prompt: "refactor the auth module" }, root)).toEqual(["subagent:agent_bg"]);
+	});
+
 	it("a symlinked path that leaves the session root is an out-of-root read", () => {
 		const cwd = tempDir("leanpi-perm-symlink-");
 		const outside = tempDir("leanpi-perm-outside-");

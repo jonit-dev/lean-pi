@@ -1,0 +1,207 @@
+{
+  "schema": 1,
+  "run_id": "cost-beat-full-20260923",
+  "generated_at": "2026-09-23T21:34:05.451Z",
+  "suite_dir": "/home/joao/projects/lean-pi/bench/suites/validated",
+  "tasks": 4,
+  "telemetry_rows": 8,
+  "configs": [
+    {
+      "config_id": "leanpi-flash",
+      "label": "LeanPi on the same model as the omp baseline",
+      "adapter": "leanpi",
+      "operator": "leanpi",
+      "executor_model": "deepseek-v4.1-flash",
+      "loaded_extensions": [
+        "leanpi"
+      ],
+      "features": [
+        "jev",
+        "context-engine",
+        "skill-selection",
+        "mcp-disclosure",
+        "lsp",
+        "verification"
+      ],
+      "capability": {
+        "model_id": "deepseek-v4-1-flash",
+        "index": 74,
+        "price_blended_per_mtok": 0.525,
+        "speed_tier": "fast",
+        "source": "/home/joao/projects/lean-pi/src/capability/models.json",
+        "unavailable_reason": null
+      },
+      "attempts": 4,
+      "adjudicated_complete": 4,
+      "adjudicated_incomplete": 0,
+      "adjudication_errors": 0,
+      "reported_successes": 0,
+      "verified_solve_rate": 1,
+      "effective_cost_total": 0.078868,
+      "cost_per_verified_success": 0.019717,
+      "generator_tokens_total": 4177227,
+      "generator_tokens_per_verified_success": 1044306.75,
+      "time_to_verified_success_ms": {
+        "median": 81524.5,
+        "p95": 307058,
+        "n": 4
+      },
+      "false_completion_rate": null,
+      "false_completion_tasks": [],
+      "subscription_usage": 0,
+      "adjudicators": [
+        "npx mocha --require test/support/env --check-leaks test/res.send.js",
+        ".venv/bin/python -m pytest tests/test_basic.py -q",
+        "npx vitest run compat/test/browser/suspense.test.jsx",
+        "npx ava test.js"
+      ],
+      "budget_usd": 6,
+      "note": null
+    },
+    {
+      "config_id": "stock-pi-deepseek",
+      "label": "Stock Pi (no LeanPi extension) on the same DeepSeek v4.1 Flash / opencode-go",
+      "adapter": "stock-pi",
+      "operator": "stock-pi",
+      "executor_model": "deepseek-v4.1-flash",
+      "loaded_extensions": [],
+      "features": [],
+      "capability": {
+        "model_id": "deepseek-v4-1-flash",
+        "index": 74,
+        "price_blended_per_mtok": 0.525,
+        "speed_tier": "fast",
+        "source": "/home/joao/projects/lean-pi/src/capability/models.json",
+        "unavailable_reason": null
+      },
+      "attempts": 4,
+      "adjudicated_complete": 4,
+      "adjudicated_incomplete": 0,
+      "adjudication_errors": 0,
+      "reported_successes": 4,
+      "verified_solve_rate": 1,
+      "effective_cost_total": 0.078876,
+      "cost_per_verified_success": 0.019719,
+      "generator_tokens_total": 5169615,
+      "generator_tokens_per_verified_success": 1292403.75,
+      "time_to_verified_success_ms": {
+        "median": 101617,
+        "p95": 192188,
+        "n": 4
+      },
+      "false_completion_rate": 0,
+      "false_completion_tasks": [],
+      "subscription_usage": 0,
+      "adjudicators": [
+        "npx mocha --require test/support/env --check-leaks test/res.send.js",
+        ".venv/bin/python -m pytest tests/test_basic.py -q",
+        "npx vitest run compat/test/browser/suspense.test.jsx",
+        "npx ava test.js"
+      ],
+      "budget_usd": 2,
+      "note": null
+    }
+  ],
+  "pairing": [
+    {
+      "task_id": "express-send-transfer-encoding-etag",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "complete",
+          "reported_success": false,
+          "effective_cost": 0.007063,
+          "wall_ms": 30652
+        },
+        {
+          "config_id": "stock-pi-deepseek",
+          "adjudication": "complete",
+          "reported_success": true,
+          "effective_cost": 0.010392,
+          "wall_ms": 99463
+        }
+      ]
+    },
+    {
+      "task_id": "flask-ipv6-server-name-parsing",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "complete",
+          "reported_success": false,
+          "effective_cost": 0.017068,
+          "wall_ms": 105053
+        },
+        {
+          "config_id": "stock-pi-deepseek",
+          "adjudication": "complete",
+          "reported_success": true,
+          "effective_cost": 0.011689,
+          "wall_ms": 103771
+        }
+      ]
+    },
+    {
+      "task_id": "preact-suspense-hook-state-loss",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "complete",
+          "reported_success": false,
+          "effective_cost": 0.045049,
+          "wall_ms": 307058
+        },
+        {
+          "config_id": "stock-pi-deepseek",
+          "adjudication": "complete",
+          "reported_success": true,
+          "effective_cost": 0.043182,
+          "wall_ms": 192188
+        }
+      ]
+    },
+    {
+      "task_id": "slugify-counter-duplicate-slug",
+      "arms": [
+        {
+          "config_id": "leanpi-flash",
+          "adjudication": "complete",
+          "reported_success": false,
+          "effective_cost": 0.009688,
+          "wall_ms": 57996
+        },
+        {
+          "config_id": "stock-pi-deepseek",
+          "adjudication": "complete",
+          "reported_success": true,
+          "effective_cost": 0.013613,
+          "wall_ms": 84930
+        }
+      ]
+    }
+  ],
+  "section4": {
+    "relative_solve_rate": "90–95% or more of a contemporary Claude Code / Codex baseline",
+    "cost_ratio_of_baseline": 0.25,
+    "stretch_cost_ratio_of_baseline": 0.1,
+    "note": "ROADMAP §4 — product targets, not claims about current performance"
+  },
+  "section4_measured": [
+    {
+      "config_id": "leanpi-flash",
+      "cost_per_verified_success": 0.019717,
+      "verified_solve_rate": 1,
+      "relative_to_baseline": null
+    },
+    {
+      "config_id": "stock-pi-deepseek",
+      "cost_per_verified_success": 0.019719,
+      "verified_solve_rate": 1,
+      "relative_to_baseline": null
+    }
+  ],
+  "baseline_config_id": null,
+  "notes": [
+    "no baseline row ran in this invocation: the §4 comparison needs one of claude-code, codex or stock-pi"
+  ]
+}

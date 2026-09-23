@@ -1585,8 +1585,10 @@ export {
 	PONYTAIL_MARKER,
 	PONYTAIL_VERSION,
 	PREFIX_MAX_BYTES,
+	TOOL_PROTOCOL,
 	readVendoredPonytail,
 } from "./core/instructions/prefix.js";
+export type { PrefixVariant } from "./core/types.js";
 export { ConfigError, CONFIG_FILENAME, configPathFor, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
 export { resolveRole, ROLE_FALLBACK_CHAINS, UnresolvedRoleError } from "./core/roles.js";
 export { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, baselineToolDefinitions, compactUiAttached, registerBaselineTools } from "./core/tools.js";

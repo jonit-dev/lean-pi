@@ -10,23 +10,25 @@ import {
 	PONYTAIL_MARKER,
 	PONYTAIL_VERSION,
 	PREFIX_MAX_BYTES,
+	TOOL_PROTOCOL,
 	buildStaticPrefix,
 	installExecutorPrefix,
 	readVendoredPonytail,
 	setActivePrefix,
 } from "../src/index.js";
+import { OUTPUT_STYLE, WORKING_RULES } from "../src/core/instructions/prefix.js";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend } from "./helpers/stub-backend.js";
 
 const TASK = "rename the deploy button label";
 
-async function captureOneTurn(options: { ponytail: boolean }): Promise<{ body: Record<string, unknown>; close: () => Promise<void> }> {
+async function captureOneTurn(options: { instructions: { ponytail?: boolean; variant?: string } }): Promise<{ body: Record<string, unknown>; close: () => Promise<void> }> {
 	const stub = await startStubBackend([{ text: "done" }]);
 	const { cwd, agentDir } = fixtureRepo();
 	writeConfig(cwd, {
 		backends: { local: nativeBackend(stub.baseUrl) },
 		models: { balanced: { backend: "local", model: "cheap-fast" } },
-		instructions: { ponytail: options.ponytail },
+		instructions: options.instructions,
 	});
 	const session = await bootSession({ cwd, agentDir });
 	await session.runTurn(TASK);
@@ -113,8 +115,8 @@ describe("PRD-001 Phase 3 — static Ponytail prefix", () => {
 	});
 
 	it("AC-6: instructions.ponytail:false removes the prefix and leaves the rest of the request unchanged", async () => {
-		const enabled = await captureOneTurn({ ponytail: true });
-		const disabled = await captureOneTurn({ ponytail: false });
+		const enabled = await captureOneTurn({ instructions: { ponytail: true } });
+		const disabled = await captureOneTurn({ instructions: { ponytail: false } });
 
 		const enabledText = systemText(enabled.body);
 		const disabledText = systemText(disabled.body);
@@ -195,5 +197,50 @@ describe("PRD-001 Phase 3 — static Ponytail prefix", () => {
 
 		// Product code reads the vendored copy, so a session still boots without the plugin.
 		expect(buildStaticPrefix({ instructions: { ponytail: true } })).toContain(PONYTAIL_MARKER);
+	});
+});
+
+describe("PRD-037 Phase 1 — executor prefix variants", () => {
+	const full = () => buildStaticPrefix({ instructions: { ponytail: true, variant: "full" } });
+	const lean = () => buildStaticPrefix({ instructions: { ponytail: true, variant: "lean" } });
+	const minimal = () => buildStaticPrefix({ instructions: { ponytail: true, variant: "minimal" } });
+
+	it("defaults to `full`, byte-identical to the pre-variant renderer", () => {
+		const expected = `${PONYTAIL_MARKER}\n\n${readVendoredPonytail()}\n\n${WORKING_RULES}\n\n${OUTPUT_STYLE}`;
+		expect(buildStaticPrefix({ instructions: { ponytail: true } })).toBe(expected);
+		expect(full()).toBe(expected);
+	});
+
+	it("`ponytail: false` keeps working and equals `variant: lean`", () => {
+		const legacy = buildStaticPrefix({ instructions: { ponytail: false } });
+		expect(legacy).toBe(lean());
+		expect(lean()).toBe(`${WORKING_RULES}\n\n${OUTPUT_STYLE}`);
+		expect(lean()).not.toContain(PONYTAIL_MARKER);
+	});
+
+	it("`minimal` keeps the tool protocol and drops the persona and the output style", () => {
+		expect(minimal()).toBe(TOOL_PROTOCOL);
+		expect(minimal()).toContain("verify with the project's own runner");
+		expect(minimal()).not.toContain(PONYTAIL_MARKER);
+		expect(minimal()).not.toContain("LeanPi output style");
+	});
+
+	it("the knob is read, and every variant stays inside the 8192-byte ceiling", () => {
+		// Negative control: a knob that was ignored would collapse these to one string.
+		expect(new Set([full(), lean(), minimal()]).size).toBe(3);
+		for (const prefix of [full(), lean(), minimal()]) {
+			expect(Buffer.byteLength(prefix, "utf8")).toBeLessThanOrEqual(PREFIX_MAX_BYTES);
+		}
+	});
+
+	it("`variant: minimal` reaches the provider through a real session, not just the renderer", async () => {
+		const turn = await captureOneTurn({ instructions: { variant: "minimal" } });
+		const text = systemText(turn.body);
+		expect(text).toContain(TOOL_PROTOCOL);
+		expect(text).not.toContain(PONYTAIL_MARKER);
+		expect(text).not.toContain("LeanPi output style");
+		// The surface is untouched: the variant selects the prefix, nothing else.
+		expect(toolNamesOf(turn.body)).toContain("execute");
+		await turn.close();
 	});
 });

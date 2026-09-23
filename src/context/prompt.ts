@@ -7,8 +7,7 @@
  * This module never re-authors the Ponytail text; it places PRD-001's bytes.
  */
 import { createHash } from "node:crypto";
-import { BASELINE_TOOL_NAMES } from "../core/tools.js";
-import { buildStaticPrefix } from "../core/instructions/prefix.js";
+import { TOOL_PROTOCOL, buildStaticPrefix } from "../core/instructions/prefix.js";
 import type { LeanPiConfig, SelectedSkill } from "../core/types.js";
 import type { ExecutionContract } from "../compiler/contract.js";
 import type { ArtifactStore } from "./artifacts.js";
@@ -44,8 +43,6 @@ export interface AssembledPrompt {
 	/** Content hashes emitted, for the dedup back-references. */
 	hashes: Set<string>;
 }
-
-const TOOL_PROTOCOL = `Tool protocol: ${BASELINE_TOOL_NAMES.join(", ")}. Read before editing; verify with the project's own runner.`;
 
 function hashBlock(text: string): string {
 	return createHash("sha256").update(text).digest("hex").slice(0, 12);
@@ -86,7 +83,8 @@ function renderContract(contract: ExecutionContract): string {
  */
 export function assemble(parts: AssembleParts): AssembledPrompt {
 	const seen = new Map<string, string>();
-	const staticLayer = [buildStaticPrefix(parts.config as LeanPiConfig), TOOL_PROTOCOL].filter((block) => block.length > 0).join("\n\n");
+	const prefix = buildStaticPrefix(parts.config as LeanPiConfig);
+	const staticLayer = prefix.includes(TOOL_PROTOCOL) ? prefix : [prefix, TOOL_PROTOCOL].filter((block) => block.length > 0).join("\n\n");
 
 	const semiStableBlocks: string[] = [];
 	if (parts.projectInstructions?.length) {

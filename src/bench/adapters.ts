@@ -79,6 +79,10 @@ function timeoutOf(config: LeanPiConfig, key: string, fallback: number): number 
  */
 export function configForRow(config: LeanPiConfig, row: BenchConfigRow): LeanPiConfig {
 	const existing = config.models.balanced;
+	// PRD-037: a prefix variant is selected per run from the environment, so the
+	// ablation exercises each variant without editing the config file. Absent the
+	// variable the loaded config is untouched and the default stays `full`.
+	const variant = process.env.LEANPI_PREFIX_VARIANT as LeanPiConfig["instructions"]["variant"] | undefined;
 	return {
 		...config,
 		models: {
@@ -86,6 +90,7 @@ export function configForRow(config: LeanPiConfig, row: BenchConfigRow): LeanPiC
 			...(existing ? { balanced: { backend: existing.backend, model: row.executor_model } } : {}),
 		},
 		jev: { ...config.jev, mode: row.jev, apiKey: row.jev === "disabled" ? null : config.jev.apiKey },
+		instructions: variant === undefined ? config.instructions : { ...config.instructions, variant },
 	};
 }
 

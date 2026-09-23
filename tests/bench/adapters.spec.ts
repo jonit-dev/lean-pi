@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { PACKAGE_ROOT } from "../../src/index.js";
-import { leanPiAttempt } from "../../src/bench/adapters.js";
+import { configForRow, leanPiAttempt } from "../../src/bench/adapters.js";
 import { runBench } from "../../src/bench/runner.js";
 import { cloneWorkspace } from "../../src/bench/runner.js";
 import { clearLanes, registerLane } from "../../src/commands/session.js";
@@ -340,5 +340,37 @@ describe("PRD-021 LeanPi adapter", () => {
 		// with what the lanes spent and the note says why.
 		expect(prompts).toBe(0);
 		expect(result.note).toContain("attempt ceiling");
+	});
+});
+
+describe("PRD-037 Phase 1 — the bench row honors LEANPI_PREFIX_VARIANT", () => {
+	const row = {
+		id: "leanpi-flash",
+		label: "LeanPi",
+		adapter: "leanpi" as const,
+		vendor: null,
+		jev: "disabled" as const,
+		executor_model: "qwen3-coder-480b-a35b",
+		reviewer_model: null,
+		features: [],
+		owner_gated: false,
+		subscription: false,
+		budget_usd: 0,
+	};
+
+	it("selects the variant from the environment, and leaves the config untouched when unset", () => {
+		const config = fixtureConfig(tempDir("leanpi-bench-variant-"));
+		const previous = process.env.LEANPI_PREFIX_VARIANT;
+		try {
+			delete process.env.LEANPI_PREFIX_VARIANT;
+			expect(configForRow(config, row).instructions.variant).toBeUndefined();
+			process.env.LEANPI_PREFIX_VARIANT = "minimal";
+			expect(configForRow(config, row).instructions.variant).toBe("minimal");
+			// The loaded config object itself is never mutated.
+			expect(config.instructions.variant).toBeUndefined();
+		} finally {
+			if (previous === undefined) delete process.env.LEANPI_PREFIX_VARIANT;
+			else process.env.LEANPI_PREFIX_VARIANT = previous;
+		}
 	});
 });

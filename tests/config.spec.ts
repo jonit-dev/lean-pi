@@ -323,3 +323,31 @@ describe("config writers preserve operator comments and unrelated blocks", () =>
 		expect(loadConfig(cwd, {}, isolatedEnv()).skills.state).toEqual({ rust: { enabled: false } });
 	});
 });
+
+describe("PRD-037 Phase 1 — instructions.variant", () => {
+	/** An env whose user scope is empty, so only the project file answers. */
+	function isolatedEnv(): { XDG_CONFIG_HOME: string; HOME: string } {
+		return { XDG_CONFIG_HOME: tempDir("leanpi-config-xdg-"), HOME: tempDir("leanpi-config-home-") };
+	}
+	function configWith(instructions: Record<string, unknown>): string {
+		const cwd = tempDir("leanpi-config-variant-");
+		writeConfig(cwd, {
+			backends: { local: { type: "native", baseUrl: "http://127.0.0.1:1/v1" } },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+			instructions,
+		});
+		return cwd;
+	}
+
+	it("loads an explicit variant, and defaults to none — which renders `full`", () => {
+		expect(loadConfig(configWith({ variant: "minimal" }), {}, isolatedEnv()).instructions.variant).toBe("minimal");
+		const bare = loadConfig(configWith({}), {}, isolatedEnv()).instructions;
+		expect(bare.variant).toBeUndefined();
+		expect(bare.ponytail).toBe(true);
+	});
+
+	it("rejects an unknown variant, and `variant` set together with `ponytail`", () => {
+		expect(() => loadConfig(configWith({ variant: "tiny" }), {}, isolatedEnv())).toThrow("instructions.variant");
+		expect(() => loadConfig(configWith({ variant: "minimal", ponytail: false }), {}, isolatedEnv())).toThrow("instructions");
+	});
+});

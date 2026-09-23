@@ -49,6 +49,10 @@ export interface LaunchPlan {
  * Pi's loader compiles; the path is the package's own entry, not a build of
  * ours. A package that is not installed is skipped rather than fatal — the
  * launcher's job is to start a session.
+ *
+ * `pi-patty-bg-tasks` overrides Pi's built-in `bash`, a name LeanPi never
+ * registers (its shell is `execute`), so backgrounding lands on the interactive
+ * shell without touching the gated one. See `backgroundTasksExtension`.
  */
 
 /**
@@ -118,6 +122,24 @@ export function foldCacheExtension(root: string = packageRoot()): string {
 }
 
 /**
+ * `pi-patty-bg-tasks`: Claude Code's background-task UX, on Pi's built-in bash.
+ *
+ * Pi's own `bash` blocks the turn until the command exits, so a dev server or an
+ * e2e suite owns the session. This package overrides that tool with an
+ * auto-background after 120s, an explicit `run_in_background`, Ctrl+B, the
+ * `jobs` manager and completion notices. It is deliberately *not* wired into
+ * LeanPi's `execute`: the compiled lane and PRD-009's proof gate read an exit
+ * status, and a shell that returned a job handle after 120s would break the
+ * gate. `bash` is the interactive shell; `execute` is the gated one.
+ *
+ * The path is the package's own manifest entry (`pi.extensions: ./index.ts`) —
+ * TypeScript, so Pi's loader compiles it. Absent is skip-not-fatal.
+ */
+export function backgroundTasksExtension(root: string = packageRoot()): string | undefined {
+	return dependencyDir(join("pi-patty-bg-tasks", "index.ts"), root);
+}
+
+/**
  * Where `entry` lives under `node_modules`, searched upward the way Node's own
  * resolver does: this package's `node_modules`, then each ancestor's.
  *
@@ -160,11 +182,15 @@ export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "co
 	// folding correctly under `--ui plain`.
 	const fold = thinkingFold ? thinkingFoldExtension(root) : undefined;
 	const vendored = fold !== undefined && existsSync(fold) ? [fold] : [];
+	// Only without the compact UI: it registers `bash` as well, and Pi refuses a
+	// tool name two extensions register, failing the whole session at load.
+	const background = ui === "compact" ? undefined : backgroundTasksExtension(root);
 	return [
 		...vendored,
 		...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])
 			.map((entry) => dependencyDir(entry, root))
 			.filter((path): path is string => path !== undefined),
+		...(background === undefined ? [] : [background]),
 	];
 }
 
@@ -426,6 +452,12 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// resolution produces and keeps one by canonical path, so a global install
 	// and this selection cannot double-register.
 	const subagents = subagentsEntry === undefined ? [] : ["--extension", subagentsEntry];
+	// `pi-patty-bg-tasks` also ships `agent_bg`, which spawns a plain `pi -p` from
+	// PATH: a second delegation path outside LeanPi's routing, its permission
+	// guard and pi-subagents' concurrency cap, duplicating what PRD-041 already
+	// owns. Excluded by name rather than attached — the background *shell* is the
+	// feature; a shadow subagent is not.
+	const backgroundTools = bundled.some((path) => path.includes("pi-patty-bg-tasks")) ? ["--exclude-tools", "agent_bg"] : [];
 	return {
 		cli: resolvePiCli(root),
 		extension,
@@ -443,6 +475,7 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 			"--extension",
 			spinnerExtension(root),
 			...(thinkingFold && ui === "compact" ? ["--extension", foldCacheExtension(root)] : []),
+			...backgroundTools,
 			...skills,
 			...theme,
 			...model,

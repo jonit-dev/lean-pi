@@ -26,6 +26,7 @@ import {
 	type LeanPiConfig,
 	type ModelRole,
 	type ModelsConfig,
+	type PrefixVariant,
 	type RoutingBlockConfig,
 	type VerifyConfig,
 } from "./types.js";
@@ -44,6 +45,8 @@ export class ConfigError extends Error {
 
 const JEV_MODES: readonly JevMode[] = ["enabled", "disabled", "metadata-only", "redacted"];
 
+
+const PREFIX_VARIANTS: readonly PrefixVariant[] = ["full", "lean", "minimal"];
 
 function asRecord(value: unknown, path: string): Record<string, unknown> {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -538,6 +541,14 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 	if (instructionsRaw.ponytail !== undefined && typeof instructionsRaw.ponytail !== "boolean") {
 		throw new ConfigError(`ponytail must be a boolean`, "instructions.ponytail");
 	}
+	if (instructionsRaw.variant !== undefined && !PREFIX_VARIANTS.includes(instructionsRaw.variant as PrefixVariant)) {
+		throw new ConfigError(`variant must be one of ${PREFIX_VARIANTS.join(" | ")}`, "instructions.variant");
+	}
+	// Precedence is not silently ordered: naming both is a mistake about which
+	// switch controls the prefix, so reject it rather than pick one.
+	if (instructionsRaw.variant !== undefined && instructionsRaw.ponytail !== undefined) {
+		throw new ConfigError("set either variant or ponytail, not both", "instructions");
+	}
 	if (record.remember_manual_model !== undefined && typeof record.remember_manual_model !== "boolean") {
 		throw new ConfigError("remember_manual_model must be a boolean", "remember_manual_model");
 	}
@@ -578,7 +589,10 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		configPath,
 		backends: effectiveBackends,
 		models: parseModels(record.models, backends),
-		instructions: { ponytail: (instructionsRaw.ponytail as boolean | undefined) ?? true },
+		instructions: {
+			ponytail: (instructionsRaw.ponytail as boolean | undefined) ?? true,
+			...(instructionsRaw.variant === undefined ? {} : { variant: instructionsRaw.variant as PrefixVariant }),
+		},
 		jev: parseJev(record.jev),
 		capabilities: { ...capabilities, skillRoots },
 		skills: parseSkills(record.skills),

@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { compactUiAttached } from "../../src/core/tools.js";
-import { bundledExtensions, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension } from "../../src/cli/launch.js";
+import { bundledExtensions, backgroundTasksExtension, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension } from "../../src/cli/launch.js";
 import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend } from "../helpers/stub-backend.js";
 
@@ -176,6 +176,32 @@ describe("the leanpi launcher", () => {
 		// jiti's virtual-module map, which is keyed on a `.ts` extension.
 		expect(spinnerExtension(PACKAGE_ROOT).endsWith(".ts")).toBe(true);
 		expect(existsSync(spinnerExtension(PACKAGE_ROOT))).toBe(true);
+	});
+
+	it("attaches pi-patty-bg-tasks for the background shell, and leaves execute gated", () => {
+		// The package overrides Pi's built-in `bash` with auto-background after 120s,
+		// `run_in_background`, Ctrl+B, `jobs` and completion notices. It is not wired
+		// into LeanPi's `execute`: the compiled lane and PRD-009's proof gate read an
+		// exit status, and a shell that returned a job handle after 120s would break
+		// the gate. So the package's path is attached and its `bash` is the
+		// interactive shell, while `execute` stays LeanPi's own bounded definition.
+		const path = backgroundTasksExtension(PACKAGE_ROOT);
+		expect(path).toBeDefined();
+		expect(path!.endsWith(join("pi-patty-bg-tasks", "index.ts"))).toBe(true);
+		expect(existsSync(path!)).toBe(true);
+		const plan = launchPlan([], PACKAGE_ROOT, undefined, "plain");
+		expect(plan.bundled).toContain(path);
+		expect(plan.args).toContain(path);
+		// Not with the compact UI: `pi-claude-code-ui` registers `bash` too, and Pi
+		// refuses a tool name two extensions register — the session dies at load.
+		const compact = launchPlan([]);
+		expect(compact.bundled).not.toContain(path);
+		expect(compact.args).not.toContain("agent_bg");
+		// `agent_bg` rides with the package but is excluded: it spawns a plain
+		// `pi -p` from PATH, a shadow delegation path outside LeanPi's routing, its
+		// permission guard and pi-subagents' cap (PRD-041).
+		expect(plan.args).toContain("agent_bg");
+		expect(plan.args[plan.args.indexOf("agent_bg") - 1]).toBe("--exclude-tools");
 	});
 
 	it("skips Pi's update banner in an installed package, but leaves it on in a source checkout", () => {

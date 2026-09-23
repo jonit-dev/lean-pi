@@ -1,6 +1,6 @@
 # PRD-037 — Reasoning-token cost lever
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS (Phase 1 done 2026-09-23)
 **Complexity:** 2 (LOW); risk override: none.
 **Owner:** LeanPi maintainers
 **Depends on:** None
@@ -101,7 +101,7 @@ touching the reviewer/JEV routing, and any per-turn dynamic prompt content.
 
 ## Acceptance Criteria
 
-- [ ] AC-1 [local; actor: agent]: A prefix variant is selectable for a run without editing code — `LEANPI_PREFIX_VARIANT` on the four-way worker sets `instructions.variant`, and the default stays `full`. — Evidence: pending.
+- [x] AC-1 [local; actor: agent]: A prefix variant is selectable for a run without editing code — `LEANPI_PREFIX_VARIANT` applies to each LeanPi bench row as `instructions.variant`, and the default stays `full`. — Evidence: `configForRow` (`src/bench/adapters.ts`) applies it; `instructions.variant` parses and renders (`src/core/config.ts`, `src/core/instructions/prefix.ts`); `tests/prefix.spec.ts`, `tests/config.spec.ts` and `tests/bench/adapters.spec.ts` pass; run-quad preflight reports `dist_newer_than_src: true`.
 - [ ] AC-2 [local; actor: agent]: One run records reasoning tokens per turn, cost per verified completion, cache ratio and pass rate for `full` and at least one trimmed variant, each against the same stock-Pi control, n≥28 per arm. — Evidence: pending.
 - [ ] AC-3 [local; actor: agent]: The chosen variant reduces mean reasoning tokens per turn by ≥15% vs `full`, at pass rate ≥ the `full` baseline and cache ratio ≥0.93. — Evidence: pending.
 - [ ] AC-4 [local; actor: agent]: The chosen variant's cost per verified completion improves on `bench/cost/baseline.json`, and `pnpm typecheck`, `pnpm lint`, `pnpm test` stay green with `full` as the shipped default until AC-3 is met. — Evidence: pending.
@@ -116,18 +116,20 @@ touching the reviewer/JEV routing, and any per-turn dynamic prompt content.
 ## Execution Phases
 
 #### Phase 1: The prefix variant is selectable, and `full` is still the default
-**Status:** NOT STARTED
+**Status:** DONE (verified 2026-09-23)
 **ACs:** AC-1
 **Files:**
-- `src/core/types.ts` — `InstructionsConfig.variant?: "full" | "lean" | "minimal"`.
-- `src/core/config.ts` — parse/validate `instructions.variant`; reject `variant` + `ponytail: false` together; default `full`.
-- `src/core/instructions/prefix.ts` — `buildStaticPrefix` renders by variant; `ponytail: false` maps to `lean`.
-- `bench/out/four-way-20260921/run-quad.mjs` — the Pi worker sets `config.instructions.variant` from `LEANPI_PREFIX_VARIANT`.
-- `tests/` — a spec asserting each variant's rendered bytes and that the default is byte-identical to today's output.
+- `src/core/types.ts` — `PrefixVariant` union and `InstructionsConfig.variant?`.
+- `src/core/config.ts` — parse/validate `instructions.variant`; reject `variant` + `ponytail` together; default renders `full`.
+- `src/core/instructions/prefix.ts` — `buildStaticPrefix` renders by variant; `ponytail: false` maps to `lean`; `TOOL_PROTOCOL` moved here so both the `minimal` prefix and the assembled prompt read one string.
+- `src/context/prompt.ts` — imports `TOOL_PROTOCOL` and no longer re-appends it when the prefix already carries it.
+- `src/index.ts` — exports `TOOL_PROTOCOL` and the `PrefixVariant` type.
+- `src/bench/adapters.ts` — `configForRow` applies `LEANPI_PREFIX_VARIANT` to each LeanPi row's config, so every bench entry point (the validated-suite lane and the four-way worker) selects a variant without editing code.
+- `tests/prefix.spec.ts`, `tests/config.spec.ts` — variant bytes, the `ponytail: false` equivalence, and config validation.
 
 **Implementation:** Add the union type and parse it with the same `ConfigError` shape as `instructions.ponytail` (`src/core/config.ts:401`). `buildStaticPrefix` switches on the variant; `full` must reproduce the current string byte-for-byte so the cache and every prefix-hash test are unaffected. The worker override is one assignment next to the existing config pruning.
 **Verification:** E1 — `pnpm typecheck && pnpm lint && pnpm test`; the new spec asserts `full` output equals the pre-change string (a golden literal), `lean` equals today's `ponytail: false` output, and `minimal` contains the tool-protocol line but neither `PONYTAIL_MARKER` nor `OUTPUT_STYLE`. Negative control: a spec that asserts `minimal !== full` fails if the knob is ignored. E2 — `node bench/out/four-way-20260921/run-quad.mjs` preflight still passes offline (no API calls).
-**Checkpoint:** pending
+**Checkpoint:** 2026-09-23 — `pnpm typecheck` clean; `pnpm lint` exit 0 (warnings only); `pnpm test` 1064 passed, 2 failed, 11 skipped — both failures are the pre-existing `PRD-001 AC-9` role-ladder `UnknownPinError` on `capability.roles.strong.pin "opus"` (reproduced on a stashed, unmodified tree), unrelated to this change; `tests/prefix.spec.ts` 14 passed, including an end-to-end spec that boots a session with `variant: minimal` and asserts the provider payload carries `TOOL_PROTOCOL` and not `PONYTAIL_MARKER`, with `execute` still on the surface; `tests/config.spec.ts` 24 tests, only the same two pre-existing failures; `tests/bench/adapters.spec.ts` verifies the env hook picks the variant and leaves the loaded config unmutated; run-quad preflight passes offline (`dist_newer_than_src: true`, `api_key: true`). **Deviations:** two files beyond the original list (`prompt.ts`, `index.ts`) move the tool-protocol string to one source so the `minimal` prefix does not duplicate it in the assembled prompt; the full and lean renders are unchanged byte-for-byte, asserted against the pre-change composition.
 
 #### Phase 2: Measure the variants and ship the leanest one that holds
 **Status:** NOT STARTED

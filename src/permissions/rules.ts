@@ -286,8 +286,12 @@ function gitIsNetwork({ subcommand, args }: { subcommand: string; args: string[]
 /** Static tool-name tables: which scope a tool name belongs to. */
 const READ_TOOLS: Record<string, true> = { read: true, search: true, grep: true, find: true, ls: true };
 const EDIT_TOOLS: Record<string, true> = { edit: true, write: true, multiedit: true, multi_edit: true };
-const SHELL_TOOLS: Record<string, true> = { execute: true, bash: true, shell: true, run: true, exec: true };
-const SUBAGENT_TOOLS: Record<string, true> = { subagent: true, spawn_subagent: true, task: true, agent: true, delegate: true };
+// `bash` is Pi's built-in shell, overridden by `pi-patty-bg-tasks`; `bash_bg` is
+// that package's fire-and-forget form. Both run a `command` and share the
+// classification below — an unclassified tool would reach the catch-all as
+// `shell:<toolName>` and lose the network/install/out-of-root scopes.
+const SHELL_TOOLS: Record<string, true> = { execute: true, bash: true, bash_bg: true, shell: true, run: true, exec: true };
+const SUBAGENT_TOOLS: Record<string, true> = { subagent: true, spawn_subagent: true, task: true, agent: true, delegate: true, agent_bg: true };
 
 function stringArg(input: Record<string, unknown>, ...keys: string[]): string | undefined {
 	for (const key of keys) {
@@ -407,6 +411,23 @@ export function pathTokens(command: string): string[] {
 }
 
 /**
+ * Every scope one shell command implicates, added through `add` (PRD-017 AC-13,
+ * AC-15, AC-5). Shared by `execute`/`bash`/`bash_bg` and `monitor`'s command
+ * source, so a second background form cannot slip past the reach the first one
+ * is held to.
+ */
+function classifyCommand(command: string, root: string, add: (scope: Scope, target: string) => void): void {
+	add("shell", command);
+	const git = command.includes("git") ? gitInvocation(command) : null;
+	if (git !== null && gitIsDestructive(git)) add("git_destructive", command);
+	if (PACKAGE_INSTALL.some((pattern) => pattern.test(command))) add("package_install", command);
+	if (NETWORK_COMMAND.some((pattern) => pattern.test(command)) || (git !== null && gitIsNetwork(git))) add("network", command);
+	for (const token of pathTokens(command)) {
+		if (escapesRoot(root, token)) add("external_dir", token);
+	}
+}
+
+/**
  * Every scope one dispatched call implicates, one `<scope>:<target>` capability
  * id per member. An unrecognised command line is `{shell}` alone; an
  * unrecognised tool is treated as shell reach, the conservative catch-all.
@@ -434,15 +455,20 @@ export function classifyScopes(call: CallShape, root: string): ClassifiedScope[]
 	}
 
 	if (SHELL_TOOLS[toolName]) {
-		const command = stringArg(input, "command", "cmd", "script") ?? "";
-		add("shell", command);
-		const git = command.includes("git") ? gitInvocation(command) : null;
-		if (git !== null && gitIsDestructive(git)) add("git_destructive", command);
-		if (PACKAGE_INSTALL.some((pattern) => pattern.test(command))) add("package_install", command);
-		if (NETWORK_COMMAND.some((pattern) => pattern.test(command)) || (git !== null && gitIsNetwork(git))) add("network", command);
-		for (const token of pathTokens(command)) {
-			if (escapesRoot(root, token)) add("external_dir", token);
-		}
+		classifyCommand(stringArg(input, "command", "cmd", "script") ?? "", root, add);
+		return scopes;
+	}
+
+	// `pi-patty-bg-tasks`' `monitor` streams a command's stdout or a WebSocket
+	// feed. The command source is shell reach like any other; the `ws` source is
+	// network egress, which `shell: allow` must not buy.
+	if (toolName === "monitor") {
+		const command = stringArg(input, "command", "cmd", "script");
+		const ws = input.ws as { url?: unknown } | undefined;
+		const url = typeof ws?.url === "string" ? ws.url : undefined;
+		if (command !== undefined) classifyCommand(command, root, add);
+		if (url !== undefined) add("network", url);
+		if (command === undefined && url === undefined) add("shell", toolName);
 		return scopes;
 	}
 

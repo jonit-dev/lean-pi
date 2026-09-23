@@ -1,0 +1,8 @@
+id: stock-pi-deepseek
+label: Stock Pi (no LeanPi extension) on the same DeepSeek v4.1 Flash / opencode-go
+adapter: stock-pi
+jev: disabled
+executor_model: deepseek-v4.1-flash
+features:
+  []
+budget_usd: 2.0
