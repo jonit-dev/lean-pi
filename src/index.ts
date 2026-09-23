@@ -98,8 +98,6 @@ import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagent
 /** PRD-044's answers; plain words, because not everyone knows what a PRD is. */
 const PRD_SUGGEST_YES = "Yes, write a plan first";
 const PRD_SUGGEST_NEVER = "No, and don't ask again";
-/** A prompt already about a PRD (`execute docs/PRDs/…`, `write a PRD for X`) needs no offer. */
-const PRD_MENTION = /\bPRDs?\b/i;
 
 /**
  * The host's `ask` channel for an isolated worktree, built from Pi's own UI.
@@ -1109,7 +1107,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// session asks (this turn's message is not on the branch yet, so a resumed
 		// session has a user message there already), and the heuristic fallback
 		// answers PRD_REQUIRED on any doubt, so only a confident gate JEV answer
-		// may ask — and never when the prompt already names a PRD of its own.
+		// may ask. A prompt naming a PRD, or a running goal, compiles direct.
 		let prdMessage: string | undefined;
 		const gateConfident = context.contract ? compileRecordOf(context.contract)?.classification.gate_confident : undefined;
 		const firstPrompt = () => !ctx.sessionManager.getBranch().some((entry) => entry.type === "message" && entry.message.role === "user");
@@ -1118,14 +1116,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			ctx.hasUI &&
 			context.contract?.task.prd_required &&
 			gateConfident === true &&
-			!PRD_MENTION.test(event.prompt) &&
 			firstPrompt() &&
 			prdSuggestEnabled(env) &&
 			!readPrdState(cwd)
 		) {
 			// Unattended, the dialog dismisses itself and the turn runs as asked.
 			const choice = await ctx.ui.select(
-				"Wait — this task would go better with a plan (a PRD: goals, steps and checks) before any code. Want me to write one first?",
+				"I suggest a PLANNING step before executing this task. Do you want to proceed?",
 				[PRD_SUGGEST_YES, "No, just do it", PRD_SUGGEST_NEVER],
 				{ timeout: 15_000 },
 			);

@@ -32,7 +32,7 @@ async function suggestFixture(options: { choices: Record<string, string>; pick?:
 	writeConfig(cwd, {
 		backends: { local: nativeBackend(backend.baseUrl) },
 		// `/prd create` authors on the strong role.
-		models: { balanced: { backend: "local", model: "cheap-fast" }, strong: { backend: "local", model: "cheap-fast" } },
+		models: { balanced: { backend: "local", model: "cheap-fast" }, strong: { backend: "local", model: "planner" } },
 		jev: { endpoint: jev.url, apiKey: "test-key" },
 	});
 	const env = options.env ?? { XDG_CONFIG_HOME: tempDir("leanpi-xdg-") };
@@ -78,7 +78,7 @@ describe("PRD suggestion prompt (PRD-044)", () => {
 		const f = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[1] });
 		const session = await f.boot();
 		await session.session.prompt("rework the storage layer");
-		expect(f.asked).toEqual([{ title: expect.stringContaining("plan"), options: OPTIONS }]);
+		expect(f.asked).toEqual([{ title: "I suggest a PLANNING step before executing this task. Do you want to proceed?", options: OPTIONS }]);
 		expect(f.backend.requests.length).toBeGreaterThan(0);
 		await session.session.prompt("rework the cache layer too");
 		expect(f.asked).toHaveLength(1);
@@ -129,6 +129,20 @@ describe("PRD suggestion prompt (PRD-044)", () => {
 		const f = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[1] });
 		await (await f.boot()).session.prompt("execute docs/PRDs/v1/PRD-045-mcp-execution.md");
 		expect(f.asked).toEqual([]);
+		// ...nor tells the model the task needs one, which is what made it slice
+		// a second PRD out of the one it was told to execute.
+		expect(turnRequest(f.backend)).toContain("prd_required: false");
+	});
+
+	it("never offers a PRD on a /goal turn, whatever the goal says", async () => {
+		const f = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[1] });
+		const session = await f.boot();
+		// What `/goal <text>` does in the TUI: set the goal, then send its text.
+		const set = await session.commands.dispatch("goal rework the storage layer", { cwd: f.cwd });
+		expect(set.start).toBe("rework the storage layer");
+		await session.session.prompt(set.start!);
+		expect(f.asked).toEqual([]);
+		expect(turnRequest(f.backend)).toContain("prd_required: false");
 	});
 
 	it("does not ask when the gate fell back to its heuristic (AC-1)", async () => {
@@ -160,13 +174,22 @@ describe("PRD suggestion prompt (PRD-044)", () => {
 	});
 
 	it("Yes authors the PRD and the turn proceeds from it (AC-2)", async () => {
-		const f = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[0], steps: [{ text: FIXTURE_PRD_BODY }, { text: "ok" }] });
+		const f = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[0], steps: [{ text: FIXTURE_PRD_BODY }, { text: "ok" }, { text: "ok" }] });
 		const session = await f.boot();
 		await session.session.prompt("rework the storage layer");
 		const state = readPrdState(f.cwd);
 		expect(state).not.toBeNull();
 		expect(existsSync(state!.prdPath)).toBe(true);
 		expect(turnRequest(f.backend)).toContain(state!.prdId);
+		// The plan is written on the planning model; the turn itself stays on the executor's.
+		const models = f.backend.requests.map((request) => (request.body as { model?: string }).model);
+		expect(models[0]).toBe("planner");
+		expect(JSON.parse(turnRequest(f.backend)).model).toBe("cheap-fast");
+
+		// Later turns execute that plan; none of them is told to write another.
+		await session.session.prompt("continue");
+		const turns = f.backend.requests.map((request) => JSON.stringify(request.body)).filter((body) => body.includes("prd_required"));
+		expect(turns.at(-1)).toContain("prd_required: false");
 	});
 
 	it("Yes whose authoring fails warns and proceeds as a plain prompt (AC-2)", async () => {

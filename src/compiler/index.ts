@@ -146,6 +146,8 @@ export async function compileTask(
 	request: string,
 	packet: TaskPacket,
 	deviations: DeviationInput[] = [],
+	/** The request already has its plan (a PRD it names, a running goal): no PRD gate. */
+	planned = false,
 ): Promise<ExecutionContract> {
 	const active = context;
 	const client = active?.client ?? unavailable;
@@ -169,7 +171,7 @@ export async function compileTask(
 	// PRD-016's session pins decide the gate outcome and the two classes; the
 	// classifier and the §14 matrix stay the source of every unpinned value.
 	const pins = routePins();
-	const decision = pinnedDecision(gate.decision, pins);
+	const decision = pinnedDecision(planned ? "DIRECT_EXECUTION" : gate.decision, pins);
 
 	const defaults = matrixDefault(decision === "PRD_REQUIRED", complexity.complexity, risk.review_risk);
 	const { routing: classified, deviation } = applyDeviations(defaults, deviations);

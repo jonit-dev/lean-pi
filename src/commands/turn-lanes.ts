@@ -18,7 +18,7 @@ import type { WorktreePermissionRequest } from "../runtime/index.js";
 import type { SkillControl, SkillRecord } from "../capabilities/skills.js";
 import { createFileSearch } from "../exploration/gather.js";
 import { explore, type ContextSelection } from "../exploration/governor.js";
-import { createGoalStore, evaluateGoal, prdGoalSource } from "../goal/index.js";
+import { createGoalStore, evaluateGoal, isRunningHere, prdGoalSource } from "../goal/index.js";
 import { openPrdLane } from "../prd/dispatch.js";
 import { readPrdState } from "../prd/state.js";
 import { evaluateProofGate } from "../proof/gate.js";
@@ -112,6 +112,9 @@ function persistIsolationPatch(repoRoot: string, patch: WorktreePatch): { patchP
 	return { patchPath, diffPath };
 }
 
+/** A prompt already about a PRD (`execute docs/PRDs/…`, `write a PRD for X`) is planned. */
+const PRD_MENTION = /\bPRDs?\b/i;
+
 /** Stage 0 + §8: the deterministic packet, then the compiled contract. */
 export function compilerLane(deps: TurnLaneDeps): Lane {
 	return {
@@ -126,7 +129,11 @@ export function compilerLane(deps: TurnLaneDeps): Lane {
 			// rather than discovered by spending an attempt on it. Detection is two
 			// file questions per backend, so it costs nothing on the turn that routes.
 			const deviations = subscriptionDeviations(deps.config, detectSubscriptions(deps.config, deps.env ? { env: deps.env } : {}));
-			context.contract = await compileTask(turn.text, packet, deviations);
+			// A PRD being executed (named, or the active one), or a goal running here,
+			// already is the plan: gating it again offered a plan and told the model
+			// to slice a second PRD.
+			const planned = PRD_MENTION.test(turn.text) || readPrdState(deps.cwd) !== null || isRunningHere(createGoalStore(deps.cwd).load(), deps.sessionId);
+			context.contract = await compileTask(turn.text, packet, deviations, planned);
 		},
 	};
 }
