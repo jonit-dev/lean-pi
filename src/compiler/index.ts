@@ -82,7 +82,7 @@ const CONTEXT_BY_COMPLEXITY = {
  * A class-gated `off` therefore needs a classifier that picks the winners and a
  * measurement that shows it; until then the classes keep thinking.
  */
-const EFFORT_BY_COMPLEXITY = { LOW: "low", MEDIUM: "medium", HIGH: "high" } as const;
+export const EFFORT_BY_COMPLEXITY = { LOW: "low", MEDIUM: "medium", HIGH: "high" } as const;
 
 const VERIFICATION_BY_COMPLEXITY: Record<ExecutionComplexity, string[]> = {
 	LOW: ["typecheck", "affected_tests"],

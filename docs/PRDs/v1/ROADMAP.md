@@ -553,6 +553,8 @@ The router MAY deviate from this matrix based on:
 - latency;
 - current backend failures.
 
+**FR-153 — SHOULD:** Route each `subagent` child through the same matrix: classify the handed-off task, resolve its executor class to a native model, and pass `provider/id:effort` as the call's `model` unless the call names one, runs async, or a manual `/model` pin is active. The operator sees the pick at dispatch. (PRD-049)
+
 ---
 
 # 15. Capability Disclosure
