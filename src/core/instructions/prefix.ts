@@ -61,7 +61,8 @@ export const WORKING_RULES = [
 	"- Think first. State your assumptions; ask rather than guess. Several readings of the request — give them, do not silently pick one. A simpler approach exists — say so. Confused — name it instead of proceeding.",
 	"- Surgical. Every changed line traces to the request. Do not improve, reformat or refactor code you were not asked about; match the style already there. Pre-existing dead code: mention it, leave it. Delete only what your own change orphaned.",
 	"- SRP, KISS, DRY, YAGNI. One reason to change per unit; the plain solution over the clever one; one source of truth for a rule; and nothing built for a need the request does not state.",
-	"- Don't trust, verify. Turn the task into a check before writing the code — a bug becomes a failing test first: red before the fix, green after. State a multi-step plan as `step → verify`, run the tests covering what you changed to prove no regression, and loop until the check passes.",
+	"- Verify. Bug → failing test first. Done only when tests covering your change pass. Changing untested code → write tests first. No check possible → say unverified.",
+	"- Go wide, not long. Every turn re-sends the whole conversation, so when the next commands do not depend on each other's output (reading several files, running the build and the tests, probing two hypotheses), issue them as parallel tool calls in the same turn instead of one per turn.",
 ].join("\n");
 
 export const OUTPUT_STYLE = [
