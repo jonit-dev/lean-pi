@@ -9,8 +9,8 @@
  * the exact backend/model on the session (the footer says `Manual`), and role
  * binding moved to `/role`.
  *
- * The pick is session state, never a config write: `/model auto`, `/new`,
- * `/resume` and `/route reset` return to Auto. The picker lists the native
+ * The pick is session state, never a config write: it survives `/new` and
+ * `/resume`, and only `/model auto` returns to Auto (docs/systems/model-modes.md). The picker lists the native
  * backends the config carries and the vendor CLIs the machine has, because on a
  * native config a CLI model is exactly the pick that used to be impossible.
  */
