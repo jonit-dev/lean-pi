@@ -14,10 +14,14 @@
  * backends the config carries and the vendor CLIs the machine has, because on a
  * native config a CLI model is exactly the pick that used to be impossible.
  */
-import { MODEL_ROLES } from "../core/types.js";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { MODEL_ROLES, type BackendRef, type LeanPiConfig } from "../core/types.js";
 import { routePins, setRoutePins } from "../compiler/pins.js";
 import { discoverInventory, modelFactsLine, type DiscoveredModel } from "../cli/allocate.js";
 import { modelPicker } from "../cli/model-picker.js";
+import { manualStatusLine } from "../cli/statusline.js";
 import type { HarnessVendor } from "../backends/harness.js";
 import type { CommandContext, CommandRegistry, CommandResult } from "./registry.js";
 import type { CommandSurface } from "./surface.js";
@@ -77,28 +81,93 @@ function renderPinInventory(surface: CommandSurface): string {
 	return lines.join("\n");
 }
 
+/** `<home>/.leanpi/model.json` — where `remember_manual_model: true` saves the pin (PRD-048 Phase 2). */
+function rememberedModelPath(env: NodeJS.ProcessEnv): string {
+	return join(env.HOME ?? homedir(), ".leanpi", "model.json");
+}
+
+function writeRememberedModel(config: LeanPiConfig, env: NodeJS.ProcessEnv, pin: BackendRef): void {
+	if (config.remember_manual_model !== true) return;
+	const path = rememberedModelPath(env);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, JSON.stringify(pin));
+}
+
+function deleteRememberedModel(env: NodeJS.ProcessEnv): void {
+	const path = rememberedModelPath(env);
+	if (existsSync(path)) rmSync(path);
+}
+
+/**
+ * Startup only (PRD-048 Phase 2): restores the pin a previous session saved
+ * with `remember_manual_model: true`. A corrupt or unreadable file must not
+ * stop the session from starting — it just leaves the session in Auto.
+ */
+export function restoreRememberedModel(config: LeanPiConfig, env: NodeJS.ProcessEnv): void {
+	if (config.remember_manual_model !== true) return;
+	const path = rememberedModelPath(env);
+	if (!existsSync(path)) return;
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Record<keyof BackendRef, unknown>>;
+		// The file is on disk, not something this session wrote just now: a
+		// corrupt or hand-edited one must not become a pin the compiler trusts.
+		if (typeof parsed.backend !== "string" || parsed.backend.length === 0) return;
+		if (typeof parsed.model !== "string" || parsed.model.length === 0) return;
+		if (parsed.type !== "native" && parsed.type !== "external_harness") return;
+		const pin: BackendRef = { backend: parsed.backend, model: parsed.model, type: parsed.type };
+		// Same as a fresh `/model` pin: a discovered CLI backend may be absent
+		// from the config, and the executor lane's registry needs the entry to
+		// spawn it.
+		if (pin.type === "external_harness") config.backends[pin.backend] ??= { type: "external_harness" };
+		setRoutePins({ model: pin });
+	} catch {
+		// A corrupt remembered pin must not stop the session from starting.
+	}
+}
+
 /** Pin one model for the session. Nothing is written to `leanpi.config.yaml`. */
-function pinModel(surface: CommandSurface, chosen: DiscoveredModel): CommandResult {
+async function pinModel(surface: CommandSurface, chosen: DiscoveredModel, context: CommandContext): Promise<CommandResult> {
 	const backend = chosen.backend ?? chosen.vendor;
 	// A discovered CLI backend may be absent from the config; the running session
 	// needs the entry so the executor lane's registry can spawn it. The config is
 	// in memory only — `/role` is the command that writes.
 	surface.config.backends[backend] ??= { type: "external_harness" };
-	setRoutePins({ model: { backend, model: chosen.model, type: chosen.facts.execution } }, surface.host.current().getSessionId());
+	// The model Pi was running before Manual started, captured once regardless
+	// of what kind of pick started it — a CLI pin also ends Auto, and `/model
+	// auto` has to restore whatever was running before it, not just before the
+	// most recent pin.
+	if (routePins().model === undefined) {
+		const current = context.footer?.current();
+		if (current) setRoutePins({ previousModel: current });
+	}
+	// Only a native pick is something Pi's own loop can run: switching now, not
+	// on the next turn, is what makes the footer's (and Pi's own) model change
+	// at pin time.
+	if (chosen.facts.execution === "native") await context.footer?.setModel(backend, chosen.model);
+	const pin: BackendRef = { backend, model: chosen.model, type: chosen.facts.execution };
+	// A repin — even to the same model — starts a fresh conversation: the
+	// vendor session a previous CLI pin remembered belonged to that pin.
+	setRoutePins({ model: pin, manualSessionId: undefined }, surface.host.current().getSessionId());
+	writeRememberedModel(surface.config, surface.env, pin);
+	context.footer?.setStatus(manualStatusLine(pin, true));
 	return {
 		ok: true,
-		text: `model pinned to ${backend}/${chosen.model} (Manual) for this session — /model auto, /new or /resume returns to Auto`,
+		text: `model pinned to ${backend}/${chosen.model} (Manual) — /model auto returns to Auto`,
 	};
 }
 
 /** `/model auto` — clear the pin, and only the pin: the route overrides stand. */
-function clearPin(surface: CommandSurface): CommandResult {
-	setRoutePins({ model: undefined }, surface.host.current().getSessionId());
+async function clearPin(surface: CommandSurface, context: CommandContext): Promise<CommandResult> {
+	const previous = routePins().previousModel;
+	setRoutePins({ model: undefined, previousModel: undefined, manualSessionId: undefined }, surface.host.current().getSessionId());
+	if (previous) await context.footer?.setModel(previous.backend, previous.model);
+	deleteRememberedModel(surface.env);
+	context.footer?.setStatus(undefined);
 	return { ok: true, text: "model: Auto — the router decides the model again" };
 }
 
 /** `/model <backend>:<model>` — the picker's answer, typed. */
-function pinByKey(surface: CommandSurface, key: string): CommandResult {
+async function pinByKey(surface: CommandSurface, key: string, context: CommandContext): Promise<CommandResult> {
 	const index = key.indexOf(":");
 	if (index <= 0 || index === key.length - 1) {
 		return { ok: false, text: `usage: /model <backend>:<model> (or /model auto) — run /model for the inventory` };
@@ -113,18 +182,18 @@ function pinByKey(surface: CommandSurface, key: string): CommandResult {
 	if (chosen.facts.availability !== "ready") {
 		return { ok: false, text: `${key} is ${chosen.facts.availability}: ${chosen.facts.evidence}` };
 	}
-	return pinModel(surface, chosen);
+	return pinModel(surface, chosen, context);
 }
 
 /** The picker: providers left (native and CLI), models right, pin on enter. */
-async function pickPin(surface: CommandSurface, custom: NonNullable<CommandContext["custom"]>): Promise<CommandResult> {
+async function pickPin(surface: CommandSurface, context: CommandContext): Promise<CommandResult> {
 	const inventory = pinInventory(surface);
 	if (inventory.length === 0) return { ok: false, text: "no native backend or vendor CLI found — `/doctor` says what is missing" };
-	const pick = await custom(modelPicker(inventory, new Map(), { mode: "model" }));
+	const pick = await context.custom!(modelPicker(inventory, new Map(), { mode: "model" }));
 	if (pick === undefined) return { ok: true, text: "no change" };
-	if (pick.auto === true) return clearPin(surface);
+	if (pick.auto === true) return clearPin(surface, context);
 	if (pick.model === undefined) return { ok: true, text: "no change" };
-	return pinModel(surface, pick.model);
+	return pinModel(surface, pick.model, context);
 }
 
 export function registerModelCommands(registry: CommandRegistry, surface: CommandSurface): void {
@@ -134,12 +203,12 @@ export function registerModelCommands(registry: CommandRegistry, surface: Comman
 		usage: "/model [<backend>:<model>|auto]",
 		run: async (args, context): Promise<CommandResult> => {
 			const rest = args.trim();
-			if (rest === "auto") return clearPin(surface);
+			if (rest === "auto") return clearPin(surface, context);
 			if (rest === "use" || rest.startsWith("use ")) {
 				return { ok: false, text: "`/model use` was removed — bind a role with `/role <role> <backend>:<model>`" };
 			}
-			if (rest.length > 0) return pinByKey(surface, rest);
-			if (context.custom) return pickPin(surface, context.custom);
+			if (rest.length > 0) return pinByKey(surface, rest, context);
+			if (context.custom) return pickPin(surface, context);
 			return { ok: true, text: renderPinInventory(surface) };
 		},
 	});

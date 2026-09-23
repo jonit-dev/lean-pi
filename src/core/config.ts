@@ -538,6 +538,9 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 	if (instructionsRaw.ponytail !== undefined && typeof instructionsRaw.ponytail !== "boolean") {
 		throw new ConfigError(`ponytail must be a boolean`, "instructions.ponytail");
 	}
+	if (record.remember_manual_model !== undefined && typeof record.remember_manual_model !== "boolean") {
+		throw new ConfigError("remember_manual_model must be a boolean", "remember_manual_model");
+	}
 
 	const backends = parseBackends(record.backends);
 	// PRD-017: assertTrusted runs between load and use. An untrusted project keeps
@@ -592,6 +595,7 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		thresholds: parseThresholds(record.thresholds),
 		limits: parseLimits(record.limits),
 		workspace: parseWorkspace(record.workspace),
+		remember_manual_model: (record.remember_manual_model as boolean | undefined) ?? false,
 		...overrides,
 	};
 

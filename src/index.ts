@@ -30,7 +30,7 @@ import { apiKeyFor, ConfigError, loadConfig, toPiConfigValue, writeSkillsState }
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, compileRecordOf, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
-import { clearRoutePins, routePins } from "./compiler/pins.js";
+import { clearRoutePins, routePins, setRoutePins } from "./compiler/pins.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
 import { createToolSurface, mcpRequestDefinition, mcpToolName, registerMcpCommand, registerMcpDisclosure, resolveVendorServers, MCP_REQUEST_TOOL_NAME } from "./mcp/index.js";
@@ -79,7 +79,8 @@ import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
-import { LEANPI_STATUS_KEY, statusLine } from "./cli/statusline.js";
+import { LEANPI_STATUS_KEY, manualStatusLine, statusLine } from "./cli/statusline.js";
+import { restoreRememberedModel } from "./commands/model.js";
 import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
 import { createRecap, type RecapController, type RecapRunner } from "./recap/index.js";
 import { messageText } from "./commands/context.js";
@@ -426,6 +427,16 @@ function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string
 					// `/recap`'s whole output is a widget; the host it draws on travels with
 					// the invocation, because only Pi's live context can set it.
 					...(ctx.hasUI ? { recapHost: { ui: ctx.ui, hasUI: ctx.hasUI, sessionManager: ctx.sessionManager } } : {}),
+					// PRD-048 Phase 2: `/model` needs Pi's own model surface to switch a
+					// native pick and redraw the footer at pin time, not on the next turn.
+					footer: {
+						setStatus: (text: string | undefined) => ctx.ui.setStatus(LEANPI_STATUS_KEY, text),
+						setModel: async (backend: string, model: string) => {
+							const found = ctx.modelRegistry.find(backend, model);
+							return found ? pi.setModel(found) : false;
+						},
+						current: () => (ctx.model ? { backend: ctx.model.provider, model: ctx.model.id, type: "native" as const } : undefined),
+					},
 					session: {
 						id: ctx.sessionManager.getSessionId(),
 						contextTokens: usage?.tokens ?? null,
@@ -493,6 +504,11 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	}
 	const commands = options.commands ?? commandRegistry;
 	const config = options.config ?? loadConfig(cwd, {}, env);
+	// PRD-048 Phase 2: `remember_manual_model: true` carries a `/model` pin
+	// across a restart; every other config is Auto by default. Restored once,
+	// here, not per session-start reload — a fresh activation is the only
+	// startup this session gets.
+	restoreRememberedModel(config, env);
 	registerBackends(pi, config, env);
 	const tools = registerBaselineTools(pi, cwd, compactUiAttached() ? YIELDED_TOOL_NAMES : []);
 	// PRD-018: the seven LSP tools are registered once and stay inactive until a
@@ -870,12 +886,21 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	pi.on("session_start", async (event, ctx) => {
 		if (event.reason !== "startup") {
 			surface.resetSessionState();
+			// PRD-048 Phase 2: Manual survives a session switch — only `/model auto`
+			// returns to Auto. Every other pin (`/route executor`, `/route prd`,
+			// etc.) still resets here, exactly as before.
+			const { model, previousModel } = routePins();
 			clearRoutePins();
+			setRoutePins({ model, previousModel });
 			// A switch invalidates the previous session's turn, cache and in-flight
 			// generation *before* the new session's persisted recap is restored: the
 			// old session's input must not answer `/recap` for the new one.
 			recap.reset(ctx);
 		}
+		// PRD-048 Phase 2: a pin survives startup (`remember_manual_model`) and a
+		// session switch — the footer must say so now, not wait for a turn to run.
+		const manualPin = routePins().model;
+		if (manualPin) ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
 		// PRD-042: a local control plane has to be provisioned and started, and
 		// doing it here means the first turn is not the thing that waits for a
 		// multi-GB download. `resolve()` is the provider's own memoized entry point,
@@ -994,6 +1019,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 						color: true,
 					}),
 				);
+			} else if (routePins().model) {
+				// PRD-048 Phase 2: Manual with a CLI pin compiled no contract, but the
+				// footer still names the pin — the turn just ran on it.
+				ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(routePins().model!, true));
 			} else {
 				ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
 			}
@@ -1074,8 +1103,11 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// The level the session ends the handler at, which is what the footer must
 		// name: the compiled effort only when it was applied.
 		let effort: ThinkingLevel | undefined;
-		if (context.contract && !owns) {
-			const ref = manualPin ?? resolveRole(config, context.contract.routing.executor_class);
+		// A native pin installs its model even in Manual, where the compiler lane
+		// left `context.contract` undefined (PRD-048 Phase 2) — the pin is the
+		// whole routing decision there, and there is no class to fall back to.
+		if (!owns && (manualPin || context.contract)) {
+			const ref = manualPin ?? resolveRole(config, context.contract!.routing.executor_class);
 			const model = ctx.modelRegistry.find(ref.backend, ref.model);
 			// `setModel` answers whether it took the model. Ignoring that answer
 			// let the footer name a model the session had refused.
@@ -1083,9 +1115,12 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			// The operator's ceiling applies on every path (`thinkingLevelFor`), not
 			// only the programmatic one: `backends.<name>.thinkingLevel: off` is the
 			// one spending switch there is, and this handler used to raise straight
-			// past it to whatever the classifier compiled.
-			effort = thinkingLevelFor(config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
-			if (effort !== undefined) pi.setThinkingLevel(effort);
+			// past it to whatever the classifier compiled. Manual compiled no
+			// effort at all, so there is nothing here to cap.
+			if (context.contract) {
+				effort = thinkingLevelFor(config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
+				if (effort !== undefined) pi.setThinkingLevel(effort);
+			}
 		}
 		// "Tell me your goal, I figure out the rest" is only trustworthy if the
 		// figuring is visible: the footer carries what this turn routed to, how
@@ -1113,6 +1148,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 					...(effort === undefined ? {} : { effort }),
 				}),
 			);
+		} else if (manualPin) {
+			// PRD-048 Phase 2: Manual with a native pin compiled no contract, but the
+			// footer still names the pin — the turn just ran on it.
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
 		}
 		// PRD-044: JEV judged the session's opening task PRD-worthy, so offer one
 		// before the loop runs it as a blind prompt. Only the first prompt of a
@@ -1207,7 +1246,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	pi.on("agent_settled", async (_event, ctx) => {
 		const turn = settledTurn;
 		settledTurn = undefined;
-		if (!turn) return;
+		// PRD-048 Phase 2: Manual is plain chat — recapping it would spend another
+		// model call summarizing a conversation LeanPi was never asked to make
+		// sense of.
+		if (!turn || routePins().model) return;
 		await recap.recapTurn(ctx, turn);
 	});
 

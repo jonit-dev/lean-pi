@@ -8,12 +8,13 @@
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BackendRegistry, detectSubscriptions, subscriptionDeviations } from "../backends/index.js";
+import { BackendRegistry, detectSubscriptions, runWorkerTurn, subscriptionDeviations } from "../backends/index.js";
 import type { BackendInvocation } from "../backends/worker.js";
 import { compileRecordOf, compileTask } from "../compiler/index.js";
 import type { JevClient } from "../jev/client.js";
-import type { LeanPiConfig, ModelRole } from "../core/types.js";
+import type { BackendRef, LeanPiConfig, ModelRole } from "../core/types.js";
 import { runExecutor, type ExecutorDeps } from "../executor/index.js";
+import type { ExecutorInvocation } from "../executor/lane.js";
 import { runIsolated, ensureGitIgnored, worktreePath, worktreeRootOf, type CleanupResult, type WorktreePatch } from "../runtime/index.js";
 import type { WorktreePermissionRequest } from "../runtime/index.js";
 import type { SkillControl, SkillRecord } from "../capabilities/skills.js";
@@ -29,7 +30,7 @@ import { itemsOf, remainingWork, type TodoCarrier } from "../todo/index.js";
 import { EvidenceStore } from "../verify/evidence.js";
 import { workspaceHash } from "../verify/hash.js";
 import { registerOwnedLanes, type Lane, type TurnContext, type TurnInput } from "./session.js";
-import { routePins } from "../compiler/pins.js";
+import { routePins, setRoutePins } from "../compiler/pins.js";
 import { feedInvocation, type RunCollector } from "../telemetry/index.js";
 import { lspSelectionOf } from "../lsp/provider.js";
 import type { ToolSurface } from "../mcp/tools.js";
@@ -129,6 +130,11 @@ export function compilerLane(deps: TurnLaneDeps): Lane {
 	return {
 		name: "compiler",
 		async run(turn, context) {
+			// PRD-048 Phase 2: a `/model` pin is Manual — plain chat with the pinned
+			// model, not LeanPi's pipeline. No contract is compiled, so every lane
+			// that gates on `context.contract` (JEV, tool surface, verify, review,
+			// the proof gate, the goal boundary) does nothing this turn.
+			if (routePins().model) return;
 			const packet = scoutTask(deps.cwd, turn.text);
 			// PRD-023's seed: the executor lane's pre-generation hook explores from
 			// the packet the compiler already built rather than walking the repo twice.
@@ -210,7 +216,15 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 			const pin = routePins().model;
 			if (pin && !registry.byName(pin.backend)) registry = new BackendRegistry(deps.config, { onInvocation });
 			const contract = context.contract;
-			if (!contract || deps.execute === false) return;
+			if (!contract) {
+				// PRD-048 Phase 2: Manual with a CLI pin is plain chat — the compiler
+				// lane compiled nothing, and this runs the pinned backend on the turn's
+				// own text, with none of a contract's machinery (no exploration, no
+				// verify/review, no proof gate, no goal boundary, no progress line).
+				if (pin?.type === "external_harness" && deps.execute !== false) await runManualTurn(turn, context, pin, deps, registry);
+				return;
+			}
+			if (deps.execute === false) return;
 			// PRD-022's isolation wraps execution, verification, review and any gate
 			// recovery as one unit: the gate must run before the isolated workspace is
 			// reclaimed, or it would stamp that tree's hash on a main-checkout run.
@@ -399,6 +413,47 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 				});
 			}
 	}
+}
+
+/**
+ * PRD-048 Phase 2: Manual with a CLI pin, run as a plain chat turn — the
+ * pinned backend/model, the turn's own text, nothing compiled around it. Every
+ * other backend is excluded so the pin, not the role's chain, decides who
+ * answers; `runWorkerTurn` still bills the attempt through the registry's own
+ * `onInvocation`, so telemetry is unaffected by skipping the executor's gate.
+ *
+ * The vendor's own session id (`claude --resume`, `codex resume`, `opencode
+ * --session`) carries the conversation across turns, same as the loop Pi runs
+ * for a native pin does natively: without it every Manual turn on a CLI pin
+ * was a fresh process with no memory of the one before it.
+ */
+async function runManualTurn(turn: TurnInput, context: TurnContext, pin: BackendRef, deps: TurnLaneDeps, registry: BackendRegistry): Promise<void> {
+	const exclude = registry.backends.filter((backend) => backend.name !== pin.backend).map((backend) => backend.name);
+	const worker = deps.worker ?? runWorkerTurn;
+	const sessionId = routePins().manualSessionId;
+	const outcome = await worker(
+		{ objective: turn.text, role: context.role, model: pin.model, ...(sessionId ? { sessionId } : {}) },
+		{ registry, cwd: deps.cwd, exclude, ...(deps.env ? { env: deps.env } : {}) },
+	);
+	if (outcome.result?.sessionId) setRoutePins({ manualSessionId: outcome.result.sessionId });
+	const invocations: ExecutorInvocation[] = outcome.backend
+		? [{ role: context.role, backend: outcome.backend, strategy: "initial", ok: outcome.status === "completed" }]
+		: [];
+	context.executor = {
+		status: outcome.status,
+		changedFiles: outcome.result?.changedFiles ?? [],
+		evidence: [],
+		commands: [],
+		retryHistory: [],
+		invocations,
+		review: { level: "NO_SEMANTIC_REVIEW", verdict: null, skipped: true, independence: null },
+		escalations: [],
+		sites: [],
+		...(outcome.result?.summary !== undefined ? { summary: outcome.result.summary } : {}),
+		...(outcome.status === "blocked"
+			? { blockedReason: outcome.attempts.map((attempt) => `${attempt.backend}: ${attempt.reason}`).join("; ") || "no backend completed the task" }
+			: {}),
+	};
 }
 
 /**

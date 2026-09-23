@@ -15,6 +15,7 @@
 
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { RecapHost } from "../recap/index.js";
+import type { BackendRef } from "../core/types.js";
 
 export interface CommandContext {
 	cwd: string;
@@ -48,6 +49,18 @@ export interface CommandContext {
 	 * widget, so it needs the host the widget is set on, not just a notify.
 	 */
 	recapHost?: RecapHost;
+	/**
+	 * Pi's live model/footer surface (PRD-048 Phase 2): lets `/model` switch
+	 * Pi's own running model and redraw the footer immediately, instead of
+	 * waiting for the next turn to notice the pin.
+	 */
+	footer?: {
+		setStatus(text: string | undefined): void;
+		/** Attempt to switch Pi's session model now; resolves whether it took. */
+		setModel(backend: string, model: string): Promise<boolean>;
+		/** The model Pi is running right now, for `/model auto` to restore it. */
+		current(): BackendRef | undefined;
+	};
 }
 
 export interface CommandResult {

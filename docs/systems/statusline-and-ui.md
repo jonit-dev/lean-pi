@@ -6,6 +6,11 @@
 visible. The status line renders the decisions the compiler made for the turn in
 flight — but only the ones an operator can read at a glance and act on.
 
+In Manual ([model modes](./model-modes.md)) the line is only the pinned model and
+a red `Manual`, set the moment `/model` pins and cleared by `/model auto`. Pi's own
+footer model slot cannot name a CLI pin: the extension API gives no way to change
+that text alone.
+
 What it deliberately does **not** say: which internal lane ran. "Pi loop" and
 "Executor lane" name LeanPi's own plumbing, and an operator who cannot change the
 lane cannot use the word.

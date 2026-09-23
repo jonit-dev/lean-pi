@@ -57,8 +57,10 @@ permission layer (permissions are enforced at the tool boundary). Every PRD
 registers here rather than standing up a second dispatcher, which is what makes
 `/help` complete for free.
 
-`/model` and `/role` are PRD-048: they may bind a CLI model to a role mid-session,
-so the executor lane is always installed and its `run` is gated on `ownsTurn`.
+`/model` and `/role` are PRD-048. `/model` switches the session between Auto and
+Manual ([model modes](./model-modes.md)); a CLI pick is run by the executor lane,
+so that lane is always installed and its `run` is gated on `ownsTurn`. `/role`
+binds a model to a role in the config the router reads in Auto.
 
 ## Modules
 

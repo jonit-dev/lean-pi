@@ -52,6 +52,7 @@ flowchart TD
 | --- | --- | --- |
 | [Boot & launch](./boot-and-launch.md) | `activate()`, `createLeanPiSession()` | PRD-001, 016, 039 |
 | [Command surface](./command-surface.md) | `commandRegistry.dispatch()`, `registerTurnLanesIfOwned()` | PRD-016, 048 |
+| [Model modes: Auto & Manual](./model-modes.md) | `routePins().model`, `compilerLane()` | PRD-048 |
 | [Statusline & UI](./statusline-and-ui.md) | `LEANPI_STATUS_KEY`, `renderTurnOutcome()` | PRD-016 |
 | [Session recap](./session-recap.md) | `createRecapController()` | PRD-036 |
 

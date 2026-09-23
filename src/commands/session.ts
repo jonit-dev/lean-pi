@@ -19,6 +19,7 @@ import type { GoalEvaluation } from "../goal/index.js";
 import type { PrdManager } from "../prd/manager.js";
 import type { TaskPacket } from "../scout/index.js";
 import { itemsOf, withTodo, type TodoCarrier } from "../todo/index.js";
+import { routePins } from "../compiler/pins.js";
 // The session's own level type, which includes `off`; pi-ai's `ThinkingLevel`
 // is the subset a request can ask for and cannot express "do not think".
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -234,8 +235,10 @@ export async function runLanes(turn: TurnInput, context: TurnContext): Promise<T
 			workingState: buildWorkingState(context.workingStateSources ?? stubSources(), { filesTouched: [] }, context.config.context.working_state_max_bytes),
 		});
 		// PRD-025's block is the last thing a prompt carries, and only when the
-		// list has something to say.
-		const items = context.todo ? itemsOf(context.todo) : [];
+		// list has something to say. PRD-048 Phase 2: a `/model` pin means Manual,
+		// and the todo list is LeanPi's own per-turn addition, same as the
+		// contract slot above — the pinned model sees the turn's own text.
+		const items = context.todo && !routePins().model ? itemsOf(context.todo) : [];
 		context.prefix = items.length === 0 ? assembled.text : withTodo(assembled, items).text;
 	}
 	setActivePrefix(context.prefix);

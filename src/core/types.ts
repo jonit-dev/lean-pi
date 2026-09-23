@@ -314,4 +314,10 @@ export interface LeanPiConfig {
 	};
 	/** The declared `workspace:` block (PRD-022); absent keys fall back to the documented defaults. */
 	workspace?: WorkspaceConfig;
+	/**
+	 * PRD-048 Phase 2: whether a `/model` pin survives a restart. Default `false`
+	 * — Manual is session state, and a restart starts Auto unless the operator
+	 * opted in to `<home>/.leanpi/model.json` carrying the pick forward.
+	 */
+	remember_manual_model: boolean;
 }

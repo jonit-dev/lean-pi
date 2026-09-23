@@ -75,6 +75,9 @@ const MAX_LISTED_FILES = 10;
 export function outcomeLevel(context: TurnContext): "info" | "warning" | "error" {
 	const executor = context.executor;
 	if (!executor || executor.status === "blocked") return "error";
+	// Manual (PRD-048 Phase 2): no contract means no proof gate ran, and none
+	// should — a completed reply is not "unproved", it is the whole answer.
+	if (!context.contract) return "info";
 	const decision = context.proof?.decision;
 	if (decision === "PASS") return "info";
 	return decision === undefined ? "warning" : "error";
@@ -86,6 +89,9 @@ export function outcomeLevel(context: TurnContext): "info" | "warning" | "error"
  */
 export function renderTurnOutcome(context: TurnContext, jev?: TurnJev): string {
 	const executor = context.executor;
+	// Manual (PRD-048 Phase 2): a `/model` pin means plain chat — no contract,
+	// no headline glyph, no verified/review lines. The reply is the report.
+	if (!context.contract && executor) return executor.summary ?? executor.blockedReason ?? "";
 	const lines = [headline(context)];
 	if (jev) lines.push(detail("decided", describeJev(jev)));
 	if (!executor) return lines.join("\n");

@@ -26,6 +26,18 @@ export interface RoutePins {
 	 * turn is dispatched on it; absent means Auto and the router decides.
 	 */
 	model?: BackendRef;
+	/**
+	 * The native model Pi was running just before a `/model` pin took over
+	 * (PRD-048 Phase 2), so `/model auto` can put Pi back on it instead of
+	 * leaving the session on whatever the pin last set.
+	 */
+	previousModel?: BackendRef;
+	/**
+	 * The vendor's own session id from the last Manual turn on a CLI pin
+	 * (PRD-048 Phase 2), so the next turn continues that conversation instead of
+	 * starting over. Reset whenever the pin changes or clears.
+	 */
+	manualSessionId?: string;
 }
 
 let pins: RoutePins = {};

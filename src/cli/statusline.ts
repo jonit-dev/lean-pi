@@ -84,6 +84,16 @@ export function prettyModel(backend: string, model: string): string {
 	return bare.replace(/\[([^\]]+)\]$/, " ($1)");
 }
 
+/**
+ * The footer while `/model` is pinned and no contract has run this turn
+ * (PRD-048 Phase 2): just the pinned model and the mode, colour-matched to
+ * `statusLine`'s own — no class, effort or cost to report, because none ran.
+ */
+export function manualStatusLine(pin: BackendRef, color = false): string {
+	const model = prettyModel(pin.backend, pin.model);
+	return [color === true ? `${BOLD}${model}${RESET}` : model, color === true ? `${MANUAL}Manual${RESET}` : "Manual"].join(SEP);
+}
+
 export type Lane = "pi_loop" | "executor";
 
 export interface StatusInput {
