@@ -16,6 +16,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { VENDOR_MODEL_DEFAULT, type HarnessVendor } from "../backends/harness.js";
+import { learnedModels } from "../backends/cli-provider.js";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
 import { BUNDLED_RANKING_PATH, matchModel } from "../capability/index.js";
 import { parseRankingFile } from "../capability/schema.js";
@@ -110,12 +111,18 @@ function dedupe(models: readonly { model: string; source: string }[]): { model: 
  * Claude's discoverable models: the configured exact id, then the documented
  * aliases. There is no supported enumeration interface on the CLI, so discovery
  * is explicitly incomplete here — the aliases plus the saved id, never a guessed
- * full id.
+ * full id. An alias a real run already resolved (PRD-051) is listed by the full
+ * id it resolved to, so the picker and the footer name a version.
  */
 function claudeModels(home: string): { model: string; source: string }[] {
+	const learned = learnedModels({ HOME: home });
+	const resolve = (model: string, source: string) => {
+		const id = learned[model]?.id;
+		return id && id !== model ? { model: id, source: `${source} ${model}` } : { model, source };
+	};
 	const configured = readJsonField(join(home, ".claude.json"), "model") ?? readJsonField(join(home, ".claude", "settings.json"), "model");
-	const found = configured ? [{ model: configured, source: "claude settings" }] : [];
-	for (const alias of CLAUDE_MODEL_ALIASES) found.push({ model: alias, source: "claude alias" });
+	const found = configured ? [resolve(configured, "claude settings")] : [];
+	for (const alias of CLAUDE_MODEL_ALIASES) found.push(resolve(alias, "claude alias"));
 	return dedupe(found);
 }
 

@@ -80,7 +80,8 @@ import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, manualStatusLine, statusLine } from "./cli/statusline.js";
-import { restoreRememberedModel } from "./commands/model.js";
+import { learnedModels, piProviderFor, registerCliModel, type CliProviderDeps } from "./backends/cli-provider.js";
+import { restoreRememberedModel, writeRememberedModel } from "./commands/model.js";
 import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
 import { createRecap, type RecapController, type RecapRunner } from "./recap/index.js";
 import { messageText } from "./commands/context.js";
@@ -93,7 +94,7 @@ import { defaultLayaDeps, ensureLayaRuntime, layaProvider, layaStatus } from "./
 import { typesafeProvider, type ControlPlaneProvider } from "./jev/provider.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
-import { isModelRole, type JevProvider, type LeanPiConfig, type ModelRole } from "./core/types.js";
+import { isModelRole, type BackendRef, type JevProvider, type LeanPiConfig, type ModelRole } from "./core/types.js";
 import { traceChildStartup } from "./cli/startup-trace.js";
 import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
 import { registerSubagentRouting } from "./subagents/route.js";
@@ -410,7 +411,7 @@ function installArtifactTool(pi: ExtensionAPI, artifacts: ArtifactStore): void {
  * reported the latter's empty history as the session's was the source of
  * `/context`'s invented totals.
  */
-function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string, after: (ctx: TodoWidgetHost) => void): void {
+function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string, after: (ctx: TodoWidgetHost) => void, cli: CliProviderDeps): void {
 	for (const command of commands.entries()) {
 		pi.registerCommand(command.name, {
 			description: command.summary.length > 0 ? command.summary : command.usage,
@@ -431,8 +432,9 @@ function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string
 					// native pick and redraw the footer at pin time, not on the next turn.
 					footer: {
 						setStatus: (text: string | undefined) => ctx.ui.setStatus(LEANPI_STATUS_KEY, text),
-						setModel: async (backend: string, model: string) => {
-							const found = ctx.modelRegistry.find(backend, model);
+						setModel: async (pin: BackendRef) => {
+							if (pin.type === "external_harness") registerCliModel(pi, cli, pin);
+							const found = ctx.modelRegistry.find(piProviderFor(pin), pin.model);
 							return found ? pi.setModel(found) : false;
 						},
 						current: () => (ctx.model ? { backend: ctx.model.provider, model: ctx.model.id, type: "native" as const } : undefined),
@@ -516,7 +518,16 @@ function installSessionHooks(
 		}
 		// A remembered or switched-to Manual pin is visible before the next turn.
 		const manualPin = routePins().model;
-		if (manualPin) ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
+		if (manualPin) {
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
+			// Pi's footer names Pi's model: switch to the pin now, not on the first turn —
+			// after keeping the model Pi started on, which `/model auto` restores.
+			if (routePins().previousModel === undefined && ctx.model) {
+				setRoutePins({ previousModel: { backend: ctx.model.provider, model: ctx.model.id, type: "native" } });
+			}
+			const found = ctx.modelRegistry.find(piProviderFor(manualPin), manualPin.model);
+			if (found) await pi.setModel(found);
+		}
 		// PRD-042: a local control plane has to be provisioned and started, and
 		// doing it here means the first turn is not the thing that waits for a
 		// multi-GB download. `resolve()` is the provider's own memoized entry point,
@@ -613,8 +624,8 @@ function installTurnHooks(
 	//
 	// Native configurations return early: there Pi's loop is the executor by
 	// design (§23) and `before_agent_start` below is where the turn is compiled.
-	// A `/model` CLI pin makes LeanPi own the turn even on a native config
-	// (PRD-048), because Pi's loop has no provider for a vendor CLI model.
+	// A `/model` pin, native or CLI, returns early too: the pin is a model in Pi's
+	// own registry (PRD-051), so Pi's loop runs it on any configuration.
 	pi.on("input", async (event, ctx) => {
 		// A new prompt invalidates the previous turn's recap before anything runs.
 		deps.recap.clear(ctx);
@@ -757,7 +768,7 @@ function installTurnHooks(
 		// Install a native Manual pin even when compilation deliberately returned no contract.
 		if (!owns && (manualPin || context.contract)) {
 			const ref = manualPin ?? resolveRole(deps.config, context.contract!.routing.executor_class);
-			const model = ctx.modelRegistry.find(ref.backend, ref.model);
+			const model = ctx.modelRegistry.find(manualPin ? piProviderFor(manualPin) : ref.backend, ref.model);
 			// `setModel` answers whether it took the model. Ignoring that answer
 			// let the footer name a model the session had refused.
 			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
@@ -857,8 +868,21 @@ function installTurnHooks(
 
 	// PRD-015's sink for the path Pi itself drives: one call per assistant message
 	// the loop produced, plus the tool calls it made, then exactly one record.
-	pi.on("agent_end", (event, ctx) => {
+	pi.on("agent_end", async (event, ctx) => {
 		deps.showTodo(ctx);
+		// PRD-051: a CLI pin on an alias (`opus`) learned its full id this turn, so
+		// from here on Pi's footer and LeanPi's line name the model that ran.
+		const pin = routePins().model;
+		const learned = pin?.type === "external_harness" ? learnedModels(deps.env)[pin.model] : undefined;
+		if (pin && learned && learned.id !== pin.model) {
+			const resolved = { ...pin, model: learned.id };
+			setRoutePins({ model: resolved });
+			writeRememberedModel(deps.config, deps.env, resolved);
+			registerCliModel(pi, deps, resolved);
+			const found = ctx.modelRegistry.find(piProviderFor(resolved), resolved.model);
+			if (found) await pi.setModel(found);
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(resolved, true));
+		}
 		// What `agent_settled` will recap: the loop's last ask and its answer. They
 		// exist here; `agent_settled` fires after Pi's own telemetry sink has already
 		// written this turn's record.
@@ -924,6 +948,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// here, not per session-start reload — a fresh activation is the only
 	// startup this session gets.
 	restoreRememberedModel(config, env);
+	// PRD-051: a restored CLI pin is a Pi model too, so Pi's registry must hold it
+	// before `session_start` switches to it.
+	const restoredPin = routePins().model;
+	if (restoredPin?.type === "external_harness") registerCliModel(pi, { config, cwd, env }, restoredPin);
 	registerBackends(pi, config, env);
 	const tools = registerBaselineTools(pi, cwd, compactUiAttached() ? YIELDED_TOOL_NAMES : []);
 	// PRD-018: the seven LSP tools are registered once and stay inactive until a
@@ -1328,7 +1356,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// The result is printed with `ui.notify`, not `pi.sendMessage`: a custom
 	// message would enter the LLM context and every later request in the session
 	// would carry the output of every command the user ran.
-	bridgeCommands(pi, commands, cwd, showTodo);
+	bridgeCommands(pi, commands, cwd, showTodo, { config, cwd, env });
 	registerClearAlias(pi);
 
 	return {

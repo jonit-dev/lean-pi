@@ -113,6 +113,46 @@ export interface ParsedHarnessEnvelope {
 	/** The vendor's structured payload; validated against the packet's schema. */
 	structured?: unknown;
 	error?: string;
+	/** The model that actually ran, when the vendor names it (PRD-051). */
+	run?: CliRunFacts;
+}
+
+/** What a vendor run reports about itself: every model it ran, and the tokens spent. */
+export interface CliRunFacts {
+	/** Each model the run used, keyed by its full id. A main loop can call helper models too. */
+	models: Array<{ id: string; output: number; contextWindow?: number }>;
+	/**
+	 * The run's last API call, not the run's total: the total sums every tool
+	 * round-trip's re-read context, while the last call is what the context
+	 * holds now — the number Pi's footer and compaction read.
+	 */
+	usage?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+}
+
+const count = (value: unknown): number => (typeof value === "number" ? value : 0);
+
+/**
+ * PRD-051: `claude --model opus` runs an alias, and only the result names the
+ * model behind it — `modelUsage` is keyed by the full id.
+ */
+function claudeRunFacts(stdout: string): CliRunFacts | undefined {
+	const result = parseObject(stdout.trim());
+	const models = result?.modelUsage;
+	if (models === null || typeof models !== "object") return undefined;
+	const facts: CliRunFacts = {
+		models: Object.entries(models as Record<string, { outputTokens?: unknown; contextWindow?: unknown }>).map(([id, entry]) => ({
+			id,
+			output: count(entry?.outputTokens),
+			...(typeof entry?.contextWindow === "number" ? { contextWindow: entry.contextWindow } : {}),
+		})),
+	};
+	const total = result?.usage as { iterations?: unknown } & Record<string, unknown> | undefined;
+	const iterations = Array.isArray(total?.iterations) ? (total.iterations as Record<string, unknown>[]) : [];
+	const last = iterations.at(-1) ?? total;
+	if (last) {
+		facts.usage = { input: count(last.input_tokens), output: count(last.output_tokens), cacheRead: count(last.cache_read_input_tokens), cacheWrite: count(last.cache_creation_input_tokens) };
+	}
+	return facts;
 }
 
 export interface HarnessDescriptor {
@@ -268,13 +308,16 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			"--",
 			prompt,
 		],
-		parse: (stdout) =>
-			parseEnvelope(stdout, {
+		parse: (stdout) => {
+			const envelope = parseEnvelope(stdout, {
 				session: ["session_id", "sessionId"],
 				text: ["result", "summary"],
 				structured: ["structured_output", "structuredOutput", "structured"],
 				error: ["error", "error_message"],
-			}),
+			});
+			const run = claudeRunFacts(stdout);
+			return run ? { ...envelope, run } : envelope;
+		},
 		limitSignal: (_exitCode, stderr, stdout) => matchLimit(`${stderr}\n${stdout}`, LIMIT_PATTERN),
 	},
 	codex: {
@@ -352,6 +395,8 @@ export interface HarnessSpawnRequest {
 	stdin: string | null;
 	env: NodeJS.ProcessEnv;
 	timeoutMs: number;
+	/** Kills the process group when aborted — Esc on a Manual turn (PRD-051). */
+	signal?: AbortSignal;
 }
 
 export interface HarnessSpawnResult {
@@ -404,6 +449,8 @@ export const spawnProcess: HarnessSpawn = async (request) => {
 		timedOut = true;
 		terminate();
 	}, request.timeoutMs);
+	if (request.signal?.aborted) terminate();
+	request.signal?.addEventListener("abort", terminate, { once: true });
 	try {
 		// `once` rejects on the child's `error` event (a spawn failure) and resolves
 		// with the exit code once the process is gone.
@@ -413,6 +460,7 @@ export const spawnProcess: HarnessSpawn = async (request) => {
 		return { code: null, signal: null, stdout, stderr, error: error as Error, timedOut };
 	} finally {
 		clearTimeout(timer);
+		request.signal?.removeEventListener("abort", terminate);
 	}
 };
 
@@ -422,6 +470,7 @@ export interface RunHarnessDeps {
 	spawn?: HarnessSpawn;
 	timeoutMs?: number;
 	env?: NodeJS.ProcessEnv;
+	signal?: AbortSignal;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -535,7 +584,9 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 			// extra config the parent's own object crosses untouched.
 			env: Object.keys(extraEnv).length === 0 ? (deps.env ?? process.env) : { ...(deps.env ?? process.env), ...extraEnv },
 			timeoutMs: deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+			...(deps.signal ? { signal: deps.signal } : {}),
 		});
+		if (deps.signal?.aborted) return { status: "failed", failure: "exit", reason: "aborted", exitCode: result.code };
 
 		if (result.error) {
 			const reason =
@@ -620,6 +671,7 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 			...(changed === null ? { changedFilesUnknown: true } : {}),
 			summary: envelope.summary.length > 0 ? envelope.summary : `${descriptor.vendor} completed without a summary`,
 			...(envelope.sessionId ? { sessionId: envelope.sessionId } : {}),
+			...(envelope.run ? { run: envelope.run } : {}),
 			raw: { vendor: descriptor.vendor, argv: args, structured: envelope.structured },
 		};
 	} finally {

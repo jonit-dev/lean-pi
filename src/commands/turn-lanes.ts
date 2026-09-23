@@ -8,13 +8,12 @@
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BackendRegistry, detectSubscriptions, runWorkerTurn, subscriptionDeviations } from "../backends/index.js";
+import { BackendRegistry, detectSubscriptions, subscriptionDeviations } from "../backends/index.js";
 import type { BackendInvocation } from "../backends/worker.js";
 import { compileRecordOf, compileTask } from "../compiler/index.js";
 import type { JevClient } from "../jev/client.js";
-import type { BackendRef, LeanPiConfig, ModelRole } from "../core/types.js";
+import type { LeanPiConfig, ModelRole } from "../core/types.js";
 import { runExecutor, type ExecutorDeps } from "../executor/index.js";
-import type { ExecutorInvocation } from "../executor/lane.js";
 import { runIsolated, ensureGitIgnored, worktreePath, worktreeRootOf, type CleanupResult, type WorktreePatch } from "../runtime/index.js";
 import type { WorktreePermissionRequest } from "../runtime/index.js";
 import type { SkillControl, SkillRecord } from "../capabilities/skills.js";
@@ -30,7 +29,7 @@ import { itemsOf, remainingWork, type TodoCarrier } from "../todo/index.js";
 import { EvidenceStore } from "../verify/evidence.js";
 import { workspaceHash } from "../verify/hash.js";
 import { registerOwnedLanes, type Lane, type TurnContext, type TurnInput } from "./session.js";
-import { routePins, setRoutePins } from "../compiler/pins.js";
+import { routePins } from "../compiler/pins.js";
 import { feedInvocation, type RunCollector } from "../telemetry/index.js";
 import { lspSelectionOf } from "../lsp/provider.js";
 import type { ToolSurface } from "../mcp/tools.js";
@@ -75,10 +74,9 @@ export interface TurnLaneDeps {
 	/** Skip the executor for turns the session only wants compiled (e.g. `/route`). */
 	execute?: boolean;
 	/**
-	 * PRD-048: register the executor lane ahead of a pin and gate its `run` on
-	 * `ownsTurn`. `/model` cannot know at activation time that a CLI model will
-	 * be picked later, so the production registration always installs the lane
-	 * and this flag is what keeps a native, unpinned config from running it.
+	 * Gate the executor lane's `run` on `ownsTurn`: a `/model` pin taken after
+	 * activation hands the turn to Pi's loop (PRD-051) even on a configuration
+	 * LeanPi owns, and a native config never runs it.
 	 */
 	requireOwnership?: boolean;
 	/** The environment subscription detection reads (PATH and the vendors' keys). */
@@ -200,30 +198,14 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 		const collector = currentCollector;
 		if (collector) feedInvocation(collector, record);
 	};
-	let registry = new BackendRegistry(deps.config, { onInvocation });
+	const registry = new BackendRegistry(deps.config, { onInvocation });
 	return {
 		name: "executor",
 		async run(turn, context) {
-			// PRD-048: the lane is registered even on a native configuration so a
-			// `/model` pin can hand it the turn; without one it stays out, exactly as
-			// an unregistered lane did, and Pi's own loop is the executor.
+			// Out whenever Pi's loop is the executor: a native config, or any pin.
 			if (deps.requireOwnership && !ownsTurn(deps.config)) return;
-			// PRD-048: `/model` may pin a backend discovery found but the config did
-			// not yet carry; the command adds the in-memory entry, and the pool built
-			// at activation predates it. Rebuild once from the live config so the pin
-			// can dispatch. Cooldowns are dropped with it — only on the turn a new
-			// backend appears, which PRD-048 accepts.
-			const pin = routePins().model;
-			if (pin && !registry.byName(pin.backend)) registry = new BackendRegistry(deps.config, { onInvocation });
 			const contract = context.contract;
-			if (!contract) {
-				// PRD-048 Phase 2: Manual with a CLI pin is plain chat — the compiler
-				// lane compiled nothing, and this runs the pinned backend on the turn's
-				// own text, with none of a contract's machinery (no exploration, no
-				// verify/review, no proof gate, no goal boundary, no progress line).
-				if (pin?.type === "external_harness" && deps.execute !== false) await runManualTurn(turn, context, pin, deps, registry);
-				return;
-			}
+			if (!contract) return;
 			if (deps.execute === false) return;
 			// PRD-022's isolation wraps execution, verification, review and any gate
 			// recovery as one unit: the gate must run before the isolated workspace is
@@ -416,47 +398,6 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 }
 
 /**
- * PRD-048 Phase 2: Manual with a CLI pin, run as a plain chat turn — the
- * pinned backend/model, the turn's own text, nothing compiled around it. Every
- * other backend is excluded so the pin, not the role's chain, decides who
- * answers; `runWorkerTurn` still bills the attempt through the registry's own
- * `onInvocation`, so telemetry is unaffected by skipping the executor's gate.
- *
- * The vendor's own session id (`claude --resume`, `codex resume`, `opencode
- * --session`) carries the conversation across turns, same as the loop Pi runs
- * for a native pin does natively: without it every Manual turn on a CLI pin
- * was a fresh process with no memory of the one before it.
- */
-async function runManualTurn(turn: TurnInput, context: TurnContext, pin: BackendRef, deps: TurnLaneDeps, registry: BackendRegistry): Promise<void> {
-	const exclude = registry.backends.filter((backend) => backend.name !== pin.backend).map((backend) => backend.name);
-	const worker = deps.worker ?? runWorkerTurn;
-	const sessionId = routePins().manualSessionId;
-	const outcome = await worker(
-		{ objective: turn.text, role: context.role, model: pin.model, ...(sessionId ? { sessionId } : {}) },
-		{ registry, cwd: deps.cwd, exclude, ...(deps.env ? { env: deps.env } : {}) },
-	);
-	if (outcome.result?.sessionId) setRoutePins({ manualSessionId: outcome.result.sessionId });
-	const invocations: ExecutorInvocation[] = outcome.backend
-		? [{ role: context.role, backend: outcome.backend, strategy: "initial", ok: outcome.status === "completed" }]
-		: [];
-	context.executor = {
-		status: outcome.status,
-		changedFiles: outcome.result?.changedFiles ?? [],
-		evidence: [],
-		commands: [],
-		retryHistory: [],
-		invocations,
-		review: { level: "NO_SEMANTIC_REVIEW", verdict: null, skipped: true, independence: null },
-		escalations: [],
-		sites: [],
-		...(outcome.result?.summary !== undefined ? { summary: outcome.result.summary } : {}),
-		...(outcome.status === "blocked"
-			? { blockedReason: outcome.attempts.map((attempt) => `${attempt.backend}: ${attempt.reason}`).join("; ") || "no backend completed the task" }
-			: {}),
-	};
-}
-
-/**
  * PRD-023's selection, or `undefined` when the turn cannot profit from it: the
  * governor needs a packet to seed from and PRD-014's store to reference dropped
  * content, and the compiler lane only runs before the executor.
@@ -497,13 +438,12 @@ export function ownsExecutionLoop(config: LeanPiConfig): boolean {
 }
 
 /**
- * Whether LeanPi owns *this* turn (PRD-048). A CLI model picked in `/model`
- * hands the turn to the executor lane even on a native configuration, because
- * the vendor CLI is not something Pi's own loop can run; a native pin leaves
- * the loop with Pi and travels through `before_agent_start`'s `setModel`.
+ * Whether LeanPi owns *this* turn. A `/model` pin (Manual, PRD-048) never does:
+ * native or CLI, the pin is a model in Pi's own registry (PRD-051) and Pi's loop
+ * runs it, installed by `before_agent_start`'s `setModel`.
  */
 export function ownsTurn(config: LeanPiConfig): boolean {
-	return ownsExecutionLoop(config) || routePins().model?.type === "external_harness";
+	return ownsExecutionLoop(config) && routePins().model === undefined;
 }
 
 /** Registers the chain when this configuration puts LeanPi in charge of the loop. */
@@ -519,11 +459,10 @@ export function registerTurnLanes(deps: TurnLaneDeps): void {
  * decisions to the session, so a native backend costs what the classification
  * says it should.
  *
- * The executor lane is always registered (PRD-048) and gated on `ownsTurn`: at
- * activation time a native config may still receive a `/model` CLI pin that
- * hands the turn to LeanPi, and a lane registered later would miss the first
- * turn. On a native, unpinned config the gate keeps it out, so the turn path is
- * unchanged and nothing runs twice.
+ * The executor lane is always registered and gated on `ownsTurn`, which a
+ * `/model` pin can change mid-session: on a CLI config a pin hands the turn to
+ * Pi's loop (PRD-051), and on a native config the gate keeps the lane out, so
+ * nothing runs twice.
  */
 export function registerTurnLanesIfOwned(deps: TurnLaneDeps): boolean {
 	const owned = ownsTurn(deps.config);

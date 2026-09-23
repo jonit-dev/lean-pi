@@ -22,6 +22,7 @@ import { routePins, setRoutePins } from "../compiler/pins.js";
 import { discoverInventory, modelFactsLine, type DiscoveredModel } from "../cli/allocate.js";
 import { modelPicker } from "../cli/model-picker.js";
 import { manualStatusLine } from "../cli/statusline.js";
+import { learnedModels } from "../backends/cli-provider.js";
 import type { HarnessVendor } from "../backends/harness.js";
 import type { CommandContext, CommandRegistry, CommandResult } from "./registry.js";
 import type { CommandSurface } from "./surface.js";
@@ -86,7 +87,7 @@ function rememberedModelPath(env: NodeJS.ProcessEnv): string {
 	return join(env.HOME ?? homedir(), ".leanpi", "model.json");
 }
 
-function writeRememberedModel(config: LeanPiConfig, env: NodeJS.ProcessEnv, pin: BackendRef): void {
+export function writeRememberedModel(config: LeanPiConfig, env: NodeJS.ProcessEnv, pin: BackendRef): void {
 	if (config.remember_manual_model !== true) return;
 	const path = rememberedModelPath(env);
 	mkdirSync(dirname(path), { recursive: true });
@@ -140,11 +141,11 @@ async function pinModel(surface: CommandSurface, chosen: DiscoveredModel, contex
 		const current = context.footer?.current();
 		if (current) setRoutePins({ previousModel: current });
 	}
-	// Only a native pick is something Pi's own loop can run: switching now, not
-	// on the next turn, is what makes the footer's (and Pi's own) model change
-	// at pin time.
-	if (chosen.facts.execution === "native") await context.footer?.setModel(backend, chosen.model);
 	const pin: BackendRef = { backend, model: chosen.model, type: chosen.facts.execution };
+	// Native or CLI, the pick becomes Pi's own model now (PRD-051: a CLI model is
+	// registered as a Pi provider first), so the footer's model slot changes at
+	// pin time and the next turn runs in Pi's loop.
+	await context.footer?.setModel(pin);
 	// A repin — even to the same model — starts a fresh conversation: the
 	// vendor session a previous CLI pin remembered belonged to that pin.
 	setRoutePins({ model: pin, manualSessionId: undefined }, surface.host.current().getSessionId());
@@ -160,7 +161,7 @@ async function pinModel(surface: CommandSurface, chosen: DiscoveredModel, contex
 async function clearPin(surface: CommandSurface, context: CommandContext): Promise<CommandResult> {
 	const previous = routePins().previousModel;
 	setRoutePins({ model: undefined, previousModel: undefined, manualSessionId: undefined }, surface.host.current().getSessionId());
-	if (previous) await context.footer?.setModel(previous.backend, previous.model);
+	if (previous) await context.footer?.setModel(previous);
 	deleteRememberedModel(surface.env);
 	context.footer?.setStatus(undefined);
 	return { ok: true, text: "model: Auto — the router decides the model again" };
@@ -175,7 +176,9 @@ async function pinByKey(surface: CommandSurface, key: string, context: CommandCo
 	const backend = key.slice(0, index);
 	const model = key.slice(index + 1);
 	const inventory = pinInventory(surface);
-	const chosen = inventory.find((entry) => entry.model === model && (entry.backend ?? entry.vendor) === backend);
+	// A learned alias is listed under its full id (PRD-051); typing the alias still pins it.
+	const learned = learnedModels(surface.env)[model]?.id;
+	const chosen = inventory.find((entry) => (entry.model === model || entry.model === learned) && (entry.backend ?? entry.vendor) === backend);
 	if (chosen === undefined) {
 		return { ok: false, text: `no model \`${key}\` on this machine — run /model for the inventory` };
 	}

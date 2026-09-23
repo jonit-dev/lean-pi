@@ -10,13 +10,13 @@
  * not just "who dispatches" any more — it is a second mode that skips the
  * compiler, JEV, the proof gate and the goal boundary entirely.
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { activate, clearLanes, compilerLane, loadConfig, ownsTurn, registerTurnLanesIfOwned, runTurn, setCompilerContext } from "../../src/index.js";
-import { runLanes, type TurnContext } from "../../src/commands/session.js";
+import { type TurnContext } from "../../src/commands/session.js";
 import { clearRoutePins, routePins, setRoutePins } from "../../src/compiler/pins.js";
-import { renderTurnOutcome } from "../../src/cli/outcome.js";
+import { detectModels } from "../../src/cli/allocate.js";
 import type { LeanPiConfig } from "../../src/core/types.js";
 import { nativeBackend, tempDir } from "../helpers/fixtures.js";
 import { execConfig, fakeExec, harness, scriptedJev, VERIFY_COMMANDS } from "../executor/helpers.js";
@@ -45,13 +45,13 @@ afterEach(() => {
 });
 
 describe("a manual model pin owns the turn (PRD-048)", () => {
-	it("AC-1: pins an external model, the executor lane dispatches it, and Pi's loop does not run", async () => {
+	it("PRD-051: a CLI pin leaves the turn to Pi's loop — the executor lane never dispatches it", async () => {
 		const h = await harness({ config: pinnedConfig });
 		setCompilerContext({ config: h.config, cwd: h.cwd });
 		setRoutePins({ model: { backend: "claude", model: "sonnet", type: "external_harness" } }, "manual-spec");
 
-		// A CLI pin makes LeanPi own the turn even though the roles are native.
-		expect(ownsTurn(h.config)).toBe(true);
+		// The pin is a model in Pi's registry now (PRD-051), so Pi's loop runs it.
+		expect(ownsTurn(h.config)).toBe(false);
 
 		const packets: Array<{ model?: string; backend?: string }> = [];
 		expect(
@@ -66,15 +66,12 @@ describe("a manual model pin owns the turn (PRD-048)", () => {
 					return { status: "completed", backend: "claude", result: { status: "ok", changedFiles: [], summary: "done" }, attempts: [] };
 				},
 			}),
-		).toBe(true);
+		).toBe(false);
 
 		const context = await runTurn({ text: "rename the helper" }, { config: h.config, cwd: h.cwd });
 
-		// The pinned model reached the worker, and the pinned backend is the one
-		// that ran — the router's own pick was excluded.
-		expect(packets).toHaveLength(1);
-		expect(packets[0]?.model).toBe("sonnet");
-		expect(context.executor?.invocations[0]?.backend).toBe("claude");
+		expect(packets).toHaveLength(0);
+		expect(context.executor).toBeUndefined();
 	});
 
 	it("AC-6: a native config with no pin leaves the executor lane out of the turn", async () => {
@@ -160,49 +157,136 @@ function nativeProject(extraYaml = ""): { cwd: string; env: NodeJS.ProcessEnv } 
 	return { cwd, env: { HOME: home, PATH: "", XDG_CONFIG_HOME: join(home, ".config") } };
 }
 
-describe("Manual mode: a CLI pin is plain chat, not the full pipeline (docs/systems/model-modes.md)", () => {
-	it("turn 'Hi': no contract, no JEV, no proof gate, no progress line, and the reply is the whole outcome", async () => {
-		const h = await harness({ config: pinnedConfig });
-		const jev = scriptedJev({});
-		setCompilerContext({ config: h.config, cwd: h.cwd, client: jev });
-		setRoutePins({ model: { backend: "claude", model: "sonnet", type: "external_harness" } }, "manual-behavior-spec");
+/** The picker's answer for a Claude CLI model. */
+const CLI_PICK = {
+	vendor: "claude" as const,
+	backend: "claude",
+	model: "sonnet",
+	source: "test",
+	facts: { execution: "external_harness" as const, availability: "ready" as const, evidence: "", coding_score: null, price_blended_per_mtok: null },
+};
 
-		const packets: Array<{ objective: string; model?: string }> = [];
-		registerTurnLanesIfOwned({
-			cwd: h.cwd,
-			config: h.config,
-			exec: fakeExec({ pass: true }),
-			verifyCommands: VERIFY_COMMANDS,
-			reviewRunner: review,
-			worker: async (packet) => {
-				packets.push({ objective: packet.objective, model: packet.model });
-				return { status: "completed", backend: "claude", result: { status: "ok", changedFiles: [], summary: "Hi there!" }, attempts: [] };
-			},
-		});
+/** A `claude` stand-in: logs its argv, then answers in `claude -p --output-format json`'s shape. */
+function stubClaude(dir: string, reply: string, sessionId: string, sleepSeconds = 0): string {
+	const path = join(dir, "claude-stub.sh");
+	// `modelUsage` is keyed by the full id the alias resolved to. A helper model a
+	// subagent ran can out-write the conversation's model; `usage` sums every API
+	// call, and `iterations` holds each one — the last is the live context.
+	const envelope = JSON.stringify({
+		type: "result",
+		result: reply,
+		session_id: sessionId,
+		usage: {
+			input_tokens: 20,
+			output_tokens: 40,
+			cache_read_input_tokens: 9000,
+			cache_creation_input_tokens: 800,
+			iterations: [
+				{ input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 6000, cache_creation_input_tokens: 400 },
+				{ input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 3000, cache_creation_input_tokens: 400 },
+			],
+		},
+		modelUsage: { "claude-haiku-4-5-20251001": { outputTokens: 500, contextWindow: 200000 }, "claude-sonnet-5": { outputTokens: 20, contextWindow: 1000000 } },
+	});
+	writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${dir}/argv.log"\n${sleepSeconds > 0 ? `/usr/bin/sleep ${sleepSeconds}\n` : ""}printf '%s' '${envelope}'\n`, { mode: 0o755 });
+	return path;
+}
 
-		const progress: string[] = [];
-		const context: TurnContext = {
-			turn: { text: "Hi" },
-			role: "balanced",
-			cwd: h.cwd,
-			config: h.config,
-			modelRef: { backend: "claude", model: "sonnet" },
-			skills: [],
-			prefix: "",
-			onProgress: (phase) => progress.push(phase),
-		};
-		await runLanes({ text: "Hi" }, context);
+type StreamResult = { stopReason: string; content: Array<{ text?: string }>; usage: { input: number; cacheRead: number } };
+type CliProvider = { streamSimple: (model: unknown, context: unknown, options?: { signal?: AbortSignal }) => { result(): Promise<StreamResult> } };
 
-		// Manual is plain chat: nothing compiled, nothing asked, nothing gated.
-		expect(context.contract).toBeUndefined();
-		expect(jev.calls).toHaveLength(0);
-		expect(context.proof).toBeUndefined();
-		expect(progress.some((phase) => phase.startsWith("running "))).toBe(false);
-		// The pinned model, and the prompt as-is — not the compiled executor prompt.
-		expect(packets).toHaveLength(1);
-		expect(packets[0]).toEqual({ objective: "Hi", model: "sonnet" });
-		// The whole report is the reply — no verdict glyph, no "verified" line.
-		expect(renderTurnOutcome(context)).toBe("Hi there!");
+/** A real `activate` on a native config, with the Claude CLI backend pointed at the stub. */
+function cliSession(sleepSeconds = 0) {
+	const { cwd, env } = nativeProject();
+	const fake = fakePi();
+	const providers = new Map<string, CliProvider>();
+	const installed: Array<{ provider: string; id: string }> = [];
+	const pi = {
+		...fake.pi,
+		registerProvider: (name: string, provider: CliProvider) => providers.set(name, provider),
+		setModel: async (model: { provider: string; id: string }) => (installed.push(model), true),
+	};
+	const ctx = { ...fake.ctx, modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) }, ui: { ...fake.ctx.ui, custom: async () => ({ model: CLI_PICK }) } };
+	const config = loadConfig(cwd, {}, env);
+	config.backends.claude = { type: "external_harness", vendor: "claude", command: stubClaude(cwd, "Hi there!", "vendor-session-1", sleepSeconds) };
+	clearLanes();
+	activate(pi as never, { cwd, config, env });
+	const stream = (text: string, signal?: AbortSignal) =>
+		providers.get("claude-cli")!.streamSimple({ id: "sonnet", api: "leanpi-cli", provider: "claude-cli" }, { messages: [{ role: "user", content: text, timestamp: 0 }] }, signal ? { signal } : {});
+	return { cwd, env, installed, providers, ctx, stream, handlers: fake.handlers, commands: fake.commands };
+}
+
+describe("PRD-051: a CLI pin is a model in Pi's own loop", () => {
+	it("AC-1/AC-2: `/model` makes the CLI model Pi's model; Pi's loop takes the turn, the CLI answers it, and the next turn resumes the vendor session", async () => {
+		const session = cliSession();
+		await session.commands.get("model")?.handler("", session.ctx);
+		// Pi's own model — the footer's model slot — is the pin, under its CLI provider.
+		expect(session.installed.at(-1)).toEqual({ provider: "claude-cli", id: "sonnet" });
+
+		// The `input` hook no longer answers: the prompt goes to Pi's loop.
+		expect(await session.handlers.get("input")?.({ text: "Hi", source: "interactive" }, session.ctx)).toBeUndefined();
+
+		const first = await session.stream("Hi").result();
+		expect(first.stopReason).toBe("stop");
+		expect(first.content[0]?.text).toBe("Hi there!");
+		await session.stream("what did I just say?").result();
+		const argv = readFileSync(join(session.cwd, "argv.log"), "utf8").trim().split("\n");
+		expect(argv[0]).toContain("--model sonnet");
+		expect(argv[0]).not.toContain("--resume");
+		expect(argv[1]).toContain("--resume vendor-session-1");
+
+		// `/model auto` hands Pi back the model it ran before Manual.
+		await session.commands.get("model")?.handler("auto", session.ctx);
+		expect(session.installed.at(-1)).toEqual({ provider: "local", id: "cheap" });
+	});
+
+	it("AC-2: a remembered CLI pin is registered at activation and installed on session_start", async () => {
+		const { cwd, env } = nativeProject("remember_manual_model: true\n");
+		const pinFile = join(env.HOME as string, ".leanpi", "model.json");
+		mkdirSync(dirname(pinFile), { recursive: true });
+		writeFileSync(pinFile, JSON.stringify({ backend: "claude", model: "sonnet", type: "external_harness" }));
+		const fake = fakePi();
+		const providers: string[] = [];
+		const installed: Array<{ provider: string; id: string }> = [];
+		const pi = { ...fake.pi, registerProvider: (name: string) => providers.push(name), setModel: async (model: { provider: string; id: string }) => (installed.push(model), true) };
+		const ctx = { ...fake.ctx, modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) } };
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+		expect(providers).toContain("claude-cli");
+
+		await fake.handlers.get("session_start")?.({ reason: "startup" }, ctx);
+		expect(installed.at(-1)).toEqual({ provider: "claude-cli", id: "sonnet" });
+		// The model Pi started on is kept, so `/model auto` after a restart restores it.
+		expect(routePins().previousModel).toMatchObject({ backend: "local", model: "cheap" });
+	});
+
+	it("AC-5: an alias learns the full id it ran as — the footer and the picker name it from then on", async () => {
+		const session = cliSession();
+		await session.commands.get("model")?.handler("", session.ctx);
+		const reply = await session.stream("Hi").result();
+		// The last API call's usage reaches Pi — what the context holds now, not the
+		// run's sum — which is what the footer's context share and compaction read.
+		expect(reply.usage).toMatchObject({ input: 10, cacheRead: 3000 });
+
+		await session.handlers.get("agent_end")?.({ messages: [] }, session.ctx);
+		// The id the alias names, not the helper model that wrote more.
+		expect(routePins().model).toMatchObject({ backend: "claude", model: "claude-sonnet-5" });
+		expect(session.installed.at(-1)).toEqual({ provider: "claude-cli", id: "claude-sonnet-5" });
+
+		const listed = detectModels("claude", { env: session.env, home: session.env.HOME as string }).map((candidate) => candidate.model);
+		expect(listed).toContain("claude-sonnet-5");
+		expect(listed).not.toContain("sonnet");
+	});
+
+	it("AC-3: aborting the stream kills the vendor and ends it aborted", async () => {
+		const session = cliSession(30);
+		await session.commands.get("model")?.handler("", session.ctx);
+		const controller = new AbortController();
+		const started = Date.now();
+		setTimeout(() => controller.abort(), 300);
+		const result = await session.stream("Hi", controller.signal).result();
+		expect(result.stopReason).toBe("aborted");
+		expect(Date.now() - started).toBeLessThan(10_000);
 	});
 });
 
@@ -388,43 +472,6 @@ describe("Manual mode: restart and remember_manual_model (docs/systems/model-mod
 });
 
 describe("Manual mode: CLI conversation memory (docs/systems/model-modes.md)", () => {
-	it("a second Manual turn on the same CLI pin carries the first turn's vendor session id", async () => {
-		const h = await harness({ config: pinnedConfig });
-		setCompilerContext({ config: h.config, cwd: h.cwd, client: scriptedJev({}) });
-		setRoutePins({ model: { backend: "claude", model: "sonnet", type: "external_harness" } }, "manual-memory-spec");
-
-		const packets: Array<{ sessionId?: string }> = [];
-		let call = 0;
-		registerTurnLanesIfOwned({
-			cwd: h.cwd,
-			config: h.config,
-			exec: fakeExec({ pass: true }),
-			verifyCommands: VERIFY_COMMANDS,
-			reviewRunner: review,
-			worker: async (packet) => {
-				call += 1;
-				packets.push({ sessionId: packet.sessionId });
-				return { status: "completed", backend: "claude", result: { status: "ok", changedFiles: [], summary: `reply ${call}`, sessionId: `vendor-session-${call}` }, attempts: [] };
-			},
-		});
-
-		const turnContext = (text: string): TurnContext => ({
-			turn: { text },
-			role: "balanced",
-			cwd: h.cwd,
-			config: h.config,
-			modelRef: { backend: "claude", model: "sonnet" },
-			skills: [],
-			prefix: "",
-		});
-		await runLanes({ text: "Hi" }, turnContext("Hi"));
-		await runLanes({ text: "what did I just say?" }, turnContext("what did I just say?"));
-
-		// No memory yet on the first turn; the second continues the vendor's own session.
-		expect(packets[0]?.sessionId).toBeUndefined();
-		expect(packets[1]?.sessionId).toBe("vendor-session-1");
-	});
-
 	it("`/new` and `/resume` clear the remembered vendor session, but not the pin", async () => {
 		const { cwd, env } = nativeProject();
 		const { pi, handlers, ctx } = fakePi();
@@ -482,16 +529,16 @@ describe("Manual mode: pin message and previousModel (docs/systems/model-modes.m
 			source: "test",
 			facts: { execution: "external_harness" as const, availability: "ready" as const, evidence: "", coding_score: null, price_blended_per_mtok: null },
 		};
-		// A CLI pin never calls setModel — there is nothing in Pi's registry to
-		// switch to — but Pi was still running `cheap`, and that is what must come
-		// back once Manual ends. `custom` lives on `ctx.ui` — the bridge only reads
-		// it from there — so the picker path, not the printed-listing fallback, runs.
+		// A CLI pin switches Pi to its CLI provider (PRD-051), but Pi was running
+		// `cheap` before Manual, and that is what must come back once Manual ends.
+		// `custom` lives on `ctx.ui` — the bridge only reads it from there — so the
+		// picker path, not the printed-listing fallback, runs.
 		await commands.get("model")?.handler("", { ...ctx, ui: { ...ctx.ui, custom: async () => ({ model: cliPick }) } });
-		expect(setModelCalls).toEqual([]);
+		expect(setModelCalls).toEqual(["sonnet"]);
 		expect(routePins().model).toMatchObject({ backend: "claude", model: "sonnet" });
 
 		await commands.get("model")?.handler("local:cheap-alt", ctx);
 		await commands.get("model")?.handler("auto", ctx);
-		expect(setModelCalls).toEqual(["cheap-alt", "cheap"]);
+		expect(setModelCalls).toEqual(["sonnet", "cheap-alt", "cheap"]);
 	});
 });

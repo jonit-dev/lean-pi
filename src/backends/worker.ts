@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { ModelRole } from "../core/types.js";
+import type { CliRunFacts } from "./harness.js";
 
 /** FR-055: the three billing classes a backend can carry. */
 export type Billing = "subscription" | "metered" | "local";
@@ -72,6 +73,8 @@ export interface WorkerResult {
 	changedFilesUnknown?: boolean;
 	summary: string;
 	sessionId?: string;
+	/** A vendor CLI's own report of the run: resolved model and usage (PRD-051). */
+	run?: CliRunFacts;
 	raw?: unknown;
 }
 

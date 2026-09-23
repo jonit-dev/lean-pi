@@ -120,6 +120,10 @@ describe("the /model picker", () => {
 	it("returns Auto when the auto row is chosen (PRD-048)", () => {
 		const { component, picks } = picker(new Map(), "model");
 
+		// The pane under `auto` says what Auto is, not the list's empty-search text.
+		const screen = component.render(80).join("\n");
+		expect(screen).toContain("the router picks the model per turn");
+		expect(screen).not.toContain("No matching");
 		component.handleInput?.(ENTER); // the auto row is the first provider
 
 		expect(picks).toEqual([{ auto: true }]);

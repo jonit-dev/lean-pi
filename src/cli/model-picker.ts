@@ -178,9 +178,13 @@ class ModelPicker implements Component {
 
 	/** The right pane, rebuilt for the provider now under the cursor. */
 	private showModels(): void {
-		const models = this.vendor === AUTO_PROVIDER ? [] : this.inventory.filter((entry) => entry.vendor === this.vendor);
-		this.models = new SelectList(modelItems(models, this.bound, this.theme), VISIBLE, this.modelStyle, MODEL_COLUMN);
-		this.models.onSelect = (item) => this.chooseModel(models.find((entry) => entry.model === item.value));
+		const auto = this.vendor === AUTO_PROVIDER;
+		const models = auto ? [] : this.inventory.filter((entry) => entry.vendor === this.vendor);
+		// Under `auto` there is no model to pick, only what Auto means — not the
+		// list's own "No matching commands", which read as a broken search.
+		const items = auto ? [{ value: AUTO_PROVIDER, label: this.theme.fg("muted", "the router picks the model per turn") }] : modelItems(models, this.bound, this.theme);
+		this.models = new SelectList(items, VISIBLE, this.modelStyle, MODEL_COLUMN);
+		this.models.onSelect = (item) => (auto ? this.done({ auto: true }) : this.chooseModel(models.find((entry) => entry.model === item.value)));
 		this.models.onCancel = () => this.setFocus("providers");
 		this.rebuild();
 	}

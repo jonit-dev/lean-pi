@@ -303,6 +303,8 @@ export interface RunWorkerTurnOptions {
 	env?: NodeJS.ProcessEnv;
 	timeoutMs?: number;
 	now?: () => number;
+	/** An aborted turn kills the vendor and stops the chain there (PRD-051). */
+	signal?: AbortSignal;
 }
 
 /**
@@ -339,6 +341,7 @@ export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorker
 						...(options.spawn ? { spawn: options.spawn } : {}),
 						...(options.env ? { env: options.env } : {}),
 						...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+						...(options.signal ? { signal: options.signal } : {}),
 					})
 				: await runNative(backend, attemptPacket, {
 						cwd,
@@ -371,6 +374,7 @@ export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorker
 		// backend that hangs should cost the session one wait, not one per turn.
 		if (verdict.failure === "limit" || verdict.failure === "timeout") registry.markLimited(backend.name, verdict.reason);
 		attempts.push({ backend: backend.name, failure: verdict.failure, reason: verdict.reason });
+		if (options.signal?.aborted) return { status: "blocked", attempts };
 		exclude.push(backend.name);
 	}
 }

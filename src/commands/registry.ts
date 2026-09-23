@@ -56,8 +56,8 @@ export interface CommandContext {
 	 */
 	footer?: {
 		setStatus(text: string | undefined): void;
-		/** Attempt to switch Pi's session model now; resolves whether it took. */
-		setModel(backend: string, model: string): Promise<boolean>;
+		/** Attempt to switch Pi's session model now (a CLI pin is registered first); resolves whether it took. */
+		setModel(pin: BackendRef): Promise<boolean>;
 		/** The model Pi is running right now, for `/model auto` to restore it. */
 		current(): BackendRef | undefined;
 	};

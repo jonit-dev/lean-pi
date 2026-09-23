@@ -8,8 +8,8 @@ flight — but only the ones an operator can read at a glance and act on.
 
 In Manual ([model modes](./model-modes.md)) the line is only the pinned model and
 a red `Manual`, set the moment `/model` pins and cleared by `/model auto`. Pi's own
-footer model slot cannot name a CLI pin: the extension API gives no way to change
-that text alone.
+footer model slot names the pin too, CLI pins included: a CLI model is a Pi model
+under a `<backend>-cli` provider (PRD-051).
 
 What it deliberately does **not** say: which internal lane ran. "Pi loop" and
 "Executor lane" name LeanPi's own plumbing, and an operator who cannot change the
