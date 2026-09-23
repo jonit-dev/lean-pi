@@ -17,14 +17,23 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync,
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-	DefaultPackageManager,
-	SettingsManager,
-	getAgentDir,
-	type ExtensionAPI,
-	type ResolvedResource,
-} from "@earendil-works/pi-coding-agent";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import type * as Pi from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ResolvedResource } from "@earendil-works/pi-coding-agent";
+import { dependencyDir } from "../cli/launch.js";
+
+// The three SDK modules this file uses, not the SDK's index: the launcher imports
+// this file before the banner, and the index (every provider, tool and TUI
+// component) held the logo back ~400ms on every start.
+// ponytail: deep paths past Pi's `exports`; a Pi release that moves them fails this import at startup and in the suite.
+const sdkDir = dependencyDir(join("@earendil-works", "pi-coding-agent", "dist"), leanPiPackageRoot());
+if (sdkDir === undefined) throw new Error("@earendil-works/pi-coding-agent is missing from this installation of leanpi; reinstall it.");
+const sdk = (path: string) => import(pathToFileURL(join(sdkDir, path)).href) as Promise<typeof Pi>;
+const [{ getAgentDir }, { SettingsManager }, { DefaultPackageManager }] = await Promise.all([
+	sdk("config.js"),
+	sdk("core/settings-manager.js"),
+	sdk("core/package-manager.js"),
+]);
 
 /** The per-run child concurrency LeanPi enforces unless the operator says otherwise. */
 export const SUBAGENTS_DEFAULT_CONCURRENCY_LIMIT = 3;
@@ -253,7 +262,7 @@ export interface PrepareSubagentsOptions {
 	/** The resource agent dir Pi's loader will use (not necessarily `getAgentDir()`). */
 	agentDir: string;
 	/** The same manager the eventual Pi loader uses, so discovery cannot diverge. */
-	settingsManager: SettingsManager;
+	settingsManager: Pi.SettingsManager;
 	/**
 	 * CLI preflight only: the interactive child re-runs Pi's trust bootstrap, so a
 	 * project-scoped `pi-subagents` would load on top of the selected copy. Detect
@@ -375,7 +384,7 @@ function configuredProjectSubagentCopy(cwd: string, pin: string): string | undef
  * the runtime would later double. Global settings belong to the SDK resource
  * `agentDir`, which need not be `getAgentDir()`.
  */
-function missingConfiguredSubagentSource(manager: DefaultPackageManager, settingsManager: SettingsManager, agentDir: string, pin: string): string | undefined {
+function missingConfiguredSubagentSource(manager: Pi.DefaultPackageManager, settingsManager: Pi.SettingsManager, agentDir: string, pin: string): string | undefined {
 	const global = settingsManager.getGlobalSettings();
 	const settingsPath = join(agentDir, "settings.json");
 	for (const pkg of global.packages ?? []) {

@@ -7,6 +7,7 @@
  * without spawning anything.
  */
 import { spawn } from "node:child_process";
+import { mark, startupTraceEnv, writeStartupTrace } from "../dist/cli/startup-trace.js";
 
 // `package.json` requires Node >= 22.19; an older runtime fails somewhere deep
 // in Pi's bundle with a syntax or API error that says nothing about versions.
@@ -25,8 +26,8 @@ import { defaultCachePath, refreshLatest, updateNotice } from "../dist/cli/updat
 import { LEANPI_VERSION } from "../dist/core/package-info.js";
 import { ensureGitIgnored } from "../dist/runtime/ignore.js";
 import { ensureCompactUiDefaults, thinkingFoldEnabled } from "../dist/cli/ui-settings.js";
-import { prepareCliSubagents } from "../dist/subagents/index.js";
 import { patchPiModelCommand } from "../scripts/patch-pi-model-command.mjs";
+mark("imports");
 
 let flags;
 try {
@@ -88,6 +89,7 @@ try {
 	const config = loadConfig(process.cwd());
 	const sessionModel = sessionModelFor(config);
 	process.stderr.write(`${startupBanner(config, jev, sessionModel, { color: process.stderr.isTTY === true })}\n`);
+	mark("banner");
 	// The key is optional; the cost of running without one is not. Yellow on a
 	// TTY like the banner, plain when the stream is redirected.
 	const warning = jevWarning(jev.source);
@@ -120,7 +122,11 @@ try {
 	// Select upstream's one resource path before spawning: a global-only preflight
 	// (project packages are reported, never trusted or executed) feeds Pi's own
 	// `--extension`, whose canonical-path merge dedupes it against the global copy.
+	// Imported here, after the banner: it loads Pi's package resolution (~300ms),
+	// and a static import made the logo wait for it.
+	const { prepareCliSubagents } = await import("../dist/subagents/index.js");
 	const subagents = await prepareCliSubagents(process.cwd());
+	mark("subagents");
 	plan = launchPlan(flags.rest, undefined, sessionModel, flags.ui, thinkingFoldEnabled(), subagents.entry);
 	}
 } catch (error) {
@@ -146,8 +152,10 @@ if (modelOverride.status === "unavailable") {
 
 const child = spawn(process.execPath, [plan.cli, ...plan.args], {
 	stdio: "inherit",
-	env: launchEnv(flags, jevWarned),
+	env: { ...launchEnv(flags, jevWarned), ...startupTraceEnv() },
 });
+mark("spawn");
+writeStartupTrace("launcher");
 child.on("error", (error) => {
 	process.stderr.write(`leanpi could not start Pi (${plan.cli}): ${error.message}\n`);
 	process.exit(1);

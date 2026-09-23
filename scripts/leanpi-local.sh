@@ -3,6 +3,9 @@
 # `npm link` binds `leanpi` to one nvm version's bin directory, so the command
 # vanishes the moment a project selects another. This runs the checkout it lives
 # in with the first Node that meets the package's >=22.19 requirement.
+# The launch clock `src/cli/startup-trace.ts` stamps against (GNU date; elsewhere node starts it).
+LEANPI_T0="$(date +%s%3N)"
+export LEANPI_T0
 root="$(dirname "$(dirname "$(readlink -f "$0")")")"
 for candidate in "$(command -v node)" "$HOME"/.nvm/versions/node/v*/bin/node; do
 	[ -x "$candidate" ] || continue

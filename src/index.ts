@@ -93,6 +93,7 @@ import { typesafeProvider, type ControlPlaneProvider } from "./jev/provider.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
 import { isModelRole, type JevProvider, type LeanPiConfig, type ModelRole } from "./core/types.js";
+import { traceChildStartup } from "./cli/startup-trace.js";
 import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
 
 /** PRD-044's answers; plain words, because not everyone knows what a PRD is. */
@@ -1234,6 +1235,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 /** Both the interactive extension and SDK use this complete attachment. */
 export default function attach(pi: ExtensionAPI, options: ActivateOptions = {}): LeanPiActivation {
+	traceChildStartup(pi);
 	const activation = activate(pi, options);
 	const captured = subagentsFactory(pi);
 	if (captured) activation.noteSubagentCapture?.(captured);
