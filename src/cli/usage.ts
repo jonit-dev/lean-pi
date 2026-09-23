@@ -16,11 +16,14 @@
  * What it deliberately does not do: fetch quota itself (the bundled extension's
  * polls and `:update` events stay the one source), or print a credential value.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { HARNESS_VENDORS, type HarnessVendor } from "../backends/harness.js";
 import { BackendRegistry, type RegisteredBackend } from "../backends/registry.js";
 import { probeVendor, type SubscriptionState } from "../backends/subscriptions.js";
 import { LOGIN_ARGS, probeBackend, type ProbeResult } from "../commands/surface.js";
 import type { LeanPiConfig } from "../core/types.js";
+import { usagePicker } from "./usage-picker.js";
 
 export interface UsageRow {
 	/** Backend name, or the vendor name for a detected-but-unconfigured login. */
@@ -31,6 +34,41 @@ export interface UsageRow {
 	state: string;
 	/** What was checked, for the reader who has to act on it. */
 	detail: string;
+	/** The subscription behind the row, when there is one to ask for quota. */
+	vendor?: HarnessVendor;
+}
+
+/** The quota fields `/usage` draws, a subset of the bundled extension's `UsageData`. */
+export interface Quota {
+	session: number;
+	weekly: number;
+	sessionHidden?: boolean;
+	weeklyHidden?: boolean;
+	sessionLabel?: string;
+	weeklyLabel?: string;
+	sessionResetsIn?: string;
+	weeklyResetsIn?: string;
+	/** OpenCode Go's third window; the bundled providers have none. */
+	monthly?: number;
+	monthlyResetsIn?: string;
+	warning?: string;
+	error?: string;
+}
+
+/**
+ * The OAuth access token a harness CLI keeps for itself, or `undefined`.
+ * Read only to ask the vendor's own usage endpoint; never printed.
+ */
+export function harnessToken(vendor: HarnessVendor, home: string | undefined): string | undefined {
+	if (home === undefined) return undefined;
+	try {
+		if (vendor === "claude") return JSON.parse(readFileSync(join(home, ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken;
+		if (vendor === "codex") return JSON.parse(readFileSync(join(home, ".codex", "auth.json"), "utf8"))?.tokens?.access_token;
+		if (vendor === "opencode") return JSON.parse(readFileSync(join(home, ".local", "share", "opencode", "auth.json"), "utf8"))?.["opencode-go"]?.key;
+	} catch {
+		// No file or no login: the row says so; the quota pane has nothing to add.
+	}
+	return undefined;
 }
 
 export interface UsageInventoryOptions {
@@ -46,10 +84,11 @@ export interface UsageInventoryOptions {
 
 /** A configured harness, said the way its own probe said it. */
 function subscriptionRow(name: string, state: SubscriptionState): UsageRow {
-	if (!state.onPath) return { name, kind: "configured", state: "unavailable", detail: state.evidence };
-	if (state.signedIn) return { name, kind: "configured", state: "authenticated", detail: state.evidence };
+	const vendor = state.vendor;
+	if (!state.onPath) return { name, kind: "configured", state: "unavailable", detail: state.evidence, vendor };
+	if (state.signedIn) return { name, kind: "configured", state: "authenticated", detail: state.evidence, vendor };
 	// A missing login is the one state with a fix the user can type.
-	return { name, kind: "configured", state: "reauth-required", detail: `${state.evidence} — run \`${state.command} ${LOGIN_ARGS[state.vendor]}\`` };
+	return { name, kind: "configured", state: "reauth-required", detail: `${state.evidence} — run \`${state.command} ${LOGIN_ARGS[state.vendor]}\``, vendor };
 }
 
 /**
@@ -78,6 +117,8 @@ export async function usageInventory(config: LeanPiConfig, options: UsageInvento
 			// TCP reachability is not authentication, and `ok` would claim it is.
 			state: result.status === "ok" ? "reachable" : result.status === "degraded" ? "degraded" : "unreachable",
 			detail: result.reason,
+			// Only OpenCode Go's endpoint reports quota; Zen and other hosts do not.
+			...(backend.baseUrl?.includes("opencode.ai/zen/go") ? { vendor: "opencode" as const } : {}),
 		});
 	}
 
@@ -87,9 +128,35 @@ export async function usageInventory(config: LeanPiConfig, options: UsageInvento
 		if (configuredVendors.has(name)) continue;
 		const state = vendor(name, { env, ...(home === undefined ? {} : { home }), verify });
 		if (!state.onPath && !state.signedIn) continue;
-		rows.push({ name, kind: "detected", state: "detected (not configured)", detail: state.evidence });
+		rows.push({ name, kind: "detected", state: "detected (not configured)", detail: state.evidence, vendor: name });
 	}
 	return rows;
+}
+
+/** OpenCode Go's `/usage`: rolling 5-hour, weekly and monthly windows, each a percent. */
+export async function fetchOpenCodeGoUsage(token: string, fetcher: typeof fetch = fetch): Promise<Quota> {
+	try {
+		const response = await fetcher("https://opencode.ai/zen/go/v1/usage", { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12_000) });
+		if (!response.ok) return { session: 0, weekly: 0, error: `HTTP ${response.status}` };
+		const usage = ((await response.json()) as { usage?: Record<string, { percent?: number; resetsAt?: string } | undefined> }).usage ?? {};
+		const resets = (at: string | undefined) => {
+			const ms = at === undefined ? Number.NaN : Date.parse(at) - Date.now();
+			if (!(ms > 0)) return undefined;
+			const hours = Math.floor(ms / 3_600_000);
+			return hours >= 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : `${hours}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
+		};
+		return {
+			session: usage.rolling?.percent ?? 0,
+			weekly: usage.weekly?.percent ?? 0,
+			...(usage.rolling ? {} : { sessionHidden: true }),
+			...(usage.weekly ? {} : { weeklyHidden: true }),
+			sessionResetsIn: resets(usage.rolling?.resetsAt),
+			weeklyResetsIn: resets(usage.weekly?.resetsAt),
+			...(usage.monthly ? { monthly: usage.monthly.percent ?? 0, monthlyResetsIn: resets(usage.monthly.resetsAt) } : {}),
+		};
+	} catch (error) {
+		return { session: 0, weekly: 0, error: error instanceof Error ? error.message : String(error) };
+	}
 }
 
 export function renderUsage(rows: readonly UsageRow[]): string {
@@ -112,13 +179,16 @@ interface UsagePi {
 
 interface UsageContext {
 	cwd: string;
+	mode?: string;
 	hasUI?: boolean;
-	ui: { notify: (message: string, level: "info") => void };
+	ui: { notify: (message: string, level: "info") => void; custom?: (factory: ReturnType<typeof usagePicker>) => Promise<void> };
 }
 
 export interface UsageAdapterOptions {
 	/** LeanPi's inventory for a working directory; the extension supplies the real one. */
 	inventory: (cwd: string) => Promise<UsageRow[]>;
+	/** One row's quota, or `null` when it has no quota source; the extension supplies the fetchers. */
+	quota?: (row: UsageRow) => Promise<Quota | null>;
 }
 
 /**
@@ -159,7 +229,12 @@ export function usageAdapter(bundled: (pi: UsagePi) => void, options: UsageAdapt
 					await details("", ctx);
 					return;
 				}
-				const text = renderUsage(await options.inventory(ctx.cwd));
+				const rows = await options.inventory(ctx.cwd);
+				if (ctx.mode === "tui" && ctx.ui.custom && rows.length > 0) {
+					await ctx.ui.custom(usagePicker(rows, options.quota ?? (async () => null)));
+					return;
+				}
+				const text = renderUsage(rows);
 				if (ctx.hasUI === false) {
 					console.log(text);
 					return;
