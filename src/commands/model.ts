@@ -1,166 +1,146 @@
 /**
- * `/model` — the model inventory by role (PRD-016 Phase 2, FR-141).
+ * `/model` — the session's manual model pick (PRD-048).
  *
- * `/model` annotates the configured role bindings from PRD-024's bundled
- * ranking: the file ships with the harness, so there is no refresh, no fetch and
- * no cache to invalidate — freshness moves by a maintainer PR, and a model the
- * ranking does not list renders `coding_score: unavailable` rather than being
- * dropped from the listing.
+ * `/model` used to bind a pick to a *role*: it wrote the config and the router
+ * still chose the executor class per turn, so the pick only landed on turns
+ * routed to that role — and on a native config `ownsExecutionLoop` is false, so
+ * Pi's own loop ran every turn and no pick could ever take effect. The operator
+ * meant "the model being used now", so that is what this command does: it pins
+ * the exact backend/model on the session (the footer says `Manual`), and role
+ * binding moved to `/role`.
  *
- * It shadows Pi's own selector on purpose (Pi resolves extension commands
- * first). Pi's `/model` lists only what its registry carries, which on a machine
- * whose models live behind the codex and claude CLIs is none of them; this one
- * lists what the machine actually has and binds it to a role. The binding is
- * written as a pin, so the capability index stops re-picking that role — the
- * statusline says `auto` for exactly the roles nobody has pinned.
+ * The pick is session state, never a config write: `/model auto`, `/new`,
+ * `/resume` and `/route reset` return to Auto. The picker lists the native
+ * backends the config carries and the vendor CLIs the machine has, because on a
+ * native config a CLI model is exactly the pick that used to be impossible.
  */
-import { MODEL_ROLES, isModelRole, type BackendRef, type ModelRole } from "../core/types.js";
-import { writeRoleBinding } from "../core/config.js";
-import { candidateKey, discoverInventory, modelFactsLine, type DiscoveredModel } from "../cli/allocate.js";
+import { MODEL_ROLES } from "../core/types.js";
+import { routePins, setRoutePins } from "../compiler/pins.js";
+import { discoverInventory, modelFactsLine, type DiscoveredModel } from "../cli/allocate.js";
 import { modelPicker } from "../cli/model-picker.js";
-import { capabilityRows, loadRanking, roleResolutionsOf, type CapabilityGap, type CapabilityRow } from "../capability/index.js";
-import { matchModel } from "../capability/match.js";
+import type { HarnessVendor } from "../backends/harness.js";
 import type { CommandContext, CommandRegistry, CommandResult } from "./registry.js";
-import { probeBackends, type CommandSurface } from "./surface.js";
+import type { CommandSurface } from "./surface.js";
 
-function rowFor(rows: readonly CapabilityRow[], ref: BackendRef): CapabilityRow | undefined {
-	return (
-		rows.find((row) => row.backend_binding !== null && row.backend_binding.backend === ref.backend && row.backend_binding.model === ref.model) ??
-		matchModel(rows, ref.model)
-	);
+/** `backend:model`, the key the typed form and the listing both use. */
+function pinKey(model: DiscoveredModel): string {
+	return `${model.backend ?? model.vendor}:${model.model}`;
 }
 
-function renderModelRow(surface: CommandSurface, role: ModelRole, rows: readonly CapabilityRow[], gap?: CapabilityGap): string {
-	const configured = surface.config.models[role];
-	const override = surface.bindings.get(role);
-	const resolved = surface.bindingFor(role);
-	const configuredRef: BackendRef | null = configured
-		? { backend: configured.backend, model: configured.model, type: surface.config.backends[configured.backend]?.type ?? "native" }
-		: null;
-	const shown = configuredRef ?? resolved.ref;
-	if (!shown) return `${role.padEnd(14)} unresolved`;
-
-	const probe = surface.probes.get(shown.backend);
-	const availability = probe ? `backend: ${probe.status} (${probe.reason})` : "backend: not probed";
-	const row = rowFor(rows, shown);
-	const score = row ? (row.coding_score === null ? "coding_score: unavailable" : `coding_score: ${row.coding_score}`) : "coding_score: unavailable";
-	const price = row
-		? row.price_blended_per_mtok === null
-			? "price: unknown"
-			: `price: $${row.price_blended_per_mtok}/Mtok blended`
-		: "price: unknown";
-	const fills = row ? `roles: ${row.roles.join(", ") || "none"}` : "roles: unlisted";
-	const evidence = row ? `evidence: ${row.evidence}` : "evidence: none";
-
-	// A session override and the platform's own resolution are separate facts:
-	// one someone set on the surface, one PRD-001/PRD-024 picked.
-	const session = override ? `  session: ${override.backend}/${override.model}` : "";
-	const differs =
-		!override && resolved.ref !== null && (resolved.ref.backend !== shown.backend || resolved.ref.model !== shown.model)
-			? `  resolved: ${resolved.ref.backend}/${resolved.ref.model}`
-			: "";
-	// The role floor is not met by the resolved model: named here rather than
-	// swallowed, so an unmeasured CLI model is visibly unmeasured.
-	const gapLine = gap ? `  capability_gap: ${gap.reason}` : "";
-	return `${role.padEnd(14)} ${`${shown.backend}/${shown.model}`.padEnd(28)} ${score}  ${price}  ${fills}  ${evidence}  ${availability}${session}${differs}${gapLine}`;
+/**
+ * The native models the config already carries. A native backend has no `models`
+ * command to enumerate, so the ids come from what the role map binds to it plus
+ * any `model` on the entry itself — the same set the compiler can route to.
+ */
+function nativeModels(surface: CommandSurface): DiscoveredModel[] {
+	const models: DiscoveredModel[] = [];
+	const seen = new Set<string>();
+	for (const [name, backend] of Object.entries(surface.config.backends)) {
+		if (backend.type !== "native" || backend.enabled === false) continue;
+		const ids = new Set<string>();
+		for (const role of MODEL_ROLES) {
+			const binding = surface.config.models[role];
+			if (binding?.backend === name) ids.add(binding.model);
+		}
+		const declared = (backend as { model?: unknown }).model;
+		if (typeof declared === "string" && declared.length > 0) ids.add(declared);
+		for (const model of ids) {
+			const key = `${name}:${model}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			models.push({
+				// The backend's own name is the provider key; discovery does the same
+				// for a CLI vendor, so the picker's provider pane groups both.
+				vendor: name as HarnessVendor,
+				backend: name,
+				model,
+				source: `native backend ${name}`,
+				facts: { execution: "native", availability: "ready", evidence: "configured native backend", coding_score: null, price_blended_per_mtok: null },
+			});
+		}
+	}
+	return models;
 }
 
-export async function renderModels(surface: CommandSurface): Promise<string> {
-	const ranking = loadRanking(surface.config);
-	const resolutions = roleResolutionsOf(ranking, surface.config);
-	const rows = capabilityRows(ranking, resolutions);
-	const gaps = new Map(resolutions.map((selection) => [selection.role, selection.model_id === null ? undefined : selection.capability_gap]));
-	if (surface.probes.size === 0) await probeBackends(surface);
+/** The providers the picker offers: native backends first, then the vendor CLIs. */
+function pinInventory(surface: CommandSurface): DiscoveredModel[] {
+	return [...nativeModels(surface), ...discoverInventory({ env: surface.env })];
+}
 
-	const lines = [
-		`ranking revision ${ranking.revision} — oldest record ${ranking.oldest_updated_at} (${ranking.age_days} days old${ranking.stale ? ", stale" : ""})`,
-		...MODEL_ROLES.filter((role) => surface.config.models[role] !== undefined || surface.bindings.has(role)).map((role) =>
-			renderModelRow(surface, role, rows, gaps.get(role)),
-		),
-	];
-	// The role rows above are what is bound; the inventory is what the machine
-	// could bind. Without it a user with three subscriptions sees only the one
-	// model their config happens to name and concludes nothing was detected.
-	const inventory = discoverInventory({ env: surface.env });
-	lines.push("", `discovered on this machine (\`/model use <role> <backend>:<model>\`):`);
-	lines.push(...inventory.map((model) => `  ${candidateKey(model).padEnd(42)} ${modelFactsLine(model.facts)}  (${model.source})`));
+/** The printed fallback (no UI): the current mode, then the inventory. */
+function renderPinInventory(surface: CommandSurface): string {
+	const pin = routePins().model;
+	const lines = [pin ? `model: ${pin.backend}/${pin.model} (Manual)` : "model: Auto (the router decides)"];
+	const inventory = pinInventory(surface);
+	lines.push("", "discovered on this machine (`/model <backend>:<model>`, or `/model auto`):");
+	lines.push(...inventory.map((model) => `  ${pinKey(model).padEnd(42)} ${modelFactsLine(model.facts)}  (${model.source})`));
 	return lines.join("\n");
 }
 
-/** Persist one role binding and make it effective now: the writer `surface.bindings` never had. */
-function applyBinding(surface: CommandSurface, role: ModelRole, chosen: DiscoveredModel): CommandResult {
-	// Discovery names backends after the vendor, which is exactly how the registry
-	// infers the vendor when the entry does not spell one out.
-	const backend = chosen.vendor;
-	writeRoleBinding(surface.cwd, role, backend, chosen.model);
-	// The running session holds its own copy of the config, so the write has to
-	// land in both or the binding only takes effect on the next start.
+/** Pin one model for the session. Nothing is written to `leanpi.config.yaml`. */
+function pinModel(surface: CommandSurface, chosen: DiscoveredModel): CommandResult {
+	const backend = chosen.backend ?? chosen.vendor;
+	// A discovered CLI backend may be absent from the config; the running session
+	// needs the entry so the executor lane's registry can spawn it. The config is
+	// in memory only — `/role` is the command that writes.
 	surface.config.backends[backend] ??= { type: "external_harness" };
-	surface.config.models[role] = { backend, model: chosen.model };
-	// The pin too, or the capability index keeps re-picking this role for the rest
-	// of the session and the operator's choice only holds after a restart.
-	surface.config.capability.roles ??= {};
-	surface.config.capability.roles[role] = { ...surface.config.capability.roles[role], pin: chosen.model };
-	surface.bindings.set(role, { backend, model: chosen.model, type: chosen.facts.execution });
-	return { ok: true, text: `${role} → ${backend}/${chosen.model} (written to the config; ${modelFactsLine(chosen.facts)})` };
+	setRoutePins({ model: { backend, model: chosen.model, type: chosen.facts.execution } }, surface.host.current().getSessionId());
+	return {
+		ok: true,
+		text: `model pinned to ${backend}/${chosen.model} (Manual) for this session — /model auto, /new or /resume returns to Auto`,
+	};
 }
 
-/** The two panes, when Pi has a UI to draw them in. */
-async function pickModel(surface: CommandSurface, custom: NonNullable<CommandContext["custom"]>): Promise<CommandResult> {
-	const inventory = discoverInventory({ env: surface.env });
-	if (inventory.length === 0) return { ok: false, text: "no vendor CLI found on this machine — `/doctor` says what is missing" };
-	// The roles a model already serves, so the listing shows what is bound
-	// without the reader holding the role rows in their head.
-	const bound = new Map<string, ModelRole[]>();
-	for (const role of MODEL_ROLES) {
-		const binding = surface.config.models[role];
-		if (binding === undefined) continue;
-		const key = `${binding.backend}:${binding.model}`;
-		bound.set(key, [...(bound.get(key) ?? []), role]);
-	}
-	// Not an overlay: a floating overlay is centred in the viewport, so on a fresh
-	// session the panes sat in a field of blank rows well below the prompt. Pi's
-	// own selectors render in the editor's place instead, and so does this one.
-	const pick = await custom(modelPicker(inventory, bound));
-	if (pick === undefined) return { ok: true, text: "no change" };
-	return applyBinding(surface, pick.role, pick.model);
+/** `/model auto` — clear the pin, and only the pin: the route overrides stand. */
+function clearPin(surface: CommandSurface): CommandResult {
+	setRoutePins({ model: undefined }, surface.host.current().getSessionId());
+	return { ok: true, text: "model: Auto — the router decides the model again" };
 }
 
-/** `/model use <role> <backend>:<model>` — the same binding, typed rather than picked. */
-function bindRole(surface: CommandSurface, args: string): CommandResult {
-	const [role, key] = args.split(/\s+/);
-	if (role === undefined || key === undefined || !isModelRole(role)) {
-		return { ok: false, text: `usage: /model use <${MODEL_ROLES.join("|")}> <backend>:<model>` };
+/** `/model <backend>:<model>` — the picker's answer, typed. */
+function pinByKey(surface: CommandSurface, key: string): CommandResult {
+	const index = key.indexOf(":");
+	if (index <= 0 || index === key.length - 1) {
+		return { ok: false, text: `usage: /model <backend>:<model> (or /model auto) — run /model for the inventory` };
 	}
-	const inventory = discoverInventory({ env: surface.env });
-	const chosen = inventory.find((model) => candidateKey(model) === key);
+	const backend = key.slice(0, index);
+	const model = key.slice(index + 1);
+	const inventory = pinInventory(surface);
+	const chosen = inventory.find((entry) => entry.model === model && (entry.backend ?? entry.vendor) === backend);
 	if (chosen === undefined) {
-		return { ok: false, text: `no discovered model \`${key}\` — run /model for the inventory` };
+		return { ok: false, text: `no model \`${key}\` on this machine — run /model for the inventory` };
 	}
 	if (chosen.facts.availability !== "ready") {
 		return { ok: false, text: `${key} is ${chosen.facts.availability}: ${chosen.facts.evidence}` };
 	}
-	return applyBinding(surface, role, chosen);
+	return pinModel(surface, chosen);
+}
+
+/** The picker: providers left (native and CLI), models right, pin on enter. */
+async function pickPin(surface: CommandSurface, custom: NonNullable<CommandContext["custom"]>): Promise<CommandResult> {
+	const inventory = pinInventory(surface);
+	if (inventory.length === 0) return { ok: false, text: "no native backend or vendor CLI found — `/doctor` says what is missing" };
+	const pick = await custom(modelPicker(inventory, new Map(), { mode: "model" }));
+	if (pick === undefined) return { ok: true, text: "no change" };
+	if (pick.auto === true) return clearPin(surface);
+	if (pick.model === undefined) return { ok: true, text: "no change" };
+	return pinModel(surface, pick.model);
 }
 
 export function registerModelCommands(registry: CommandRegistry, surface: CommandSurface): void {
 	registry.register({
 		name: "model",
-		summary: "list configured models by role with availability, coding score and price",
-		usage: "/model [use <role> <backend>:<model>]",
+		summary: "pick the model this session runs on (Manual), or return to Auto; role binding is /role",
+		usage: "/model [<backend>:<model>|auto]",
 		run: async (args, context): Promise<CommandResult> => {
 			const rest = args.trim();
-			if (rest.startsWith("use ")) return bindRole(surface, rest.slice(4).trim());
-			// The picker is the interactive answer and the listing the printable
-			// one; neither is a lesser copy of the other.
-			if (rest.length === 0 && context.custom) return pickModel(surface, context.custom);
-			if (rest.length > 0) {
-				return {
-					ok: false,
-					text: `unknown flag \`${args.trim()}\` — the ranking ships with the harness and is never fetched; freshness moves by a maintainer PR`,
-				};
+			if (rest === "auto") return clearPin(surface);
+			if (rest === "use" || rest.startsWith("use ")) {
+				return { ok: false, text: "`/model use` was removed — bind a role with `/role <role> <backend>:<model>`" };
 			}
-			return { ok: true, text: await renderModels(surface) };
+			if (rest.length > 0) return pinByKey(surface, rest);
+			if (context.custom) return pickPin(surface, context.custom);
+			return { ok: true, text: renderPinInventory(surface) };
 		},
 	});
 }

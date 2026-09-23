@@ -338,6 +338,34 @@ describe("activation wiring", () => {
 		}
 	});
 
+	it("installs a native `/model` pin ahead of the routed class (PRD-048 AC-2)", async () => {
+		// `/model` means "the model being used now": a native pick changes the model
+		// Pi's loop runs, regardless of which class the classifier routed the turn to.
+		const backend = await startStubBackend([{ text: "ok" }]);
+		const { cwd, agentDir } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: {
+				cheap: nativeBackend(backend.baseUrl, { model: "cheap-model" }),
+				strong: nativeBackend(backend.baseUrl, { model: "strong-model" }),
+			},
+			models: {
+				quick: { backend: "cheap", model: "cheap-model" },
+				balanced: { backend: "cheap", model: "cheap-model" },
+				strong: { backend: "strong", model: "strong-model" },
+			},
+		});
+		const session = await bootSession({ cwd, agentDir });
+		try {
+			setRoutePins({ model: { backend: "strong", model: "strong-model", type: "native" } }, "wiring-spec");
+			await session.session.prompt("rename the helper");
+			expect(backend.requests[0]?.model).toBe("strong-model");
+		} finally {
+			clearRoutePins();
+			session.session.dispose();
+			await backend.close();
+		}
+	});
+
 	it("opens the PRD lane when the compiler dispatches to it, and nothing when it does not (PRD-012)", async () => {
 		const { cwd, agentDir } = fixtureRepo();
 		const config = prdConfig(cwd);

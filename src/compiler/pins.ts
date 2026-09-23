@@ -2,8 +2,8 @@
  * Session-scoped route pins (PRD-016 Phase 3, ROADMAP §45).
  *
  * `/route executor <class>`, `/route reviewer <class>`, `/route prd force|skip`
- * and `/model <role>` write here; the compiler reads here when it builds the
- * next contract. A pin is the *decided* value from that point on, and the
+ * and `/model <backend>:<model>` write here; the compiler reads here when it
+ * builds the next contract. A pin is the *decided* value from that point on, and
  * telemetry row it replaces is marked `fallback_used` so `/route` and the
  * record agree that JEV did not make the call.
  *
@@ -13,12 +13,19 @@
  */
 import type { ExecutorClass, PlanningDecision, ReviewerClass } from "./contract.js";
 import type { RoutingDefault } from "./route.js";
+import type { BackendRef } from "../core/types.js";
 
 export interface RoutePins {
 	executor_class?: ExecutorClass;
 	reviewer_class?: ReviewerClass;
 	/** The gate outcome, not the classifier's confidence. */
 	prd_required?: boolean;
+	/**
+	 * `/model`'s manual pick (PRD-048): the exact backend/model the operator
+	 * chose, in place of the router's per-turn pick. Present means Manual and the
+	 * turn is dispatched on it; absent means Auto and the router decides.
+	 */
+	model?: BackendRef;
 }
 
 let pins: RoutePins = {};

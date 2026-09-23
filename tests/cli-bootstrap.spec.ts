@@ -637,7 +637,7 @@ describe("the status line", () => {
 		expect(mk("low")).toBe("quick  ·  Auto  ·  thinking: low  ·  simple task");
 	});
 
-	it("says `Auto` until the operator pins the role, then `Manual` in red", () => {
+	it("says `Manual` for the session pin and `Auto` otherwise, ignoring a role capability pin", () => {
 		const backends = { claude: { type: "external_harness", vendor: "claude" } };
 		const models = { strong: { backend: "claude", model: "opus[1m]" } };
 		const contract = {
@@ -653,14 +653,18 @@ describe("the status line", () => {
 		const auto = statusLine({ config: { backends, models } as never, contract });
 		expect(auto).toContain("Auto");
 		expect(auto).not.toContain("Manual");
-		// `/model` writes the pin, and the chip is how the operator sees it took:
-		// a red `Manual` next to the model, so a hand-picked model is never
+		// A role's capability pin is what the index picks *with*; it is not an
+		// operator's pick this session, so it still reads `Auto` (PRD-048).
+		const rolePinned = { backends, models, capability: { roles: { strong: { pin: "opus[1m]" } } } } as never;
+		expect(statusLine({ config: rolePinned, contract })).toContain("Auto");
+		// `/model` writes the session pin, and the chip is how the operator sees it
+		// took: a red `Manual` next to the model, so a hand-picked model is never
 		// mistaken for the harness's own choice.
-		const pinned = { backends, models, capability: { roles: { strong: { pin: "opus[1m]" } } } } as never;
-		const manual = statusLine({ config: pinned, contract, color: true });
+		const manual = statusLine({ config: { backends, models } as never, contract, pin: { backend: "claude", model: "sonnet", type: "external_harness" }, color: true });
 		expect(manual).toContain("Manual");
 		expect(manual).toContain("\u001b[38;5;196mManual\u001b[0m");
 		expect(manual).not.toContain("Auto");
+		expect(manual).toContain("sonnet");
 	});
 
 	it("reports Pi's context reading and a measured shortfall, and stays silent without either", () => {

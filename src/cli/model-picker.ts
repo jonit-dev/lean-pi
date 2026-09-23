@@ -19,11 +19,22 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { MODEL_ROLES, type ModelRole } from "../core/types.js";
 import type { DiscoveredModel } from "./allocate.js";
 
-/** What the picker returns: the role to bind and the model to bind to it. */
+/** The provider row that returns the session to Auto (PRD-048). */
+export const AUTO_PROVIDER = "auto";
+
+/**
+ * What the picker returns: the model to bind. `/role` adds the role to bind it
+ * to; `/model` (PRD-048) pins the model itself and sets `auto` to clear a pin.
+ */
 export interface ModelPick {
-	role: ModelRole;
-	model: DiscoveredModel;
+	model?: DiscoveredModel;
+	role?: ModelRole;
+	/** True when the operator chose the `auto` row: hand routing back to the router. */
+	auto?: boolean;
 }
+
+/** `model` pins and closes on the model; `role` adds the role pane (PRD-030/048). */
+export type PickerMode = "model" | "role";
 
 /** Rows the panes are tall; Pi's own selectors sit in the same range. */
 const VISIBLE = 12;
@@ -71,9 +82,9 @@ function listTheme(theme: Theme, focused: () => boolean): SelectListTheme {
 }
 
 /** Vendors in discovery order, each with how many models it exposes and whether it can run. */
-function providerItems(inventory: readonly DiscoveredModel[], theme: Theme): SelectItem[] {
+function providerItems(inventory: readonly DiscoveredModel[], theme: Theme, withAuto: boolean): SelectItem[] {
 	const vendors = [...new Set(inventory.map((model) => model.vendor))];
-	return vendors.map((vendor) => {
+	const items = vendors.map((vendor) => {
 		const models = inventory.filter((model) => model.vendor === vendor);
 		const availability = models[0]?.facts.availability ?? "not-installed";
 		const colour = availability === "ready" ? "success" : availability === "signed-out" ? "warning" : "error";
@@ -81,6 +92,9 @@ function providerItems(inventory: readonly DiscoveredModel[], theme: Theme): Sel
 		// pane's, and a 22-column provider pane has no room for a second one.
 		return { value: vendor, label: `${theme.fg(colour, READY_MARK[availability])} ${vendor.padEnd(10)}${theme.fg("dim", String(models.length).padStart(3))}` };
 	});
+	// `auto` rides in the provider pane so the picker can undo a pin without
+	// leaving it: the row is not a provider, it is the absence of one.
+	return withAuto ? [{ value: AUTO_PROVIDER, label: theme.fg("muted", "↺ auto     ") }, ...items] : items;
 }
 
 function modelItems(models: readonly DiscoveredModel[], bound: ReadonlyMap<string, ModelRole[]>, theme: Theme): SelectItem[] {
@@ -126,12 +140,13 @@ class ModelPicker implements Component {
 		private readonly inventory: readonly DiscoveredModel[],
 		private readonly bound: ReadonlyMap<string, ModelRole[]>,
 		private readonly done: (pick: ModelPick | undefined) => void,
+		private readonly mode: PickerMode = "role",
 	) {
 		this.modelStyle = listTheme(theme, () => this.focus === "models");
 		// The provider pane is exactly as wide as its column: without a bound of its
 		// own the list claims the default 32, and the stack takes the difference out
 		// of the pane, truncating the counts off the ends of the names.
-		this.providers = new SelectList(providerItems(inventory, theme), VISIBLE, listTheme(theme, () => this.focus === "providers"), {
+		this.providers = new SelectList(providerItems(inventory, theme, mode === "model"), VISIBLE, listTheme(theme, () => this.focus === "providers"), {
 			minPrimaryColumnWidth: PROVIDER_WIDTH,
 			maxPrimaryColumnWidth: PROVIDER_WIDTH,
 		});
@@ -146,7 +161,11 @@ class ModelPicker implements Component {
 		this.root = new VStack([this.header, this.panes, this.hint]);
 
 		this.providers.onSelectionChange = () => this.showModels();
-		this.providers.onSelect = () => this.setFocus("models");
+		this.providers.onSelect = () => {
+			// The `auto` row is an answer, not a drill-down: there are no models under it.
+			if (mode === "model" && this.vendor === AUTO_PROVIDER) return this.done({ auto: true });
+			this.setFocus("models");
+		};
 		this.providers.onCancel = () => this.done(undefined);
 		this.roles.onSelect = (item) => this.done(this.chosen ? { role: item.value as ModelRole, model: this.chosen } : undefined);
 		this.roles.onCancel = () => this.setFocus("models");
@@ -159,7 +178,7 @@ class ModelPicker implements Component {
 
 	/** The right pane, rebuilt for the provider now under the cursor. */
 	private showModels(): void {
-		const models = this.inventory.filter((entry) => entry.vendor === this.vendor);
+		const models = this.vendor === AUTO_PROVIDER ? [] : this.inventory.filter((entry) => entry.vendor === this.vendor);
 		this.models = new SelectList(modelItems(models, this.bound, this.theme), VISIBLE, this.modelStyle, MODEL_COLUMN);
 		this.models.onSelect = (item) => this.chooseModel(models.find((entry) => entry.model === item.value));
 		this.models.onCancel = () => this.setFocus("providers");
@@ -178,6 +197,8 @@ class ModelPicker implements Component {
 			return;
 		}
 		this.chosen = model;
+		// `/model` pins the model itself: there is no role step to ask for (PRD-048).
+		if (this.mode === "model") return this.done({ model });
 		this.setFocus("roles");
 	}
 
@@ -225,6 +246,7 @@ class ModelPicker implements Component {
 export function modelPicker(
 	inventory: readonly DiscoveredModel[],
 	bound: ReadonlyMap<string, ModelRole[]>,
+	options: { mode?: PickerMode } = {},
 ): (tui: TUI, theme: Theme, keybindings: unknown, done: (pick: ModelPick | undefined) => void) => Component {
-	return (tui, theme, _keybindings, done) => new ModelPicker(tui, theme, inventory, bound, done);
+	return (tui, theme, _keybindings, done) => new ModelPicker(tui, theme, inventory, bound, done, options.mode ?? "role");
 }

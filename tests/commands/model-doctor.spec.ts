@@ -65,7 +65,7 @@ describe("/model and /doctor (PRD-016 Phase 2)", () => {
 	it("lists configured models by role with the ranking's score, price, role-fill, revision and staleness (AC-4)", async () => {
 		const fixture = modelDoctorFixture();
 
-		const models = await fixture.dispatch("/model");
+		const models = await fixture.dispatch("/role");
 		expect(models.ok).toBe(true);
 		// The revision moves with every scrape of the ranking; that it is reported
 		// is the contract, not which number it currently is.
@@ -83,9 +83,9 @@ describe("/model and /doctor (PRD-016 Phase 2)", () => {
 		expect(models.text).not.toContain(STUB_SECRET);
 
 		// The ranking is a shipped file: there is nothing to refresh.
-		const refresh = await fixture.dispatch("/model --refresh");
+		const refresh = await fixture.dispatch("/role --refresh");
 		expect(refresh.ok).toBe(false);
-		expect(refresh.text).toContain("unknown flag");
+		expect(refresh.text).toContain("usage: /role");
 	});
 
 	it("pins the executor lane through /route, observable in the next /route (AC-4)", async () => {

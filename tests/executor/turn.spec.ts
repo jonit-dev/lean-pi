@@ -56,16 +56,16 @@ describe("PRD-007 Phase 1 — the turn chain", () => {
 		clearLanes();
 
 		// Native roles: Pi's own agent loop is the executor, so the *executor* lane
-		// stays out — a second worker there would run the task twice. The compiler
-		// still registers, because it is what classifies the task and decides the
-		// model class and the reasoning budget the turn is billed for (§14): with
-		// it out, a native turn costs whatever Pi's defaults cost and no JEV
-		// decision ever reaches the spend.
+		// stays out — a second worker there would run the task twice. PRD-048 still
+		// registers it (a `/model` CLI pin can hand it a turn later) and gates its
+		// `run` on `ownsTurn`, so the lane is present but never executes here. The
+		// compiler still registers, because it is what classifies the task and
+		// decides the model class and the reasoning budget the turn is billed for.
 		expect(ownsExecutionLoop(h.config)).toBe(false);
 		expect(registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config })).toBe(false);
-		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface", "executor"]);
 
-		// External-harness roles: LeanPi owns the loop, so the chain registers.
+		// External-harness roles: LeanPi owns the loop, so the chain executes.
 		clearLanes();
 		const harnessConfig = multiBackendConfig(h.cwd);
 		expect(ownsExecutionLoop(harnessConfig)).toBe(true);
@@ -83,7 +83,7 @@ describe("PRD-007 Phase 1 — the turn chain", () => {
 		// the first task's workspace, captured in the earlier lane's closure).
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config });
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config });
-		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface", "executor"]);
 
 		// The owned chain follows the same rule, including a switch from a native
 		// configuration to an external-harness one: no leftover compiler, no second
@@ -102,6 +102,6 @@ describe("PRD-007 Phase 1 — the turn chain", () => {
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config });
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config });
 
-		expect(listLanes().map((lane) => lane.name)).toEqual(["probe", "compiler", "tool-surface"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["probe", "compiler", "tool-surface", "executor"]);
 	});
 });

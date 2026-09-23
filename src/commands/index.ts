@@ -24,6 +24,7 @@ import { registerHelpCommand } from "./help.js";
 import { registerModelCommands } from "./model.js";
 import { registerRecapCommand } from "./recap.js";
 import type { CommandRegistry } from "./registry.js";
+import { registerRoleCommands } from "./role.js";
 import { registerRouteCommand } from "./route.js";
 import { registerStatusCommand } from "./status.js";
 import { createCommandSurface, type CommandSurface, type CommandSurfaceDeps } from "./surface.js";
@@ -35,13 +36,13 @@ export type { CommandSurface, CommandSurfaceDeps, ProbeResult, RoleBinding, Sess
 export { renderHelp } from "./help.js";
 export { renderStatus } from "./status.js";
 export { renderConfig } from "./config.js";
-export { renderModels } from "./model.js";
+export { renderModels } from "./role.js";
 export { doctorRows, renderDoctor, worstStatus } from "./doctor.js";
 export { renderRoute, routeLines, jevLine } from "./route.js";
 export { contextReport, renderContextReport } from "./context.js";
 
 /** The commands PRD-016 owns, in the order `/help` lists them. */
-export const OWNED_COMMANDS = ["help", "status", "model", "route", "context", "compact-refs", "config", "doctor", "recap"] as const;
+export const OWNED_COMMANDS = ["help", "status", "model", "role", "route", "context", "compact-refs", "config", "doctor", "recap"] as const;
 
 /**
  * The commands the other PRDs own and `activate()` registers: PRD-025's `/todo`,
@@ -63,6 +64,7 @@ export function registerCommandSurface(registry: CommandRegistry, deps: CommandS
 	registerHelpCommand(registry);
 	registerStatusCommand(registry, surface);
 	registerModelCommands(registry, surface);
+	registerRoleCommands(registry, surface);
 	registerRouteCommand(registry, surface);
 	registerContextCommands(registry, surface);
 	registerConfigCommand(registry, surface);

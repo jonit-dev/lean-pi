@@ -35,10 +35,10 @@ const INVENTORY = [
 /** A theme that paints nothing, so the test reads the text it laid out. */
 const theme = { fg: (_colour: string, text: string) => text } as unknown as Theme;
 
-function picker(bound: Map<string, string[]> = new Map()): { component: Component; picks: (ModelPick | undefined)[] } {
+function picker(bound: Map<string, string[]> = new Map(), mode: "model" | "role" = "role"): { component: Component; picks: (ModelPick | undefined)[] } {
 	const picks: (ModelPick | undefined)[] = [];
 	const tui = { requestRender: () => {} } as unknown as TUI;
-	const component = modelPicker(INVENTORY, bound as Map<string, never>)(tui, theme, undefined, (pick) => picks.push(pick));
+	const component = modelPicker(INVENTORY, bound as Map<string, never>, { mode })(tui, theme, undefined, (pick) => picks.push(pick));
 	return { component, picks };
 }
 
@@ -103,5 +103,25 @@ describe("the /model picker", () => {
 
 		expect(picks).toEqual([]);
 		expect(component.render(80).join("\n")).toContain("opencode evidence");
+	});
+
+	it("pins the model directly in model mode, with an auto row and no role step (PRD-048)", () => {
+		const { component, picks } = picker(new Map(), "model");
+
+		expect(component.render(80).join("\n")).toContain("auto");
+		component.handleInput?.(DOWN); // providers: auto → claude
+		component.handleInput?.(RIGHT); // focus the model pane
+		component.handleInput?.(DOWN); // opus[1m] → sonnet
+		component.handleInput?.(ENTER); // pin the model; no role pane appears
+
+		expect(picks).toEqual([{ model: INVENTORY[1] }]);
+	});
+
+	it("returns Auto when the auto row is chosen (PRD-048)", () => {
+		const { component, picks } = picker(new Map(), "model");
+
+		component.handleInput?.(ENTER); // the auto row is the first provider
+
+		expect(picks).toEqual([{ auto: true }]);
 	});
 });

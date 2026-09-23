@@ -24,6 +24,7 @@ import type { CapabilitySlots, ExecutionContract } from "../compiler/contract.js
 import type { LeanPiConfig, ModelRole, SelectedSkill } from "../core/types.js";
 import type { ClearingSource } from "../routing/candidates.js";
 import { dispatchRequest, effortParameterOf, selectRoute } from "../routing/router.js";
+import { routePins } from "../compiler/pins.js";
 import type { RouteCostBlock } from "../telemetry/record.js";
 import type { EvidenceRecord, EvidenceStore } from "../verify/evidence.js";
 import type { ShellExec } from "../verify/run.js";
@@ -291,25 +292,43 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 	});
 	for (const row of route.telemetry) sites.push({ site: row.site_id, answer: row.answer, fallbackUsed: row.fallback_used });
 	const routed = route.selected;
+	// PRD-048: a `/model` pick is the operator's identity for the turn and replaces
+	// the router's. It only holds while the route is not abandoned (a retry or an
+	// escalation moves the route as §34 requires); until then every other backend
+	// is held out of the chain so the pin is what dispatches.
+	const pin = routePins().model;
 	// A capability gap is recorded, never silent: the pool's own role chain runs
 	// the turn, and the row says the cost-aware choice did not decide it.
 	sites.push({
 		site: ROUTE_SITE_ID,
-		answer: routed ? `${routed.candidate.backend}/${routed.candidate.model}` : route.reason,
-		fallbackUsed: routed === null,
+		answer: pin ? `${pin.backend}/${pin.model} (manual)` : routed ? `${routed.candidate.backend}/${routed.candidate.model}` : route.reason,
+		fallbackUsed: pin ? false : routed === null,
 	});
 	// PRD-045: the MCP half of this turn's surface, projected for the vendor. Only
 	// `allow`-resolved tools travel; the rest are recorded, because a vendor loop
 	// cannot prompt and a silent omission would read as "no such tool".
 	const mcp = deps.mcpResolver ? deps.mcpResolver(contract.capabilities.mcps as SelectedMcpTool[]) : { servers: [] as WorkerMcpServer[], withheld: [] as Array<{ capability: string; decision: string }> };
 	for (const row of mcp.withheld) sites.push({ site: "mcp.withheld", answer: `${row.capability}:${row.decision}`, fallbackUsed: false });
-	if (routed) {
+	if (pin) {
+		// The pinned backend's own role list decides which role the chain asks for;
+		// a pool-wide backend (no `roles`) serves whichever the contract named.
+		const backend = deps.registry.byName(pin.backend);
+		if (backend?.roles && !backend.roles.includes(role)) role = backend.roles[0] ?? role;
+	} else if (routed) {
 		role = routed.candidate.roles.includes(role) ? role : (routed.candidate.roles[0] ?? role);
 	}
 	/** The routed identity, while it is still the one the chain must dispatch. */
-	let routedIdentity: { backend: string; model: string } | null = routed ? { backend: routed.candidate.backend, model: routed.candidate.model } : null;
+	let routedIdentity: { backend: string; model: string } | null = pin
+		? { backend: pin.backend, model: pin.model }
+		: routed
+			? { backend: routed.candidate.backend, model: routed.candidate.model }
+			: null;
 	/** Everything the routed backend is preferred over; dropped with the pin. */
-	let routeExclusions: string[] = routed ? deps.registry.backends.filter((backend) => backend.name !== routed.candidate.backend).map((backend) => backend.name) : [];
+	let routeExclusions: string[] = pin
+		? deps.registry.backends.filter((backend) => backend.name !== pin.backend).map((backend) => backend.name)
+		: routed
+			? deps.registry.backends.filter((backend) => backend.name !== routed.candidate.backend).map((backend) => backend.name)
+			: [];
 	// A burned or escalated-away route is no longer this turn's identity, and
 	// holding its exclusions would strand FR-046's fallback chain.
 	const abandonRoute = (): void => {

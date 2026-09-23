@@ -14,7 +14,7 @@
 import type { ExecutionContract } from "../compiler/contract.js";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ExecutionComplexity } from "../compiler/contract.js";
-import type { LeanPiConfig, ModelRole } from "../core/types.js";
+import type { LeanPiConfig, ModelRole, BackendRef } from "../core/types.js";
 import { resolveRole } from "../core/roles.js";
 import { roleStatus } from "../capability/index.js";
 
@@ -94,6 +94,13 @@ export interface StatusInput {
 	/** The model actually running, when it is not the one the role resolves to. */
 	model?: string;
 	/**
+	 * The session's manual model pick (`/model`, PRD-048): the pinned backend and
+	 * model, or `null`/absent for Auto. A role's capability pin no longer decides
+	 * this chip — that pin is what the routing index picks with, not an operator's
+	 * hand-picked model.
+	 */
+	pin?: BackendRef | null;
+	/**
 	 * The level the session was actually set to, when it is not the compiled
 	 * effort — an operator's `thinkingLevel` ceiling is applied before the turn
 	 * runs, and the footer named the pre-ceiling number.
@@ -123,24 +130,28 @@ export interface StatusInput {
 }
 
 /** `deepseek-v4.1-flash  ·  opencode-go  ·  auto  ·  thinking: medium  ·  hard task  ·  $0.42` */
-export function statusLine({ config, contract, role, model: running, effort: applied, cost, goal, contextPercent, degraded, color }: StatusInput): string {
+export function statusLine({ config, contract, role, model: running, effort: applied, cost, goal, contextPercent, degraded, color, pin: manualPin }: StatusInput): string {
 	const resolvedRole = role ?? contract.routing.executor_class;
 	let model: string;
 	// The same model id is served by several providers at different prices and
 	// context windows, so the name alone does not say which one the turn is on.
 	let provider: string | undefined;
 	// Which model runs is the harness's call until the operator makes it theirs:
-	// the capability index picks one per turn, and only a `/model` pin stops it.
-	// `undefined` when the caller already knows the running model and the role's
-	// pin state would describe a model that is not the one executing.
-	let pinned: boolean | undefined;
+	// `/model`'s pin is the operator's, and it is the only one that means Manual
+	// (PRD-048). A role's capability pin only stops the index re-picking that
+	// role; it is not a pick the operator made this session, so it stays Auto.
+	let pinned = false;
 	// The role asked for a floor the running model does not clear. Reported once
 	// to stderr at session start, which in the TUI is nowhere, so a hard task
 	// quietly running on the cheap model looked exactly like one that was not.
 	// Only a *measured* shortfall: an unmeasured model (every CLI model is one)
 	// would fire this on every turn and the chip would stop meaning anything.
 	let shortfall: string | undefined;
-	if (running !== undefined) {
+	if (manualPin) {
+		model = prettyModel(manualPin.backend, manualPin.model);
+		provider = manualPin.backend;
+		pinned = true;
+	} else if (running !== undefined) {
 		// The caller knows what is executing and it is not the role's model — Pi
 		// kept the session model because the class has no entry in its registry.
 		const split = running.includes("/") ? (running.split("/", 2) as [string, string]) : undefined;
@@ -148,7 +159,6 @@ export function statusLine({ config, contract, role, model: running, effort: app
 		provider = split?.[0];
 	} else {
 		const status = roleStatus(config, resolvedRole);
-		pinned = status.pinned;
 		if (status.gap !== undefined && status.gap.best_available !== null) shortfall = `⚠ below ${resolvedRole} floor`;
 		try {
 			const ref = resolveRole(config, resolvedRole);
@@ -166,9 +176,9 @@ export function statusLine({ config, contract, role, model: running, effort: app
 		color === true ? `${BOLD}${model}${RESET}` : model,
 		// `default` renders as the backend name already; a second copy of it is noise.
 		...(provider !== undefined && provider !== model ? [color === true ? `${DIM}${provider}${RESET}` : provider] : []),
-		...(pinned === undefined
-			? []
-			: [color === true ? (pinned ? `${MANUAL}Manual${RESET}` : `${DIM}Auto${RESET}`) : pinned ? "Manual" : "Auto"]),
+		...(pinned
+			? [color === true ? `${MANUAL}Manual${RESET}` : "Manual"]
+			: [color === true ? `${DIM}Auto${RESET}` : "Auto"]),
 		color === true ? `${EFFORT_COLOR[level]}${effort}${RESET}` : effort,
 		COMPLEXITY_LABEL[contract.task.execution_complexity],
 	];

@@ -30,7 +30,7 @@ import { apiKeyFor, ConfigError, loadConfig, toPiConfigValue, writeSkillsState }
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, compileRecordOf, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
-import { clearRoutePins } from "./compiler/pins.js";
+import { clearRoutePins, routePins } from "./compiler/pins.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
 import { createToolSurface, mcpRequestDefinition, mcpToolName, registerMcpCommand, registerMcpDisclosure, resolveVendorServers, MCP_REQUEST_TOOL_NAME } from "./mcp/index.js";
@@ -39,7 +39,7 @@ import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS } from ".
 import { ensureGitIgnored, registerRuntimeVerifiers, worktreePermissionPrompt } from "./runtime/index.js";
 import type { WorktreePermissionRequest } from "./runtime/index.js";
 import type { BrowserFacility } from "./runtime/browser.js";
-import { ownsExecutionLoop, registerTurnLanesIfOwned, setLaneCollector } from "./commands/turn-lanes.js";
+import { ownsExecutionLoop, ownsTurn, registerTurnLanesIfOwned, setLaneCollector } from "./commands/turn-lanes.js";
 import type { ExecutionContract } from "./compiler/contract.js";
 import {
 	callsFromMessages,
@@ -95,6 +95,7 @@ import type { CredentialEnv } from "./jev/credentials.js";
 import { isModelRole, type JevProvider, type LeanPiConfig, type ModelRole } from "./core/types.js";
 import { traceChildStartup } from "./cli/startup-trace.js";
 import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
+import { registerSubagentRouting } from "./subagents/route.js";
 
 /** PRD-044's answers; plain words, because not everyone knows what a PRD is. */
 const PRD_SUGGEST_YES = "Yes, write a plan first";
@@ -581,6 +582,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// The compiler uses the session's JEV client: one control plane per process,
 	// handed by reference rather than re-created per lane.
 	setCompilerContext({ client: jev, config, cwd });
+	// PRD-049: each `subagent` child is routed by its own task, on the same client.
+	registerSubagentRouting(pi, { config, cwd, client: jev });
 
 	// Skill disclosure (PRD-005): one registry, one selection function, one
 	// command surface. The provider fills `capabilities.skills` inside compileTask.
@@ -932,12 +935,14 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	//
 	// Native configurations return early: there Pi's loop is the executor by
 	// design (§23) and `before_agent_start` below is where the turn is compiled.
+	// A `/model` CLI pin makes LeanPi own the turn even on a native config
+	// (PRD-048), because Pi's loop has no provider for a vendor CLI model.
 	pi.on("input", async (event, ctx) => {
 		// A new prompt invalidates the previous turn's recap before anything runs.
 		recap.clear(ctx);
 		// The recap for this prompt is written below; Pi's loop is not the path here.
 		settledTurn = undefined;
-		if (!ownsExecutionLoop(config)) return;
+		if (!ownsTurn(config)) return;
 		// `runTurn()` drives the lanes itself; this hook must not run them again
 		// for the prompt that entry point is about to send.
 		if (isTurnInFlight()) return;
@@ -985,6 +990,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 						config,
 						contract: context.contract,
 						...statusExtras(ctx),
+						pin: routePins().model ?? null,
 						color: true,
 					}),
 				);
@@ -1058,14 +1064,18 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// only things the classification can change. `setModel` is skipped when Pi
 		// has no authenticated model for the class (an external-harness role), and
 		// the level is clamped to the model's own capabilities by the host.
-		const owns = ownsExecutionLoop(config);
+		const owns = ownsTurn(config);
+		// PRD-048: a native `/model` pin installs the pinned model itself, ahead of
+		// the routed class, so the pick actually changes the model the loop runs —
+		// the class still decides the reasoning budget.
+		const manualPin = routePins().model;
 		// What Pi will actually run this turn, when Pi is the one running it.
 		let installed: string | undefined;
 		// The level the session ends the handler at, which is what the footer must
 		// name: the compiled effort only when it was applied.
 		let effort: ThinkingLevel | undefined;
 		if (context.contract && !owns) {
-			const ref = resolveRole(config, context.contract.routing.executor_class);
+			const ref = manualPin ?? resolveRole(config, context.contract.routing.executor_class);
 			const model = ctx.modelRegistry.find(ref.backend, ref.model);
 			// `setModel` answers whether it took the model. Ignoring that answer
 			// let the footer name a model the session had refused.
@@ -1097,6 +1107,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 					config,
 					contract: context.contract,
 					...statusExtras(ctx),
+					pin: manualPin ?? null,
 					color: true,
 					...(running === undefined ? {} : { model: running }),
 					...(effort === undefined ? {} : { effort }),
@@ -1510,7 +1521,7 @@ export type { Command, CommandInit } from "./commands/registry.js";
 export { createCommandSurface, createSessionHost, OWNED_COMMANDS, registerCommandSurface } from "./commands/index.js";
 export { fetchOpenCodeGoUsage, harnessToken, usageAdapter, usageInventory, renderUsage } from "./cli/usage.js";
 export type { Quota, UsageRow } from "./cli/usage.js";
-export { compilerLane, executorLane, ownsExecutionLoop, registerTurnLanes, registerTurnLanesIfOwned, toolSurfaceLane, type TurnLaneDeps } from "./commands/turn-lanes.js";
+export { compilerLane, executorLane, ownsExecutionLoop, ownsTurn, registerTurnLanes, registerTurnLanesIfOwned, toolSurfaceLane, type TurnLaneDeps } from "./commands/turn-lanes.js";
 export type { CommandSurface, CommandSurfaceDeps, ProbeResult, RoleBinding, SessionHost } from "./commands/index.js";
 export { applyRoutePins, clearRoutePins, pinOwner, pinnedDecision, routePins, setRoutePins } from "./compiler/pins.js";
 export type { RoutePins } from "./compiler/pins.js";
