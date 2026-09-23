@@ -23,7 +23,7 @@ import type {
 	ExecutionContract,
 	SiteTelemetryRow,
 } from "./contract.js";
-import { runGate } from "./gate.js";
+import { runGate, type GateOutcome } from "./gate.js";
 import { applyDeviations, matrixDefault } from "./route.js";
 import { selectRuntimeVerifiers } from "../runtime/planner.js";
 import { createTaskState, deepFreeze } from "./state.js";
@@ -142,6 +142,17 @@ function dispatchFor(prdRequired: boolean): "prd_lane" | "executor_lane" {
 
 export type NextStage = ReturnType<typeof dispatchFor>;
 
+/** A planned request's gate: decided without asking JEV, so it costs nothing. */
+const PLANNED_GATE: GateOutcome = {
+	decision: "DIRECT_EXECUTION",
+	elevateReview: false,
+	fallbackUsed: false,
+	confident: true,
+	answers: {},
+	confidence: 1,
+	tokens: { inputTokens: 0, outputTokens: 0 },
+};
+
 export async function compileTask(
 	request: string,
 	packet: TaskPacket,
@@ -160,7 +171,7 @@ export async function compileTask(
 	// waits on this, so the turn starts a full JEV round-trip sooner.
 	const [[gate, risk], [complexity, capability]] = await Promise.all([
 		(async () => {
-			const gate = await runGate({ client, request, packet, config });
+			const gate = planned ? PLANNED_GATE : await runGate({ client, request, packet, config });
 			return [gate, await classifyReviewRisk({ client, request, packet, elevateReview: gate.elevateReview })] as const;
 		})(),
 		(async () => {
@@ -171,7 +182,7 @@ export async function compileTask(
 	// PRD-016's session pins decide the gate outcome and the two classes; the
 	// classifier and the §14 matrix stay the source of every unpinned value.
 	const pins = routePins();
-	const decision = pinnedDecision(planned ? "DIRECT_EXECUTION" : gate.decision, pins);
+	const decision = pinnedDecision(gate.decision, pins);
 
 	const defaults = matrixDefault(decision === "PRD_REQUIRED", complexity.complexity, risk.review_risk);
 	const { routing: classified, deviation } = applyDeviations(defaults, deviations);

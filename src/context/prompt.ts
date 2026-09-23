@@ -67,11 +67,12 @@ function dedup(block: string, seen: Map<string, string>, artifacts?: ArtifactSto
 	return block;
 }
 
+// No `prd_required`: the harness owns the planning offer, and a model shown the
+// bare flag wrote a PRD of its own, even after the user answered "just do it".
 function renderContract(contract: ExecutionContract): string {
 	return [
 		"task contract:",
 		`  type: ${contract.task.type}`,
-		`  prd_required: ${contract.task.prd_required}`,
 		`  execution_complexity: ${contract.task.execution_complexity}`,
 		`  review_risk: ${contract.task.review_risk}`,
 		`  executor: ${contract.routing.executor_class}`,

@@ -10,7 +10,7 @@ import { readPrdState } from "../../src/prd/state.js";
 import { answerScript } from "../compiler/helpers.js";
 import { bootSession, fixtureRepo, headlessUIContext, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubStep } from "../helpers/stub-backend.js";
-import { startStubJev } from "../helpers/stub-jev.js";
+import { requestsForQuestion, startStubJev } from "../helpers/stub-jev.js";
 import { artifactStoreFor, FIXTURE_PRD_BODY, stagedPrd } from "./helpers.js";
 
 const OPTIONS = ["Yes, write a plan first", "No, just do it", "No, and don't ask again"];
@@ -55,7 +55,12 @@ async function suggestFixture(options: { choices: Record<string, string>; pick?:
 		}
 		return session;
 	};
-	return { backend, jevUrl: jev.url, cwd, env, asked, notes, boot };
+	return { backend, jev, jevUrl: jev.url, cwd, env, asked, notes, boot };
+}
+
+/** How many times the turn asked JEV the planning gate. */
+function gateAsks(jev: { requests: Parameters<typeof requestsForQuestion>[0] }): number {
+	return requestsForQuestion(jev.requests, "architecture").length;
 }
 
 /** The turn's own request: the one carrying the session's system prompt, not the authoring or recap call. */
@@ -120,6 +125,10 @@ describe("PRD suggestion prompt (PRD-044)", () => {
 		});
 		await (await f.boot()).session.prompt("rework the storage layer");
 		expect(f.asked).toEqual([]);
+		// Nobody offered a plan, so the model must not read that one is required:
+		// a bare `prd_required: true` is what sent it off writing a PRD.
+		expect(gateAsks(f.jev)).toBe(1);
+		expect(turnRequest(f.backend)).not.toContain("prd_required");
 	});
 
 	it("does not offer a PRD when the prompt already names one (AC-1)", async () => {
@@ -129,9 +138,8 @@ describe("PRD suggestion prompt (PRD-044)", () => {
 		const f = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[1] });
 		await (await f.boot()).session.prompt("execute docs/PRDs/v1/PRD-045-mcp-execution.md");
 		expect(f.asked).toEqual([]);
-		// ...nor tells the model the task needs one, which is what made it slice
-		// a second PRD out of the one it was told to execute.
-		expect(turnRequest(f.backend)).toContain("prd_required: false");
+		// ...nor spends a JEV round-trip asking whether it needs one.
+		expect(gateAsks(f.jev)).toBe(0);
 	});
 
 	it("never offers a PRD on a /goal turn, whatever the goal says", async () => {
@@ -142,7 +150,7 @@ describe("PRD suggestion prompt (PRD-044)", () => {
 		expect(set.start).toBe("rework the storage layer");
 		await session.session.prompt(set.start!);
 		expect(f.asked).toEqual([]);
-		expect(turnRequest(f.backend)).toContain("prd_required: false");
+		expect(gateAsks(f.jev)).toBe(0);
 	});
 
 	it("does not ask when the gate fell back to its heuristic (AC-1)", async () => {
@@ -186,10 +194,9 @@ describe("PRD suggestion prompt (PRD-044)", () => {
 		expect(models[0]).toBe("planner");
 		expect(JSON.parse(turnRequest(f.backend)).model).toBe("cheap-fast");
 
-		// Later turns execute that plan; none of them is told to write another.
+		// Later turns execute that plan; none of them asks whether to write another.
 		await session.session.prompt("continue");
-		const turns = f.backend.requests.map((request) => JSON.stringify(request.body)).filter((body) => body.includes("prd_required"));
-		expect(turns.at(-1)).toContain("prd_required: false");
+		expect(gateAsks(f.jev)).toBe(1);
 	});
 
 	it("Yes whose authoring fails warns and proceeds as a plain prompt (AC-2)", async () => {
