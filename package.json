@@ -77,10 +77,10 @@
 		"yaml": "^2.8.1"
 	},
 	"devDependencies": {
-		"@types/node": "^22.10.0",
+		"@types/node": "^26.6.2",
 		"oxlint": "^1.30.0",
-		"typescript": "^5.9.3",
-		"vitest": "^3.2.4"
+		"typescript": "^7.0.2",
+		"vitest": "^5.0.1"
 	},
 	"bin": {
 		"leanpi": "./bin/leanpi.js"
