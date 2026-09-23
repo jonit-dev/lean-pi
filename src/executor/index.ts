@@ -27,8 +27,6 @@ export {
 	nextAttempt,
 	recordAttempt,
 	ROLE_LADDER,
-	spendAttempt,
-	spendEscalation,
 	stepRole,
 } from "./retry.js";
 export type { AttemptStrategy, FailureInput, RetryBudget, RetryDecision, RetryRecord } from "./retry.js";
@@ -36,7 +34,6 @@ export {
 	classifyEscalation,
 	CLARIFICATION_QUESTION,
 	CLARIFICATION_SITE_ID,
-	CONTINUING_CATEGORIES,
 	ESCALATION_CATEGORIES,
 	ESCALATION_QUESTION,
 	ESCALATION_SITE_ID,

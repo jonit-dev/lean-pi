@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
 	ARTIFACT_TOOL_NAME,
 	LSP_TOOL_NAMES,
+	activate,
 	clearLanes,
 	compileTask,
 	itemsOf,
@@ -483,6 +484,55 @@ describe("activation wiring", () => {
 		} finally {
 			session.session.dispose();
 			await backend.close();
+		}
+	});
+
+	it("registers session-lifecycle hooks before per-turn hooks, in order (F7)", () => {
+		// F7's only observable contract: `activate()` registers `session_start` →
+		// `session_shutdown` before `input` → `agent_settled`, each group in the
+		// order the bodies ran inline before the extraction. A recording stub is
+		// enough — no session needs to boot.
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { local: nativeBackend("http://127.0.0.1:9/v1") },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+		});
+		const config = loadConfig(cwd);
+		clearLanes();
+		const seen: string[] = [];
+		const fakePi = new Proxy(
+			{},
+			{
+				get: (_target, prop) => (...args: unknown[]) => {
+					if (prop === "on") seen.push(String(args[0]));
+					return undefined;
+				},
+			},
+		);
+		try {
+			activate(fakePi as never, {
+				cwd,
+				config,
+				env: { XDG_CONFIG_HOME: tempDir("leanpi-xdg-"), HOME: tempDir("leanpi-home-") },
+			});
+			const order = [
+				"session_start",
+				"session_tree",
+				"session_shutdown",
+				"input",
+				"before_agent_start",
+				"agent_start",
+				"agent_end",
+				"agent_settled",
+			];
+			let last = -1;
+			for (const name of order) {
+				const at = seen.indexOf(name);
+				expect(at, `${name} registered`).toBeGreaterThan(last);
+				last = at;
+			}
+		} finally {
+			clearLanes();
 		}
 	});
 });

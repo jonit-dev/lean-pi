@@ -247,12 +247,22 @@ export interface FoldInput {
 /** Fold the ledger and the store into the report. Recomputing from an edited ledger changes the values. */
 export function foldReport(input: FoldInput): BenchReport {
 	const records = joinTelemetry(input.ledger, input.telemetry);
-	const metrics = input.configs.map((row) => configMetricsOf(row, input.ledger.filter((attempt) => attempt.config_id === row.id), records, input.config));
+	const byConfig = new Map<string, BenchLedgerRow[]>();
+	const byConfigTask = new Map<string, BenchLedgerRow[]>();
+	for (const attempt of input.ledger) {
+		const configRows = byConfig.get(attempt.config_id);
+		if (configRows) configRows.push(attempt);
+		else byConfig.set(attempt.config_id, [attempt]);
+		const key = `${attempt.config_id} ${attempt.task_id}`;
+		const pairRows = byConfigTask.get(key);
+		if (pairRows) pairRows.push(attempt);
+		else byConfigTask.set(key, [attempt]);
+	}
+	const metrics = input.configs.map((row) => configMetricsOf(row, byConfig.get(row.id) ?? [], records, input.config));
 	const pairing: PairingRow[] = input.tasks.map((task) => ({
 		task_id: task.id,
 		arms: input.configs.flatMap((row) =>
-			input.ledger
-				.filter((attempt) => attempt.config_id === row.id && attempt.task_id === task.id)
+			(byConfigTask.get(`${row.id} ${task.id}`) ?? [])
 				.map((attempt) => ({
 					config_id: row.id,
 					adjudication: attempt.adjudication.verdict,

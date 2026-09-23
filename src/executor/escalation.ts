@@ -31,16 +31,6 @@ export const ESCALATION_CATEGORIES: readonly EscalationCategory[] = [
 
 export type { EscalationCategory };
 
-/** Categories that re-enter the attempt loop; the rest end or hand off the turn. */
-export const CONTINUING_CATEGORIES: ReadonlySet<EscalationCategory> = new Set([
-	"GET_MORE_CONTEXT",
-	"ENABLE_CAPABILITY",
-	"INCREASE_REASONING",
-	"SWITCH_MODEL",
-	"SWITCH_BACKEND",
-	"STRONG_REVIEW",
-]);
-
 export const ESCALATION_QUESTION: JevQuestion = {
 	id: "escalation_category",
 	kind: "Choice",

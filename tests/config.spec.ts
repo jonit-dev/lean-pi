@@ -224,6 +224,42 @@ describe("FR-047 / PRD-009 — `models.specialists` and `verify:` are read from 
 	});
 });
 
+describe("PRD-050 Phase 1 (G1) — block validators reject invalid values with the dotted path", () => {
+	const backends = { local: nativeBackend("http://127.0.0.1:1/v1") };
+	const models = { quick: { backend: "local", model: "m" } };
+
+	function fromFile(config: Record<string, unknown>) {
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, config);
+		return () => loadConfig(cwd);
+	}
+
+	const cases: Array<{ name: string; config: Record<string, unknown>; expected: string }> = [
+		{ name: "jev.mode", config: { backends, models, jev: { mode: "sometimes" } }, expected: "jev.mode" },
+		{ name: "jev.laya.device", config: { backends, models, jev: { laya: { device: "bogus" } } }, expected: "jev.laya.device" },
+		{ name: "recap.role", config: { backends, models, recap: { role: "nonsense" } }, expected: "recap.role" },
+		{ name: "mcp.maxTools", config: { backends, models, mcp: { maxTools: -1 } }, expected: "mcp.maxTools" },
+		{ name: "skills.maxLoaded", config: { backends, models, skills: { maxLoaded: -1 } }, expected: "skills.maxLoaded" },
+		{
+			name: "bench.skills.maxUnnecessaryLoadRate",
+			config: { backends, models, bench: { skills: { maxUnnecessaryLoadRate: 2 } } },
+			expected: "bench.skills.maxUnnecessaryLoadRate",
+		},
+		{ name: "thresholds.gate_prd_required", config: { backends, models, thresholds: { gate_prd_required: 2 } }, expected: "thresholds.gate_prd_required" },
+		{ name: "lsp.mode", config: { backends, models, lsp: { mode: "sometimes" } }, expected: "lsp.mode" },
+		{ name: "capability.stalenessDays", config: { backends, models, capability: { stalenessDays: 0 } }, expected: "capability.stalenessDays" },
+		{ name: "context.artifact_threshold_bytes", config: { backends, models, context: { artifact_threshold_bytes: 0 } }, expected: "context.artifact_threshold_bytes" },
+	];
+
+	for (const testCase of cases) {
+		it(`rejects ${testCase.name}`, () => {
+			const load = fromFile(testCase.config);
+			expect(load, testCase.name).toThrow(ConfigError);
+			expect(load, testCase.name).toThrow(testCase.expected);
+		});
+	}
+});
+
 describe("configuration discovery", () => {	it("finds the project's config from a subdirectory, and the machine's when there is no project one", () => {
 		const root = tempDir("leanpi-discovery-");
 		const project = join(root, "repo");

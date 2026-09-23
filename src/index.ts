@@ -35,7 +35,7 @@ import { installPermissionGuard, loadPermissionState, registerPermissionsCommand
 import { registerCostCommand } from "./telemetry/index.js";
 import { createToolSurface, mcpRequestDefinition, mcpToolName, registerMcpCommand, registerMcpDisclosure, resolveVendorServers, MCP_REQUEST_TOOL_NAME } from "./mcp/index.js";
 import type { SelectedMcpTool } from "./mcp/index.js";
-import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS } from "./commands/index.js";
+import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS, type CommandSurface } from "./commands/index.js";
 import { ensureGitIgnored, registerRuntimeVerifiers, worktreePermissionPrompt } from "./runtime/index.js";
 import type { WorktreePermissionRequest } from "./runtime/index.js";
 import type { BrowserFacility } from "./runtime/browser.js";
@@ -479,6 +479,421 @@ function registerClearAlias(pi: ExtensionAPI): void {
 	});
 }
 
+/**
+ * Session-lifecycle hooks (F7): `session_start` → `session_shutdown`, in
+ * registration order. Extracted from `activate()` with no behavior change;
+ * everything the closures need travels on the explicit context object. Named
+ * `deps` (not `ctx`) so Pi's per-hook `ctx` keeps its original name inside.
+ */
+function installSessionHooks(
+	pi: ExtensionAPI,
+	deps: {
+		surface: CommandSurface;
+		recap: RecapController;
+		jev: JevClient;
+		provider: () => ControlPlaneProvider | undefined;
+		config: LeanPiConfig;
+		env: NodeJS.ProcessEnv & CredentialEnv;
+		cwd: string;
+	},
+): void {
+	// First run without a resolved key warns exactly once; the harness keeps
+	// running on deterministic fallback. A session that starts on a session Pi
+	// switched to (`/new`, `/resume`, `/fork`) keeps the extension but not the
+	// previous session's pins: the route overrides and the recorded contract
+	// belonged to the conversation that just went away.
+	pi.on("session_start", async (event, ctx) => {
+		if (event.reason !== "startup") {
+			deps.surface.resetSessionState();
+			// Manual survives a session switch; other route pins still reset.
+			const { model, previousModel } = routePins();
+			clearRoutePins();
+			setRoutePins({ model, previousModel });
+			// A switch invalidates the previous session's turn, cache and in-flight
+			// generation *before* the new session's persisted recap is restored: the
+			// old session's input must not answer `/recap` for the new one.
+			deps.recap.reset(ctx);
+		}
+		// A remembered or switched-to Manual pin is visible before the next turn.
+		const manualPin = routePins().model;
+		if (manualPin) ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
+		// PRD-042: a local control plane has to be provisioned and started, and
+		// doing it here means the first turn is not the thing that waits for a
+		// multi-GB download. `resolve()` is the provider's own memoized entry point,
+		// so this and the first `ask()` share one attempt; a failure is reported
+		// once and the sites fall back, exactly as an unreachable TypeSafe would.
+		if (deps.jev.providerName() === "laya" && deps.jev.getMode() !== "disabled") {
+			void Promise.resolve()
+				.then(() => deps.provider()?.resolve())
+				.then(
+					() => ctx.hasUI && ctx.ui.notify("Laya control plane ready (local).", "info"),
+					(error: unknown) => ctx.hasUI && ctx.ui.notify(`Laya control plane unavailable: ${error instanceof Error ? error.message : String(error)}`, "warning"),
+				);
+		}
+		// The recap survives the session: the newest persisted one is shown again
+		// on resume without a model call. Reading it first means a session that
+		// cannot warn still shows what it was doing.
+		deps.recap.restore(ctx);
+		if (!ctx.hasUI) return;
+		// Asking for a credential the session is configured never to use is the
+		// warning equivalent of the `--no-jev` bug above.
+		if (deps.jev.getMode() === "disabled") return;
+		if (resolveCredential(deps.config, deps.env, deps.cwd).key !== null) return;
+		// A run launched through `leanpi` already printed these lines under the
+		// banner; the flag keeps the user from reading them twice.
+		if (deps.env.LEANPI_JEV_WARNED === "1") return;
+		const warning = jevWarning("not configured");
+		if (warning) ctx.ui.notify(warning.join("\n"), "warning");
+	});
+
+	// Pi's `navigateTree` moves the active leaf to another branch. The recap on
+	// screen belongs to the branch that was active: reset drops the previous
+	// branch's turn/cache and invalidates its in-flight generation, then restore
+	// reads the recap on the branch just navigated to. Without this the old
+	// branch's recap stays on screen and answers a manual `/recap`.
+	pi.on("session_tree", (_event, ctx) => {
+		deps.recap.reset(ctx);
+		deps.recap.restore(ctx);
+	});
+
+	pi.on("session_shutdown", async () => {
+		// A local control plane owns a child process; a session switch (`/new`,
+		// `/resume`, `/fork`) rebinds the extension, so the old server must go with
+		// it or every switch leaks a multi-GB model. A no-op for TypeSafe.
+		await deps.jev.dispose();
+	});
+}
+
+/**
+ * Per-turn hooks (F7): `input` → `before_agent_start` → `agent_start` →
+ * `agent_end` → `agent_settled`, in registration order. Extracted from
+ * `activate()` with no behavior change. The in-flight holders (`pendingRun`,
+ * `settledTurn`) lived as `activate()` locals; they live here now, owned by
+ * the hooks that write and read them.
+ */
+function installTurnHooks(
+	pi: ExtensionAPI,
+	deps: {
+		config: LeanPiConfig;
+		cwd: string;
+		env: NodeJS.ProcessEnv & CredentialEnv;
+		commands: CommandRegistry;
+		jev: JevClient;
+		sessionId: () => string;
+		recap: RecapController;
+		todo: TodoCarrier;
+		workingStateSources: WorkingStateSources;
+		observeTurn: (context: TurnContext) => void;
+		statusExtras: (hookCtx: { getContextUsage: () => { percent: number | null } | undefined }) => {
+			cost: number;
+			goal?: string;
+			contextPercent?: number;
+			degraded?: string;
+		};
+		showTodo: (hookCtx: TodoWidgetHost) => void;
+	},
+): void {
+	// The run that is still open: a compiled turn's collector and context, held from
+	// `before_agent_start` until `agent_end` reports what the loop spent.
+	let pendingRun: { collector: RunCollector; context: TurnContext } | undefined;
+	// The Pi-driven path's last settled turn: `agent_end` holds what the loop
+	// produced, and `agent_settled` — after Pi's own telemetry sink — writes it.
+	let settledTurn: { ask: string; did: string } | undefined;
+
+	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
+	// configuration).
+	//
+	// Before this, the executor lane ran inside `before_agent_start`: it spawned
+	// the vendor, verified, reviewed and gated — and then returned, so Pi's own
+	// loop answered the same prompt a second time with a second model. The user
+	// paid twice, saw only Pi's answer, and the proof gate had run against a
+	// workspace another model was about to edit. `action: "handled"` is Pi's own
+	// way for an extension to *be* the turn, so the work and the answer are the
+	// same event.
+	//
+	// Native configurations return early: there Pi's loop is the executor by
+	// design (§23) and `before_agent_start` below is where the turn is compiled.
+	// A `/model` CLI pin makes LeanPi own the turn even on a native config
+	// (PRD-048), because Pi's loop has no provider for a vendor CLI model.
+	pi.on("input", async (event, ctx) => {
+		// A new prompt invalidates the previous turn's recap before anything runs.
+		deps.recap.clear(ctx);
+		// The recap for this prompt is written below; Pi's loop is not the path here.
+		settledTurn = undefined;
+		if (!ownsTurn(deps.config)) return;
+		// `runTurn()` drives the lanes itself; this hook must not run them again
+		// for the prompt that entry point is about to send.
+		if (isTurnInFlight()) return;
+		const collector = createRunCollector({ taskId: event.text.slice(0, 64), sessionId: deps.sessionId() });
+		setLaneCollector(collector);
+		// A vendor turn is tens of seconds with nothing on screen. The status line
+		// is the only progress surface Pi gives an extension that is not itself
+		// streaming, so the lanes report their phase into it.
+		const progress = (phase: string): void => ctx.ui.setStatus(LEANPI_STATUS_KEY, `LeanPi: ${phase}`);
+		// Counters are cumulative for the session; the turn's share is the delta.
+		const jevBefore = { answered: deps.jev.answeredCount(), fellBack: deps.jev.fallbackCount() };
+		const turnJev = (): TurnJev => ({
+			answered: deps.jev.answeredCount() - jevBefore.answered,
+			fellBack: deps.jev.fallbackCount() - jevBefore.fellBack,
+			enabled: deps.jev.getMode() !== "disabled",
+		});
+		progress("compiling the task");
+		// The partial context is reachable from the catch below so a lane that
+		// throws still bills the fail-closed gate's spend. It is built *inside* the
+		// try so a throw while building it (an unresolved role) still reaches the
+		// finally that clears this run's collector.
+		let context: TurnContext | undefined;
+		try {
+			context = {
+				turn: { text: event.text },
+				role: "balanced",
+				cwd: deps.cwd,
+				config: deps.config,
+				modelRef: resolveRole(deps.config, "balanced"),
+				skills: [],
+				todo: deps.todo,
+				workingStateSources: deps.workingStateSources,
+				// The interactive path's own prompt channel: Pi's `confirm` is only
+				// reachable while the turn is in flight, so it rides the context.
+				worktreeConfirm: uiWorktreeConfirm(ctx),
+				prefix: "",
+				onProgress: progress,
+			};
+			await runLanes({ text: event.text }, context);
+			deps.observeTurn(context);
+			if (context.contract) {
+				ctx.ui.setStatus(
+					LEANPI_STATUS_KEY,
+					statusLine({
+						config: deps.config,
+						contract: context.contract,
+						...deps.statusExtras(ctx),
+						pin: routePins().model ?? null,
+						color: true,
+					}),
+				);
+			} else if (routePins().model) {
+				ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(routePins().model!, true));
+			} else {
+				ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
+			}
+			const outcome = renderTurnOutcome(context, turnJev());
+			ctx.ui.notify(outcome, outcomeLevel(context));
+			if (context.contract) {
+				emitRunTelemetry(collector, context.contract, verdictOf(context), {
+					cwd: deps.cwd,
+					cost: resolveCostConfig(deps.config),
+					...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
+				});
+			}
+			// The recap's "what the turn did" slot is the report the user just read:
+			// the deterministic half already exists, so only the sentence is bought.
+			await deps.recap.recapTurn(ctx, { ask: event.text, did: outcome });
+		} catch (error) {
+			// The lanes threw after compiling. The turn failed, but the worker and
+			// reviewer that already ran are real spend: emit one failed record from
+			// the collector that captured them, then rethrow the original error.
+			if (context?.contract) {
+				try {
+					emitRunTelemetry(collector, context.contract, failedRunResult(), {
+						cwd: deps.cwd,
+						cost: resolveCostConfig(deps.config),
+						...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
+					});
+				} catch {
+					// Accounting must never replace the turn's own failure.
+				}
+			}
+			throw error;
+		} finally {
+			setLaneCollector(undefined);
+		}
+		return { action: "handled" as const };
+	});
+
+	// In the interactive `pi --extension` flow the user's prompt reaches Pi, not
+	// `runTurn()`, so the lane phase runs here — exactly once per turn, and never
+	// a second time when the prompt itself came from `runTurn()`. The turn's
+	// context is handed to the same fan-in the programmatic path uses, and a turn
+	// that compiled a contract writes its §52 record here: this path owns no
+	// session object, so the verdict is read off the executor's own outcome.
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (isTurnInFlight()) return;
+		// PRD-015's accumulator is created before the lanes run, not after: the
+		// executor lane's backend calls are what the record has to carry, and they
+		// are spent while the lane runs.
+		const collector = createRunCollector({ taskId: event.prompt.slice(0, 64), sessionId: deps.sessionId() });
+		setLaneCollector(collector);
+		const context = await runLanes(
+			{ text: event.prompt },
+			{
+				turn: { text: event.prompt },
+				role: "balanced",
+				cwd: deps.cwd,
+				config: deps.config,
+				modelRef: resolveRole(deps.config, "balanced"),
+				skills: [],
+				todo: deps.todo,
+				workingStateSources: deps.workingStateSources,
+				prefix: "",
+			},
+		);
+		deps.observeTurn(context);
+		// The compiled route is this turn's spend decision here too, and here Pi's
+		// own loop is the executor: the session's model and thinking level are the
+		// only things the classification can change. `setModel` is skipped when Pi
+		// has no authenticated model for the class (an external-harness role), and
+		// the level is clamped to the model's own capabilities by the host.
+		const owns = ownsTurn(deps.config);
+		// PRD-048: a native `/model` pin installs the pinned model itself, ahead of
+		// the routed class, so the pick actually changes the model the loop runs —
+		// the class still decides the reasoning budget.
+		const manualPin = routePins().model;
+		// What Pi will actually run this turn, when Pi is the one running it.
+		let installed: string | undefined;
+		// The level the session ends the handler at, which is what the footer must
+		// name: the compiled effort only when it was applied.
+		let effort: ThinkingLevel | undefined;
+		// Install a native Manual pin even when compilation deliberately returned no contract.
+		if (!owns && (manualPin || context.contract)) {
+			const ref = manualPin ?? resolveRole(deps.config, context.contract!.routing.executor_class);
+			const model = ctx.modelRegistry.find(ref.backend, ref.model);
+			// `setModel` answers whether it took the model. Ignoring that answer
+			// let the footer name a model the session had refused.
+			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
+			if (context.contract) {
+				// Manual has no compiled effort to cap.
+				effort = thinkingLevelFor(deps.config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
+				if (effort !== undefined) pi.setThinkingLevel(effort);
+			}
+		}
+		// "Tell me your goal, I figure out the rest" is only trustworthy if the
+		// figuring is visible: the footer carries what this turn routed to, how
+		// hard it was told to think, and what it was classified as.
+		//
+		// `installed` is the model Pi was *given*, which is not always the one the
+		// contract asked for: an `external_harness` class has no entry in Pi's
+		// registry, or `setModel` refused it, and Pi keeps running the session
+		// model. Naming the contract's choice there would report a route that did
+		// not happen — the one failure this line exists to prevent. The session's
+		// *actual* model is `ctx.model`; `sessionModelFor(config)` was a second
+		// guess at it from the config, and disagreed whenever the user had
+		// switched models by hand.
+		if (context.contract) {
+			const running = owns || installed !== undefined ? undefined : ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "pi's own model";
+			ctx.ui.setStatus(
+				LEANPI_STATUS_KEY,
+				statusLine({
+					config: deps.config,
+					contract: context.contract,
+					...deps.statusExtras(ctx),
+					pin: manualPin ?? null,
+					color: true,
+					...(running === undefined ? {} : { model: running }),
+					...(effort === undefined ? {} : { effort }),
+				}),
+			);
+		} else if (manualPin) {
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
+		}
+		// PRD-044: JEV judged the session's opening task PRD-worthy, so offer one
+		// before the loop runs it as a blind prompt. Only the first prompt of a
+		// session asks (this turn's message is not on the branch yet, so a resumed
+		// session has a user message there already), and the heuristic fallback
+		// answers PRD_REQUIRED on any doubt, so only a confident gate JEV answer
+		// may ask. A prompt naming a PRD, or a running goal, compiles direct.
+		let prdMessage: string | undefined;
+		const gateConfident = context.contract ? compileRecordOf(context.contract)?.classification.gate_confident : undefined;
+		const firstPrompt = () => !ctx.sessionManager.getBranch().some((entry) => entry.type === "message" && entry.message.role === "user");
+		if (
+			!owns &&
+			ctx.hasUI &&
+			context.contract?.task.prd_required &&
+			gateConfident === true &&
+			firstPrompt() &&
+			prdSuggestEnabled(deps.env) &&
+			!readPrdState(deps.cwd)
+		) {
+			// Unattended, the dialog dismisses itself and the turn runs as asked.
+			const choice = await ctx.ui.select(
+				"I suggest a PLANNING step before executing this task. Do you want to proceed?",
+				[PRD_SUGGEST_YES, "No, just do it", PRD_SUGGEST_NEVER],
+				{ timeout: 15_000 },
+			);
+			if (choice === PRD_SUGGEST_YES) {
+				const created = await deps.commands.dispatch("/prd create", { cwd: deps.cwd });
+				const state = created.ok ? readPrdState(deps.cwd) : null;
+				if (state) prdMessage = `${state.prdId} was written for this task at ${state.prdPath}. Execute from it: work through its acceptance criteria in order.`;
+				else ctx.ui.notify(`${created.text}\nContinuing without a plan.`, "warning");
+			} else if (choice === PRD_SUGGEST_NEVER) {
+				setPrdSuggest(false, deps.env);
+			}
+		}
+		// Pi's blanket catalog, for any entry that still assembles one: the
+		// `leanpi` launcher passes `--no-skills` and `createLeanPiSession` sets
+		// `skillsOverride`, but a user running `pi --extension` by hand gets Pi's
+		// discovery, and that is 82,343 bytes of the system prompt of every
+		// request (~20.6k tokens) duplicating disclosure LeanPi already did.
+		const systemPrompt = withoutSkillCatalog(event.systemPrompt);
+		if (context.contract) {
+			// The record is written at `agent_end`, not here: with Pi's own loop as
+			// the executor this handler returns *before* the loop spends anything, so
+			// emitting now would write a zeroed row for every native turn. The holder
+			// keeps the run open until the loop reports what it used.
+			pendingRun = { collector, context };
+		} else {
+			setLaneCollector(undefined);
+		}
+		const message = prdMessage === undefined ? undefined : { customType: "leanpi-prd", content: prdMessage, display: true };
+		if (systemPrompt === event.systemPrompt && !message) return undefined;
+		return { ...(systemPrompt === event.systemPrompt ? {} : { systemPrompt }), ...(message ? { message } : {}) };
+	});
+
+	// A new run invalidates the previous recap on screen; the widget is cleared
+	// rather than left looking like this turn's answer.
+	pi.on("agent_start", (_event, ctx) => {
+		deps.recap.clear(ctx);
+	});
+
+	// PRD-015's sink for the path Pi itself drives: one call per assistant message
+	// the loop produced, plus the tool calls it made, then exactly one record.
+	pi.on("agent_end", (event, ctx) => {
+		deps.showTodo(ctx);
+		// What `agent_settled` will recap: the loop's last ask and its answer. They
+		// exist here; `agent_settled` fires after Pi's own telemetry sink has already
+		// written this turn's record.
+		const reversed = [...event.messages].reverse();
+		const lastUser = reversed.find((message) => message.role === "user");
+		const lastAssistant = reversed.find((message) => message.role === "assistant");
+		settledTurn =
+			lastUser === undefined || lastAssistant === undefined ? undefined : { ask: messageText(lastUser), did: messageText(lastAssistant) };
+		const run = pendingRun;
+		pendingRun = undefined;
+		setLaneCollector(undefined);
+		if (!run) return;
+		const spend = callsFromMessages(event.messages, run.context.modelRef);
+		for (const call of spend.calls) run.collector.add(call);
+		run.collector.noteToolCall(spend.toolCalls);
+		// The paths, so `file_reads`/`repeated_reads` are a measurement rather than a
+		// constant zero: the collector collapses the repeats the model asked for.
+		for (const path of spend.fileReads) run.collector.noteFileRead(path);
+		emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdictOf(run.context), {
+			cwd: deps.cwd,
+			cost: resolveCostConfig(deps.config),
+			...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
+		});
+	});
+
+	// PRD-036's Pi-side trigger: after the run has fully settled. `agent_end` is
+	// taken by the telemetry sink above and fires mid-settle, so the recap waits.
+	pi.on("agent_settled", async (_event, ctx) => {
+		const turn = settledTurn;
+		settledTurn = undefined;
+		if (!turn || routePins().model) return;
+		await deps.recap.recapTurn(ctx, turn);
+	});
+}
+
 export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanPiActivation {
 	// Pi's extension API has no cwd at load time, so the loader-driven path
 	// resolves it from the process. `LEANPI_CWD` is the documented override for
@@ -753,10 +1168,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	let capturedSubagentLimit: CapturedLimit | undefined;
 	registerSubagentsLimitCommand(commands, () => capturedSubagentLimit);
 
-	// The run that is still open: a compiled turn's collector and context, held from
-	// `before_agent_start` until `agent_end` reports what the loop spent.
-	let pendingRun: { collector: RunCollector; context: TurnContext } | undefined;
-
 	// The per-turn fan-in: lanes write the turn's compiled state onto the context,
 	// the entry points hand it back here, and the command surfaces, the working
 	// state and the todo gate read it. Nothing else stores per-turn state here.
@@ -778,9 +1189,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 				.map((item) => item.text),
 	});
 	recapController = recap;
-	// The Pi-driven path's last settled turn: `agent_end` holds what the loop
-	// produced, and `agent_settled` — after Pi's own telemetry sink — writes it.
-	let settledTurn: { ask: string; did: string } | undefined;
 
 	// The facts the status line carries that no contract holds: what the session
 	// has spent so far, whether a goal is running, how full the context is, and
@@ -878,380 +1286,37 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// The reasoning display (folded by default); the launcher reads what this stores.
 	registerThinkingFoldCommand(commands, env);
 
-	// First run without a resolved key warns exactly once; the harness keeps
-	// running on deterministic fallback. A session that starts on a session Pi
-	// switched to (`/new`, `/resume`, `/fork`) keeps the extension but not the
-	// previous session's pins: the route overrides and the recorded contract
-	// belonged to the conversation that just went away.
-	pi.on("session_start", async (event, ctx) => {
-		if (event.reason !== "startup") {
-			surface.resetSessionState();
-			// PRD-048 Phase 2: Manual survives a session switch — only `/model auto`
-			// returns to Auto. Every other pin (`/route executor`, `/route prd`,
-			// etc.) still resets here, exactly as before.
-			const { model, previousModel } = routePins();
-			clearRoutePins();
-			setRoutePins({ model, previousModel });
-			// A switch invalidates the previous session's turn, cache and in-flight
-			// generation *before* the new session's persisted recap is restored: the
-			// old session's input must not answer `/recap` for the new one.
-			recap.reset(ctx);
-		}
-		// PRD-048 Phase 2: a pin survives startup (`remember_manual_model`) and a
-		// session switch — the footer must say so now, not wait for a turn to run.
-		const manualPin = routePins().model;
-		if (manualPin) ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
-		// PRD-042: a local control plane has to be provisioned and started, and
-		// doing it here means the first turn is not the thing that waits for a
-		// multi-GB download. `resolve()` is the provider's own memoized entry point,
-		// so this and the first `ask()` share one attempt; a failure is reported
-		// once and the sites fall back, exactly as an unreachable TypeSafe would.
-		if (jev.providerName() === "laya" && jev.getMode() !== "disabled") {
-			void Promise.resolve()
-				.then(() => provider?.resolve())
-				.then(
-					() => ctx.hasUI && ctx.ui.notify("Laya control plane ready (local).", "info"),
-					(error: unknown) => ctx.hasUI && ctx.ui.notify(`Laya control plane unavailable: ${error instanceof Error ? error.message : String(error)}`, "warning"),
-				);
-		}
-		// The recap survives the session: the newest persisted one is shown again
-		// on resume without a model call. Reading it first means a session that
-		// cannot warn still shows what it was doing.
-		recap.restore(ctx);
-		if (!ctx.hasUI) return;
-		// Asking for a credential the session is configured never to use is the
-		// warning equivalent of the `--no-jev` bug above.
-		if (jev.getMode() === "disabled") return;
-		if (resolveCredential(config, env, cwd).key !== null) return;
-		// A run launched through `leanpi` already printed these lines under the
-		// banner; the flag keeps the user from reading them twice.
-		if (env.LEANPI_JEV_WARNED === "1") return;
-		const warning = jevWarning("not configured");
-		if (warning) ctx.ui.notify(warning.join("\n"), "warning");
+	// The session-lifecycle hooks live in `installSessionHooks` (F7); registered
+	// here, in this order, before the per-turn hooks below.
+	installSessionHooks(pi, {
+		surface,
+		recap,
+		jev,
+		provider: () => provider,
+		config,
+		env,
+		cwd,
 	});
 
-	// Pi's `navigateTree` moves the active leaf to another branch. The recap on
-	// screen belongs to the branch that was active: reset drops the previous
-	// branch's turn/cache and invalidates its in-flight generation, then restore
-	// reads the recap on the branch just navigated to. Without this the old
-	// branch's recap stays on screen and answers a manual `/recap`.
-	pi.on("session_tree", (_event, ctx) => {
-		recap.reset(ctx);
-		recap.restore(ctx);
+	// The per-turn hooks live in `installTurnHooks` (F7), registered after the
+	// session-lifecycle hooks above.
+	installTurnHooks(pi, {
+		config,
+		cwd,
+		env,
+		commands,
+		jev,
+		sessionId: () => manager.getSessionId(),
+		recap,
+		todo: todoCarrier,
+		workingStateSources,
+		observeTurn,
+		statusExtras,
+		showTodo,
 	});
 
-	pi.on("session_shutdown", async () => {
-		// A local control plane owns a child process; a session switch (`/new`,
-		// `/resume`, `/fork`) rebinds the extension, so the old server must go with
-		// it or every switch leaks a multi-GB model. A no-op for TypeSafe.
-		await jev.dispose();
-	});
-
-	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
-	// configuration).
-	//
-	// Before this, the executor lane ran inside `before_agent_start`: it spawned
-	// the vendor, verified, reviewed and gated — and then returned, so Pi's own
-	// loop answered the same prompt a second time with a second model. The user
-	// paid twice, saw only Pi's answer, and the proof gate had run against a
-	// workspace another model was about to edit. `action: "handled"` is Pi's own
-	// way for an extension to *be* the turn, so the work and the answer are the
-	// same event.
-	//
-	// Native configurations return early: there Pi's loop is the executor by
-	// design (§23) and `before_agent_start` below is where the turn is compiled.
-	// A `/model` CLI pin makes LeanPi own the turn even on a native config
-	// (PRD-048), because Pi's loop has no provider for a vendor CLI model.
-	pi.on("input", async (event, ctx) => {
-		// A new prompt invalidates the previous turn's recap before anything runs.
-		recap.clear(ctx);
-		// The recap for this prompt is written below; Pi's loop is not the path here.
-		settledTurn = undefined;
-		if (!ownsTurn(config)) return;
-		// `runTurn()` drives the lanes itself; this hook must not run them again
-		// for the prompt that entry point is about to send.
-		if (isTurnInFlight()) return;
-		const collector = createRunCollector({ taskId: event.text.slice(0, 64), sessionId: manager.getSessionId() });
-		setLaneCollector(collector);
-		// A vendor turn is tens of seconds with nothing on screen. The status line
-		// is the only progress surface Pi gives an extension that is not itself
-		// streaming, so the lanes report their phase into it.
-		const progress = (phase: string): void => ctx.ui.setStatus(LEANPI_STATUS_KEY, `LeanPi: ${phase}`);
-		// Counters are cumulative for the session; the turn's share is the delta.
-		const jevBefore = { answered: jev.answeredCount(), fellBack: jev.fallbackCount() };
-		const turnJev = (): TurnJev => ({
-			answered: jev.answeredCount() - jevBefore.answered,
-			fellBack: jev.fallbackCount() - jevBefore.fellBack,
-			enabled: jev.getMode() !== "disabled",
-		});
-		progress("compiling the task");
-		// The partial context is reachable from the catch below so a lane that
-		// throws still bills the fail-closed gate's spend. It is built *inside* the
-		// try so a throw while building it (an unresolved role) still reaches the
-		// finally that clears this run's collector.
-		let context: TurnContext | undefined;
-		try {
-			context = {
-				turn: { text: event.text },
-				role: "balanced",
-				cwd,
-				config,
-				modelRef: resolveRole(config, "balanced"),
-				skills: [],
-				todo: todoCarrier,
-				workingStateSources,
-				// The interactive path's own prompt channel: Pi's `confirm` is only
-				// reachable while the turn is in flight, so it rides the context.
-				worktreeConfirm: uiWorktreeConfirm(ctx),
-				prefix: "",
-				onProgress: progress,
-			};
-			await runLanes({ text: event.text }, context);
-			observeTurn(context);
-			if (context.contract) {
-				ctx.ui.setStatus(
-					LEANPI_STATUS_KEY,
-					statusLine({
-						config,
-						contract: context.contract,
-						...statusExtras(ctx),
-						pin: routePins().model ?? null,
-						color: true,
-					}),
-				);
-			} else if (routePins().model) {
-				// PRD-048 Phase 2: Manual with a CLI pin compiled no contract, but the
-				// footer still names the pin — the turn just ran on it.
-				ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(routePins().model!, true));
-			} else {
-				ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
-			}
-			const outcome = renderTurnOutcome(context, turnJev());
-			ctx.ui.notify(outcome, outcomeLevel(context));
-			if (context.contract) {
-				emitRunTelemetry(collector, context.contract, verdictOf(context), {
-					cwd,
-					cost: resolveCostConfig(config),
-					...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
-				});
-			}
-			// The recap's "what the turn did" slot is the report the user just read:
-			// the deterministic half already exists, so only the sentence is bought.
-			await recap.recapTurn(ctx, { ask: event.text, did: outcome });
-		} catch (error) {
-			// The lanes threw after compiling. The turn failed, but the worker and
-			// reviewer that already ran are real spend: emit one failed record from
-			// the collector that captured them, then rethrow the original error.
-			if (context?.contract) {
-				try {
-					emitRunTelemetry(collector, context.contract, failedRunResult(), {
-						cwd,
-						cost: resolveCostConfig(config),
-						...(context.executor?.route_cost ? { routeCost: context.executor.route_cost } : {}),
-					});
-				} catch {
-					// Accounting must never replace the turn's own failure.
-				}
-			}
-			throw error;
-		} finally {
-			setLaneCollector(undefined);
-		}
-		return { action: "handled" as const };
-	});
-
-	// In the interactive `pi --extension` flow the user's prompt reaches Pi, not
-	// `runTurn()`, so the lane phase runs here — exactly once per turn, and never
-	// a second time when the prompt itself came from `runTurn()`. The turn's
-	// context is handed to the same fan-in the programmatic path uses, and a turn
-	// that compiled a contract writes its §52 record here: this path owns no
-	// session object, so the verdict is read off the executor's own outcome.
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (isTurnInFlight()) return;
-		// PRD-015's accumulator is created before the lanes run, not after: the
-		// executor lane's backend calls are what the record has to carry, and they
-		// are spent while the lane runs.
-		const collector = createRunCollector({ taskId: event.prompt.slice(0, 64), sessionId: manager.getSessionId() });
-		setLaneCollector(collector);
-		const context = await runLanes(
-			{ text: event.prompt },
-			{
-				turn: { text: event.prompt },
-				role: "balanced",
-				cwd,
-				config,
-				modelRef: resolveRole(config, "balanced"),
-				skills: [],
-				todo: todoCarrier,
-				workingStateSources,
-				prefix: "",
-			},
-		);
-		observeTurn(context);
-		// The compiled route is this turn's spend decision here too, and here Pi's
-		// own loop is the executor: the session's model and thinking level are the
-		// only things the classification can change. `setModel` is skipped when Pi
-		// has no authenticated model for the class (an external-harness role), and
-		// the level is clamped to the model's own capabilities by the host.
-		const owns = ownsTurn(config);
-		// PRD-048: a native `/model` pin installs the pinned model itself, ahead of
-		// the routed class, so the pick actually changes the model the loop runs —
-		// the class still decides the reasoning budget.
-		const manualPin = routePins().model;
-		// What Pi will actually run this turn, when Pi is the one running it.
-		let installed: string | undefined;
-		// The level the session ends the handler at, which is what the footer must
-		// name: the compiled effort only when it was applied.
-		let effort: ThinkingLevel | undefined;
-		// A native pin installs its model even in Manual, where the compiler lane
-		// left `context.contract` undefined (PRD-048 Phase 2) — the pin is the
-		// whole routing decision there, and there is no class to fall back to.
-		if (!owns && (manualPin || context.contract)) {
-			const ref = manualPin ?? resolveRole(config, context.contract!.routing.executor_class);
-			const model = ctx.modelRegistry.find(ref.backend, ref.model);
-			// `setModel` answers whether it took the model. Ignoring that answer
-			// let the footer name a model the session had refused.
-			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
-			// The operator's ceiling applies on every path (`thinkingLevelFor`), not
-			// only the programmatic one: `backends.<name>.thinkingLevel: off` is the
-			// one spending switch there is, and this handler used to raise straight
-			// past it to whatever the classifier compiled. Manual compiled no
-			// effort at all, so there is nothing here to cap.
-			if (context.contract) {
-				effort = thinkingLevelFor(config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
-				if (effort !== undefined) pi.setThinkingLevel(effort);
-			}
-		}
-		// "Tell me your goal, I figure out the rest" is only trustworthy if the
-		// figuring is visible: the footer carries what this turn routed to, how
-		// hard it was told to think, and what it was classified as.
-		//
-		// `installed` is the model Pi was *given*, which is not always the one the
-		// contract asked for: an `external_harness` class has no entry in Pi's
-		// registry, or `setModel` refused it, and Pi keeps running the session
-		// model. Naming the contract's choice there would report a route that did
-		// not happen — the one failure this line exists to prevent. The session's
-		// *actual* model is `ctx.model`; `sessionModelFor(config)` was a second
-		// guess at it from the config, and disagreed whenever the user had
-		// switched models by hand.
-		if (context.contract) {
-			const running = owns || installed !== undefined ? undefined : ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "pi's own model";
-			ctx.ui.setStatus(
-				LEANPI_STATUS_KEY,
-				statusLine({
-					config,
-					contract: context.contract,
-					...statusExtras(ctx),
-					pin: manualPin ?? null,
-					color: true,
-					...(running === undefined ? {} : { model: running }),
-					...(effort === undefined ? {} : { effort }),
-				}),
-			);
-		} else if (manualPin) {
-			// PRD-048 Phase 2: Manual with a native pin compiled no contract, but the
-			// footer still names the pin — the turn just ran on it.
-			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
-		}
-		// PRD-044: JEV judged the session's opening task PRD-worthy, so offer one
-		// before the loop runs it as a blind prompt. Only the first prompt of a
-		// session asks (this turn's message is not on the branch yet, so a resumed
-		// session has a user message there already), and the heuristic fallback
-		// answers PRD_REQUIRED on any doubt, so only a confident gate JEV answer
-		// may ask. A prompt naming a PRD, or a running goal, compiles direct.
-		let prdMessage: string | undefined;
-		const gateConfident = context.contract ? compileRecordOf(context.contract)?.classification.gate_confident : undefined;
-		const firstPrompt = () => !ctx.sessionManager.getBranch().some((entry) => entry.type === "message" && entry.message.role === "user");
-		if (
-			!owns &&
-			ctx.hasUI &&
-			context.contract?.task.prd_required &&
-			gateConfident === true &&
-			firstPrompt() &&
-			prdSuggestEnabled(env) &&
-			!readPrdState(cwd)
-		) {
-			// Unattended, the dialog dismisses itself and the turn runs as asked.
-			const choice = await ctx.ui.select(
-				"I suggest a PLANNING step before executing this task. Do you want to proceed?",
-				[PRD_SUGGEST_YES, "No, just do it", PRD_SUGGEST_NEVER],
-				{ timeout: 15_000 },
-			);
-			if (choice === PRD_SUGGEST_YES) {
-				const created = await commands.dispatch("/prd create", { cwd });
-				const state = created.ok ? readPrdState(cwd) : null;
-				if (state) prdMessage = `${state.prdId} was written for this task at ${state.prdPath}. Execute from it: work through its acceptance criteria in order.`;
-				else ctx.ui.notify(`${created.text}\nContinuing without a plan.`, "warning");
-			} else if (choice === PRD_SUGGEST_NEVER) {
-				setPrdSuggest(false, env);
-			}
-		}
-		// Pi's blanket catalog, for any entry that still assembles one: the
-		// `leanpi` launcher passes `--no-skills` and `createLeanPiSession` sets
-		// `skillsOverride`, but a user running `pi --extension` by hand gets Pi's
-		// discovery, and that is 82,343 bytes of the system prompt of every
-		// request (~20.6k tokens) duplicating disclosure LeanPi already did.
-		const systemPrompt = withoutSkillCatalog(event.systemPrompt);
-		if (context.contract) {
-			// The record is written at `agent_end`, not here: with Pi's own loop as
-			// the executor this handler returns *before* the loop spends anything, so
-			// emitting now would write a zeroed row for every native turn. The holder
-			// keeps the run open until the loop reports what it used.
-			pendingRun = { collector, context };
-		} else {
-			setLaneCollector(undefined);
-		}
-		const message = prdMessage === undefined ? undefined : { customType: "leanpi-prd", content: prdMessage, display: true };
-		if (systemPrompt === event.systemPrompt && !message) return undefined;
-		return { ...(systemPrompt === event.systemPrompt ? {} : { systemPrompt }), ...(message ? { message } : {}) };
-	});
-
-	// A new run invalidates the previous recap on screen; the widget is cleared
-	// rather than left looking like this turn's answer.
-	pi.on("agent_start", (_event, ctx) => {
-		recap.clear(ctx);
-	});
-
-	// PRD-015's sink for the path Pi itself drives: one call per assistant message
-	// the loop produced, plus the tool calls it made, then exactly one record.
-	pi.on("agent_end", (event, ctx) => {
-		showTodo(ctx);
-		// What `agent_settled` will recap: the loop's last ask and its answer. They
-		// exist here; `agent_settled` fires after Pi's own telemetry sink has already
-		// written this turn's record.
-		const reversed = [...event.messages].reverse();
-		const lastUser = reversed.find((message) => message.role === "user");
-		const lastAssistant = reversed.find((message) => message.role === "assistant");
-		settledTurn =
-			lastUser === undefined || lastAssistant === undefined ? undefined : { ask: messageText(lastUser), did: messageText(lastAssistant) };
-		const run = pendingRun;
-		pendingRun = undefined;
-		setLaneCollector(undefined);
-		if (!run) return;
-		const spend = callsFromMessages(event.messages, run.context.modelRef);
-		for (const call of spend.calls) run.collector.add(call);
-		run.collector.noteToolCall(spend.toolCalls);
-		// The paths, so `file_reads`/`repeated_reads` are a measurement rather than a
-		// constant zero: the collector collapses the repeats the model asked for.
-		for (const path of spend.fileReads) run.collector.noteFileRead(path);
-		emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdictOf(run.context), {
-			cwd,
-			cost: resolveCostConfig(config),
-			...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
-		});
-	});
-
-	// PRD-036's Pi-side trigger: after the run has fully settled. `agent_end` is
-	// taken by the telemetry sink above and fires mid-settle, so the recap waits.
-	pi.on("agent_settled", async (_event, ctx) => {
-		const turn = settledTurn;
-		settledTurn = undefined;
-		// PRD-048 Phase 2: Manual is plain chat — recapping it would spend another
-		// model call summarizing a conversation LeanPi was never asked to make
-		// sense of.
-		if (!turn || routePins().model) return;
-		await recap.recapTurn(ctx, turn);
-	});
+	// The remaining per-turn hooks (agent_start, agent_end, agent_settled) are
+	// registered inside `installTurnHooks` above.
 
 	// The bridge PRD-016 was missing. Every command above registered into
 	// LeanPi's own registry, which nothing in the interactive session reads: in

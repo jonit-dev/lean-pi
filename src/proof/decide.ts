@@ -188,6 +188,8 @@ export function decideCriterion(inputs: CriterionInputs): CriterionResult {
 		status === "pass" &&
 		stale.length === 0 &&
 		answers.demonstrates === "YES" &&
+		answers.staticForRuntime !== "YES" &&
+		answers.unevidencedPath !== "YES" &&
 		inputs.reviewPassed &&
 		coverage.satisfied
 	) {

@@ -173,6 +173,29 @@ describe("AC-3 — contradiction is a hard fail", () => {
 	});
 });
 
+describe("PRD-050 — sufficiency answers block false completion", () => {
+	for (const [answer, reason] of [
+		["staticForRuntime", "static where runtime behavior is required"],
+		["unevidencedPath", "an important execution path has no evidence"],
+	] as const) {
+		it(`rejects PASS when ${answer} is YES`, async () => {
+			const contract = proofContract({ required: ["targeted_test"], criteria: [coveredCriterion] }, 1);
+			const scripted = await scriptedClient({ ...AFFIRMATIVE, [answer]: "YES", gap: "REVIEW_REQUIRED" });
+			try {
+				const result = await evaluateProofGate(criteriaOf(contract), { workspaceHash: FIXTURE_HASH }, {
+					contract,
+					store: storeOf(FIXTURE_HASH, [coveredRecord]),
+					jev: scripted.client,
+				});
+				expect(result.criteria[0]!.decision).toBe("MISSING_PROOF");
+				expect(result.criteria[0]!.reasons.join(" ")).toContain(reason);
+			} finally {
+				await scripted.close();
+			}
+		});
+	}
+});
+
 describe("AC-6 — JEV off still gates, and a JEV answer is consumed", () => {
 	it("rejects the false completion through the coverage rule, with both sites on their fallback", async () => {
 		const fixture = falseCompletion(0);

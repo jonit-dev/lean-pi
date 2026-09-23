@@ -575,7 +575,8 @@ export function cleanup(runId: string, options: CleanupOptions): CleanupResult {
 	}
 	if (dirty.length > 0) {
 		const patch = options.patch!;
-		const unrepresented = dirty.filter((entry) => !patch.paths.includes(entry) || patch.hashes[entry] === undefined);
+		const represented = new Set(patch.paths);
+		const unrepresented = dirty.filter((entry) => !represented.has(entry) || patch.hashes[entry] === undefined);
 		if (unrepresented.length > 0) {
 			return {
 				removed: false,

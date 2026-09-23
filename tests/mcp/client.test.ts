@@ -223,6 +223,71 @@ describe("PRD-006 Phase 2 — health transitions", () => {
 	});
 });
 
+describe("PRD-050 Phase 1 (G4) — MCP failure branches", () => {
+	it("a refresh of an unstartable server reports zero tools with an error and stays disconnected", async () => {
+		const home = tempHome();
+		const cwd = tempDir("leanpi-mcp-refresh-fail-");
+		const env = mcpEnv(home);
+		writeUserMcpConfig(home, { broken: { transport: "stdio", command: "/nonexistent/leanpi-mcp-fixture", args: [] } });
+		writeConfig(cwd, { backends: { local: nativeBackend("http://127.0.0.1:1/v1") }, models: { balanced: { backend: "local", model: "stub" } } });
+
+		const registry = createCommandRegistry();
+		const runtime = track(registerMcpCommand(registry, { cwd, config: loadConfig(cwd, {}, env), home }));
+		const results = await runtime.pool.refresh("broken");
+		expect(results).toHaveLength(1);
+		expect(results[0]!.tools).toBe(0);
+		expect(results[0]!.error).toBeTruthy();
+		expect(runtime.pool.isConnected("broken")).toBe(false);
+
+		const listing = await registry.dispatch("/mcp refresh broken", { cwd });
+		expect(listing.text).toContain("refresh failed");
+	});
+
+	it("a tool response with isError:true surfaces on the call result", async () => {
+		const home = tempHome();
+		const cwd = tempDir("leanpi-mcp-iserror-");
+		const env = mcpEnv(home);
+		const fixture = stdioFixtures(join(cwd, "fixtures"), [
+			{ name: "files", tools: toolsFor("files", ["ping", "boom"]), hints: ["ping", "boom"], errorTools: ["boom"] },
+		]);
+		writeUserMcpConfig(home, fixture.entries);
+		seedSchemaCache(cwd, { files: toolsFor("files", ["ping", "boom"]) });
+		writeConfig(cwd, { backends: { local: nativeBackend("http://127.0.0.1:1/v1") }, models: { balanced: { backend: "local", model: "stub" } } });
+
+		const registry = createCommandRegistry();
+		const runtime = track(registerMcpCommand(registry, { cwd, config: loadConfig(cwd, {}, env), home }));
+		expect((await runtime.pool.callTool("files", "ping")).isError).toBe(false);
+		const failed = await runtime.pool.callTool("files", "boom");
+		expect(failed.isError).toBe(true);
+		expect(fixture.callsOf("files").map((call) => call.tool)).toEqual(["ping", "boom"]);
+	});
+
+	it("dedupes concurrent getClient calls onto one handle and one live subprocess", async () => {
+		const home = tempHome();
+		const cwd = tempDir("leanpi-mcp-single-flight-");
+		const env = mcpEnv(home);
+		const fixture = stdioFixtures(join(cwd, "fixtures"), [
+			{ name: "files", tools: toolsFor("files", ["read_file"]), hints: ["read_file"] },
+		]);
+		writeUserMcpConfig(home, fixture.entries);
+		seedSchemaCache(cwd, { files: toolsFor("files", ["read_file"]) });
+		writeConfig(cwd, { backends: { local: nativeBackend("http://127.0.0.1:1/v1") }, models: { balanced: { backend: "local", model: "stub" } } });
+
+		const registry = createCommandRegistry();
+		const runtime = track(registerMcpCommand(registry, { cwd, config: loadConfig(cwd, {}, env), home }));
+		const [first, second] = await Promise.all([runtime.pool.getClient("files"), runtime.pool.getClient("files")]);
+		expect(first).toBe(second);
+		expect(await runtime.pool.getClient("files")).toBe(first);
+
+		// One connection: the fixture is live, its pid is stable, and the handle works.
+		const pid = fixture.pidOf("files");
+		expect(pid).not.toBeNull();
+		expect(fixture.alive("files")).toBe(true);
+		expect((await first.listTools()).map((tool) => tool.name)).toEqual(["read_file"]);
+		expect(fixture.pidOf("files")).toBe(pid);
+	});
+});
+
 describe("PRD-006 AC-9 — the cold-start refresh", () => {
 	it("shows zero tools and no row, then refresh catalogs them, leaves the server disconnected and selectable", async () => {
 		const home = tempHome();

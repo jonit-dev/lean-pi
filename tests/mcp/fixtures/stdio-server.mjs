@@ -23,6 +23,12 @@ try {
 } catch {
 	tools = [];
 }
+let errorTools = [];
+try {
+	errorTools = JSON.parse(process.env.MCP_ERROR_TOOLS ?? "[]");
+} catch {
+	errorTools = [];
+}
 
 function send(message) {
 	process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -45,6 +51,10 @@ function handle(message) {
 	if (message.method === "tools/call") {
 		const tool = message.params?.name;
 		if (logPath) appendFileSync(logPath, `${JSON.stringify({ server: name, tool, arguments: message.params?.arguments ?? {} })}\n`);
+		if (errorTools.includes(tool)) {
+			send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: `${name}/${tool} failed` }], isError: true } });
+			return;
+		}
 		send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: `${name}/${tool} ok` }], isError: false } });
 		return;
 	}

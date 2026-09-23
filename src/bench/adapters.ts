@@ -53,7 +53,6 @@ import {
 	type RunUsage,
 } from "../telemetry/index.js";
 import { verifyTask } from "../verify/index.js";
-import type { RubricJudge } from "./adjudicate.js";
 import { BenchError, type AttemptHooks, type BenchAttempt, type BenchAttemptExecutor, type BenchAttemptResult, type BenchConfigRow } from "./types.js";
 
 /** Explicit owner gate for the subscription baselines (AC-4): unset means they refuse to run. */
@@ -711,7 +710,6 @@ export interface AdapterDeps {
 	config: LeanPiConfig;
 	env?: NodeJS.ProcessEnv;
 	agentDir?: string;
-	rubricJudge?: RubricJudge;
 	spawn?: HarnessSpawn;
 	/** The LeanPi session factory; `bench/cli.ts` supplies the package entry's. */
 	session?: LeanPiAttemptOptions["session"];

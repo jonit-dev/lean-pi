@@ -115,14 +115,6 @@ export function recordAttempt(
 	return record;
 }
 
-export function spendAttempt(budget: RetryBudget): RetryBudget {
-	return { ...budget, attemptsUsed: budget.attemptsUsed + 1 };
-}
-
-export function spendEscalation(budget: RetryBudget): RetryBudget {
-	return { ...budget, escalationsUsed: budget.escalationsUsed + 1 };
-}
-
 /** `quick → balanced → strong`, the FR-067 ladder. `strong` is the top. */
 export const ROLE_LADDER = ["quick", "balanced", "strong"] as const;
 

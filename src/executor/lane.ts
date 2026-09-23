@@ -324,11 +324,8 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 			? { backend: routed.candidate.backend, model: routed.candidate.model }
 			: null;
 	/** Everything the routed backend is preferred over; dropped with the pin. */
-	let routeExclusions: string[] = pin
-		? deps.registry.backends.filter((backend) => backend.name !== pin.backend).map((backend) => backend.name)
-		: routed
-			? deps.registry.backends.filter((backend) => backend.name !== routed.candidate.backend).map((backend) => backend.name)
-			: [];
+	const preferred = pin?.backend ?? routed?.candidate.backend;
+	let routeExclusions: string[] = preferred ? deps.registry.backends.filter((backend) => backend.name !== preferred).map((backend) => backend.name) : [];
 	// A burned or escalated-away route is no longer this turn's identity, and
 	// holding its exclusions would strand FR-046's fallback chain.
 	const abandonRoute = (): void => {

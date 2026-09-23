@@ -76,6 +76,8 @@ export function writeProjectMcpConfig(cwd: string, servers: Record<string, unkno
 export interface StdioSpec {
 	name: string;
 	tools?: FixtureTool[];
+	/** Tools the fixture answers with `isError: true`, for the failure branch. */
+	errorTools?: string[];
 	/** Config `tools` hints: what a never-connected server contributes. */
 	hints?: string[];
 	pinned?: boolean;
@@ -116,6 +118,7 @@ export function stdioFixtures(root: string, specs: StdioSpec[]): StdioFixture {
 				MCP_MARKER: markerOf(spec.name),
 				MCP_LOG: logOf(spec.name),
 				MCP_TOOLS: JSON.stringify(spec.tools ?? []),
+				...(spec.errorTools ? { MCP_ERROR_TOOLS: JSON.stringify(spec.errorTools) } : {}),
 			},
 			...(spec.hints ? { tools: spec.hints } : {}),
 			...(spec.pinned ? { pinned: true } : {}),

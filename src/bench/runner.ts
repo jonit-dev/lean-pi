@@ -13,11 +13,10 @@
  * is the run's hard error: an attempt without telemetry is never a free success.
  */
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { LeanPiConfig } from "../core/types.js";
 import type { RunTelemetry } from "../telemetry/record.js";
-import { readRuns } from "../telemetry/store.js";
 import { attemptExecutorFor, externalBaselinesEnabled, vendorAvailable, type AdapterDeps } from "./adapters.js";
 import { adjudicateAttempt, type RubricJudge } from "./adjudicate.js";
 import { foldReport, renderReportMarkdown, type BenchReport } from "./metrics.js";
@@ -142,13 +141,71 @@ export async function runBench(options: BenchRunOptions): Promise<BenchRun> {
 		throw new BenchError(`run "${runId}" already exists at ${ledgerPath}: a ledger is evidence, so a run id is never appended to twice (pass --run-id)`, "usage");
 	}
 	const ledger: BenchLedgerRow[] = [];
+	// F3: the §52 index, drained incrementally from the store's new bytes. Each
+	// join reads only what was appended since the last one, so a run costs
+	// O(total bytes) instead of O(attempts × store); draining before every read
+	// keeps the index exact, never a stale cache.
+	const telemetry: RunTelemetry[] = [];
+	const telemetryByTask = new Map<string, RunTelemetry[]>();
+	let storeOffset = 0;
+	let storeRemainder = "";
+	/** Index one line; a valid record is consumed, anything else is left for the caller. */
+	const ingest = (line: string): boolean => {
+		if (line.trim().length === 0) return true;
+		try {
+			const parsed = JSON.parse(line) as Partial<RunTelemetry>;
+			if (typeof parsed?.task_id !== "string" || typeof parsed.session_id !== "string" || !parsed.cost || !parsed.usage) return false;
+			const record = parsed as RunTelemetry;
+			telemetry.push(record);
+			const rows = telemetryByTask.get(record.task_id);
+			if (rows) rows.push(record);
+			else telemetryByTask.set(record.task_id, [record]);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	const drainStore = (): void => {
+		if (!existsSync(storePath)) return;
+		let size: number;
+		try {
+			size = statSync(storePath).size;
+		} catch {
+			return;
+		}
+		if (size === storeOffset) return;
+		const fd = openSync(storePath, "r");
+		try {
+			const buffer = Buffer.alloc(size - storeOffset);
+			// readSync may return fewer bytes than requested; read until the
+			// stat-sized range is consumed so no appended bytes are skipped.
+			let read = 0;
+			while (read < buffer.length) {
+				const chunk = readSync(fd, buffer, read, buffer.length - read, storeOffset + read);
+				if (chunk <= 0) break;
+				read += chunk;
+			}
+			storeOffset += read;
+			storeRemainder += buffer.subarray(0, read).toString("utf8");
+		} finally {
+			closeSync(fd);
+		}
+		const lines = storeRemainder.split("\n");
+		// A trailing segment with no newline may be a complete record whose
+		// writer never terminated the line: index it, but keep a partial or
+		// malformed fragment for the next drain.
+		const tail = storeRemainder.endsWith("\n") ? "" : (lines.pop() ?? "");
+		storeRemainder = "";
+		for (const line of lines) ingest(line);
+		if (tail.length > 0 && !ingest(tail)) storeRemainder = tail;
+	};
 	if (options.execute === undefined && options.adapterDeps === undefined) {
 		throw new BenchError("the run has no executor: pass adapterDeps (bench/cli.ts does) or an explicit execute", "adapter");
 	}
 
 	/** Fold this run's report from its ledger and store, and write both artifacts. */
 	const writeReport = (): BenchReport => {
-		const telemetry: RunTelemetry[] = readRuns(dir, {}, { telemetry_path: storePath });
+		drainStore();
 		const report = foldReport({
 			run_id: runId,
 			generated_at: now().toISOString(),
@@ -173,7 +230,8 @@ export async function runBench(options: BenchRunOptions): Promise<BenchRun> {
 		inflight?.flush?.();
 		if (inflight) {
 			const { attempt, task, row, startedAt } = inflight;
-			const partial = readRuns(dir, { taskId: attempt.telemetry_task_id }, { telemetry_path: storePath }).at(-1);
+			drainStore();
+			const partial = telemetryByTask.get(attempt.telemetry_task_id)?.at(-1);
 			const rowOut: BenchLedgerRow = {
 				run_id: runId,
 				task_id: task.id,
@@ -243,15 +301,16 @@ export async function runBench(options: BenchRunOptions): Promise<BenchRun> {
 				workspace.cleanup();
 				throw error;
 			}
-			const records = readRuns(dir, { taskId: attempt.telemetry_task_id }, { telemetry_path: storePath });
-			const record = records[records.length - 1];
-			if (!record) {
-				workspace.cleanup();
-				throw new BenchError(
-					`task "${task.id}" under config "${row.id}" wrote no §52 record for telemetry task id "${attempt.telemetry_task_id}"; the store ${storePath} holds ${readRuns(dir, {}, { telemetry_path: storePath }).length} row(s)`,
-					"telemetry-join",
-				);
-			}
+		drainStore();
+		const records = telemetryByTask.get(attempt.telemetry_task_id) ?? [];
+		const record = records[records.length - 1];
+		if (!record) {
+			workspace.cleanup();
+			throw new BenchError(
+				`task "${task.id}" under config "${row.id}" wrote no §52 record for telemetry task id "${attempt.telemetry_task_id}"; the store ${storePath} holds ${telemetry.length} row(s)`,
+				"telemetry-join",
+			);
+		}
 			const adjudication = await adjudicateAttempt(attempt, {
 				base: options.cwd,
 				config,

@@ -13,13 +13,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
-import { capabilityOf } from "../../src/bench/metrics.js";
+import { capabilityOf, foldReport } from "../../src/bench/metrics.js";
 import { readLedger, runBench } from "../../src/bench/runner.js";
 import { coverageOf, loadSuite, SEED_SUITE_DIR, SUITE_CATEGORIES } from "../../src/bench/suite.js";
 import { main, recompute } from "../../src/bench/cli.js";
 import { appendRun } from "../../src/telemetry/index.js";
 import type { RunTelemetry } from "../../src/telemetry/index.js";
-import type { BenchLedgerRow } from "../../src/bench/types.js";
+import type { BenchConfigRow, BenchLedgerRow } from "../../src/bench/types.js";
 import { capturingIo, fixtureConfig, localiseSeedSuite, preparedWorkspaces, tempDir, writeRunFixture } from "./helpers.js";
 
 const SEED = loadSuite(SEED_SUITE_DIR, PACKAGE_ROOT);
@@ -153,6 +153,73 @@ describe("PRD-021 AC-1/AC-2 — the §53 report over two LeanPi configurations",
 		}
 		expect(outcome.reportText).toContain("## per-task pairing");
 		expect(outcome.reportText).toContain(NINTH);
+	});
+
+	it("preserves task-major, config-major fold order over an interleaved ledger", () => {
+		const configRow = (id: string): BenchConfigRow => ({
+			id,
+			label: id,
+			adapter: "leanpi",
+			vendor: null,
+			jev: "disabled",
+			executor_model: "qwen3-coder-480b-a35b",
+			reviewer_model: null,
+			features: [],
+			owner_gated: false,
+			subscription: false,
+			budget_usd: 0,
+		});
+		const row = (configId: string, taskId: string, attempt: number, verdict: BenchLedgerRow["adjudication"]["verdict"]): BenchLedgerRow => {
+			const telemetry_task_id = `${taskId}@${configId}#${attempt}`;
+			return {
+				run_id: "fold-order",
+				task_id: taskId,
+				config_id: configId,
+				telemetry_task_id,
+				session_id: telemetry_task_id,
+				source: { repo: "fixture", commit: "0".repeat(40), fix_commit: null, pinned_via: "fixture" },
+				budget_usd: 0,
+				reported_success: true,
+				adjudication: { verdict, kind: "upstream-test", adjudicator: "test -f marker", reason: null, rubric_model: null, reviewer_model: "gemini-2.5-flash" },
+				adapter: { operator: "scripted", extensions: [], note: null },
+				note: null,
+				started_at: "2026-09-19T00:00:00.000Z",
+				finished_at: "2026-09-19T00:00:01.000Z",
+			};
+		};
+		// Deliberately interleaved: cfg-b leads, one pair's attempts are non-adjacent,
+		// and the source order is neither task-major nor config-major.
+		const ledger = [
+			row("cfg-b", "task-1", 1, "incomplete"),
+			row("cfg-a", "task-2", 1, "complete"),
+			row("cfg-a", "task-1", 1, "complete"),
+			row("cfg-b", "task-2", 1, "incomplete"),
+			row("cfg-a", "task-1", 2, "incomplete"),
+			row("cfg-b", "task-1", 2, "error"),
+		];
+		const telemetry = ledger.map((entry) => record(entry.telemetry_task_id, entry.session_id, { cost: 0.01, wallMs: 1000, success: true, model: "qwen3-coder-480b-a35b" }));
+		const report = foldReport({
+			run_id: "fold-order",
+			generated_at: "2026-09-19T00:00:00.000Z",
+			suite_dir: "fixture",
+			tasks: [{ id: "task-1" }, { id: "task-2" }],
+			ledger,
+			telemetry,
+			configs: [configRow("cfg-a"), configRow("cfg-b")],
+			config: null,
+		});
+		// Task-major: one pairing row per task, in suite order.
+		expect(report.pairing.map((pair) => pair.task_id)).toEqual(["task-1", "task-2"]);
+		// Config-major in the config list's order — cfg-a before cfg-b though cfg-b leads the ledger.
+		expect(report.pairing.map((pair) => pair.arms.map((arm) => arm.config_id))).toEqual([
+			["cfg-a", "cfg-a", "cfg-b", "cfg-b"],
+			["cfg-a", "cfg-b"],
+		]);
+		// Source order kept among multiple attempts of one (task, config) pair.
+		expect(report.pairing.map((pair) => pair.arms.map((arm) => arm.adjudication))).toEqual([
+			["complete", "incomplete", "incomplete", "error"],
+			["complete", "incomplete"],
+		]);
 	});
 
 	it("recomputes every rate from an edited ledger — 2/4 reads 0.50, one flipped row reads 0.25", () => {
