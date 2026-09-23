@@ -52,7 +52,8 @@ export interface LaunchPlan {
  *
  * `pi-patty-bg-tasks` overrides Pi's built-in `bash`, a name LeanPi never
  * registers (its shell is `execute`), so backgrounding lands on the interactive
- * shell without touching the gated one. See `backgroundTasksExtension`.
+ * shell without touching the gated one. It rides through an adapter because the
+ * compact UI registers `bash` too. See `backgroundTasksExtension`.
  */
 
 /**
@@ -132,11 +133,14 @@ export function foldCacheExtension(root: string = packageRoot()): string {
  * status, and a shell that returned a job handle after 120s would break the
  * gate. `bash` is the interactive shell; `execute` is the gated one.
  *
- * The path is the package's own manifest entry (`pi.extensions: ./index.ts`) —
- * TypeScript, so Pi's loader compiles it. Absent is skip-not-fatal.
+ * Attached through LeanPi's adapter, not the package's own entry, under both
+ * UIs: the compact UI registers `bash` as well, and two load-time owners of one
+ * tool name make Pi's CLI exit at startup. `src/cli/background.ts` has the why.
+ * The adapter imports the package, so it is only attached when the package is
+ * installed — absent is skip-not-fatal.
  */
 export function backgroundTasksExtension(root: string = packageRoot()): string | undefined {
-	return dependencyDir(join("pi-patty-bg-tasks", "index.ts"), root);
+	return dependencyDir(join("pi-patty-bg-tasks", "index.ts"), root) === undefined ? undefined : join(root, "extensions", "background", "index.ts");
 }
 
 /**
@@ -182,15 +186,16 @@ export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "co
 	// folding correctly under `--ui plain`.
 	const fold = thinkingFold ? thinkingFoldExtension(root) : undefined;
 	const vendored = fold !== undefined && existsSync(fold) ? [fold] : [];
-	// Only without the compact UI: it registers `bash` as well, and Pi refuses a
-	// tool name two extensions register, failing the whole session at load.
-	const background = ui === "compact" ? undefined : backgroundTasksExtension(root);
+	// Ahead of the compact UI, and that order is load-bearing too: Pi runs the
+	// first extension that owns a tool name, so after it the compact UI's `bash`
+	// would shadow the backgrounding one.
+	const background = backgroundTasksExtension(root);
 	return [
 		...vendored,
+		...(background === undefined ? [] : [background]),
 		...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])
 			.map((entry) => dependencyDir(entry, root))
 			.filter((path): path is string => path !== undefined),
-		...(background === undefined ? [] : [background]),
 	];
 }
 
@@ -457,7 +462,7 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// guard and pi-subagents' concurrency cap, duplicating what PRD-041 already
 	// owns. Excluded by name rather than attached — the background *shell* is the
 	// feature; a shadow subagent is not.
-	const backgroundTools = bundled.some((path) => path.includes("pi-patty-bg-tasks")) ? ["--exclude-tools", "agent_bg"] : [];
+	const backgroundTools = backgroundTasksExtension(root) === undefined ? [] : ["--exclude-tools", "agent_bg"];
 	return {
 		cli: resolvePiCli(root),
 		extension,

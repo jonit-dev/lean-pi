@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { compactUiAttached } from "../../src/core/tools.js";
+import { backgroundTasksAdapter, type BackgroundPi } from "../../src/cli/background.js";
 import { bundledExtensions, backgroundTasksExtension, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension } from "../../src/cli/launch.js";
 import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend } from "../helpers/stub-backend.js";
@@ -39,6 +40,8 @@ describe("the leanpi launcher", () => {
 			spinnerExtension(PACKAGE_ROOT),
 			"--extension",
 			foldCacheExtension(PACKAGE_ROOT),
+			"--exclude-tools",
+			"agent_bg",
 			"--no-skills",
 			...theme,
 			"--print",
@@ -183,25 +186,50 @@ describe("the leanpi launcher", () => {
 		// `run_in_background`, Ctrl+B, `jobs` and completion notices. It is not wired
 		// into LeanPi's `execute`: the compiled lane and PRD-009's proof gate read an
 		// exit status, and a shell that returned a job handle after 120s would break
-		// the gate. So the package's path is attached and its `bash` is the
-		// interactive shell, while `execute` stays LeanPi's own bounded definition.
+		// the gate. So the package is attached, through LeanPi's adapter, and its
+		// `bash` is the interactive shell, while `execute` stays LeanPi's own
+		// bounded definition.
 		const path = backgroundTasksExtension(PACKAGE_ROOT);
-		expect(path).toBeDefined();
-		expect(path!.endsWith(join("pi-patty-bg-tasks", "index.ts"))).toBe(true);
+		expect(path).toBe(join(PACKAGE_ROOT, "extensions", "background", "index.ts"));
 		expect(existsSync(path!)).toBe(true);
-		const plan = launchPlan([], PACKAGE_ROOT, undefined, "plain");
-		expect(plan.bundled).toContain(path);
-		expect(plan.args).toContain(path);
-		// Not with the compact UI: `pi-claude-code-ui` registers `bash` too, and Pi
-		// refuses a tool name two extensions register — the session dies at load.
-		const compact = launchPlan([]);
-		expect(compact.bundled).not.toContain(path);
-		expect(compact.args).not.toContain("agent_bg");
-		// `agent_bg` rides with the package but is excluded: it spawns a plain
-		// `pi -p` from PATH, a shadow delegation path outside LeanPi's routing, its
-		// permission guard and pi-subagents' cap (PRD-041).
-		expect(plan.args).toContain("agent_bg");
-		expect(plan.args[plan.args.indexOf("agent_bg") - 1]).toBe("--exclude-tools");
+		// Under both UIs, the default compact one included: the adapter holds the
+		// package's `bash` back until `session_start`, so `pi-claude-code-ui`'s own
+		// `bash` is never a second load-time owner that makes Pi's CLI exit.
+		for (const ui of ["compact", "plain"] as const) {
+			const plan = launchPlan([], PACKAGE_ROOT, undefined, ui);
+			expect(plan.bundled).toContain(path);
+			expect(plan.args).toContain(path);
+			// Ahead of the compact UI: Pi runs the first owner of a tool name, so the
+			// backgrounding `bash` has to come before the compact UI's.
+			const compactUi = plan.bundled.findIndex((entry) => entry.includes("pi-claude-code-ui"));
+			if (ui === "compact") expect(plan.bundled.indexOf(path!)).toBeLessThan(compactUi);
+			// `agent_bg` rides with the package but is excluded: it spawns a plain
+			// `pi -p` from PATH, a shadow delegation path outside LeanPi's routing, its
+			// permission guard and pi-subagents' cap (PRD-041).
+			expect(plan.args[plan.args.indexOf("agent_bg") - 1]).toBe("--exclude-tools");
+		}
+		// Not installed, not attached: the adapter imports the package.
+		const bare = tempDir("leanpi-nobg-");
+		expect(backgroundTasksExtension(bare)).toBeUndefined();
+	});
+
+	it("holds the package's bash back to session_start and forwards everything else", async () => {
+		const registered: string[] = [];
+		const sessionStart: Array<() => Promise<void>> = [];
+		const bundled = (pi: BackgroundPi) => {
+			pi.registerTool({ name: "bash" });
+			pi.registerTool({ name: "bash_bg" });
+			pi.registerTool({ name: "monitor" });
+		};
+		const pi = {
+			registerTool: (tool: { name: string }) => registered.push(tool.name),
+			on: (_event: "session_start", handler: () => Promise<void>) => sessionStart.push(handler),
+		};
+		backgroundTasksAdapter(bundled)(pi);
+		// At load, Pi's conflict check sees no `bash` from this extension.
+		expect(registered).toEqual(["bash_bg", "monitor"]);
+		for (const handler of sessionStart) await handler();
+		expect(registered).toEqual(["bash_bg", "monitor", "bash"]);
 	});
 
 	it("skips Pi's update banner in an installed package, but leaves it on in a source checkout", () => {
