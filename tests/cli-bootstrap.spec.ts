@@ -150,6 +150,31 @@ describe("first run", () => {
 		expect(result.summary).toContain("claude: installed but signed out — run `claude /login`");
 		expect(result.summary).toContain("codex: not installed");
 	});
+
+	it("reads Pi's credential from a PI_CODING_AGENT_DIR, not only `~/.pi/agent`", async () => {
+		// Pi itself honours `PI_CODING_AGENT_DIR` (and expands a leading `~`),
+		// and the readiness row read `~/.pi/agent` unconditionally — so a user
+		// who had moved their agent dir was told Pi had no credential at all.
+		const { cwd, home, env } = machine({ vendors: [] });
+		const agentDir = join(cwd, "custom-agent");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "auth.json"), '{"anthropic":{}}\n');
+
+		const result = await autoConfigure({ cwd, home, env: { ...env, PI_CODING_AGENT_DIR: agentDir } });
+
+		expect(result.summary).toContain("pi: authenticated for anthropic");
+	});
+
+	it("expands a `~` in PI_CODING_AGENT_DIR the way Pi does", async () => {
+		const { cwd, home, env } = machine({ vendors: [] });
+		const agentDir = join(home, ".pi-elsewhere");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "auth.json"), '{"anthropic":{}}\n');
+
+		const result = await autoConfigure({ cwd, home, env: { ...env, PI_CODING_AGENT_DIR: "~/.pi-elsewhere" } });
+
+		expect(result.summary).toContain("pi: authenticated for anthropic");
+	});
 });
 
 describe("the control plane is optional, and says so", () => {
@@ -294,6 +319,24 @@ describe("what Pi's own loop can run", () => {
 		} as never;
 
 		expect(startupBanner(config, { source: "env" }, undefined, { agentDir })).toContain("deepseek-v4.1-flash (pi default)");
+	});
+
+	it("names the project's default model when one shadows Pi's global default", () => {
+		// Pi merges `<cwd>/.pi/settings.json` over its own settings file, so a
+		// project that sets `defaultModel` is the model Pi actually runs.
+		const agentDir = mkdtempSync(join(tmpdir(), "leanpi-agent-"));
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultModel: "global-model" }));
+		const cwd = mkdtempSync(join(tmpdir(), "leanpi-project-"));
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ defaultModel: "project-model" }));
+		const config = {
+			backends: { "opencode-go": { type: "native", baseUrl: "https://example.test" } },
+			models: { balanced: { backend: "opencode-go", model: VENDOR_DEFAULT } },
+		} as never;
+
+		const banner = startupBanner(config, { source: "env" }, undefined, { agentDir, cwd });
+		expect(banner).toContain("project-model (pi default)");
+		expect(banner).not.toContain("global-model");
 	});
 
 	it("passes that model to Pi, and never overrides a model the user asked for", () => {

@@ -183,6 +183,20 @@ function renderConfig(
 const LOGIN_COMMAND: Record<string, string> = { claude: "claude /login", codex: "codex login", opencode: "opencode auth login" };
 
 /**
+ * Pi's agent dir, resolved the way Pi's own `getAgentDir` does: the
+ * `PI_CODING_AGENT_DIR` override (with a leading `~` expanded against `home`),
+ * else `<home>/.pi/agent`. Kept local rather than imported from Pi's SDK so
+ * bootstrap does not pay the SDK's load cost just to read its auth store.
+ */
+function resolveAgentDir(home: string, env: NodeJS.ProcessEnv = process.env): string {
+	const declared = env.PI_CODING_AGENT_DIR;
+	if (declared === undefined || declared.length === 0) return join(home, ".pi", "agent");
+	if (declared === "~") return home;
+	if (declared.startsWith("~/")) return join(home, declared.slice(2));
+	return declared;
+}
+
+/**
  * Providers Pi itself holds a credential for, read from its own auth store.
  *
  * A machine with no vendor CLI can still be perfectly able to run LeanPi: Pi's
@@ -191,8 +205,8 @@ const LOGIN_COMMAND: Record<string, string> = { claude: "claude /login", codex: 
  * without mentioning it was the cold start telling a configured user they had
  * configured nothing.
  */
-function piAuthenticatedProviders(home: string): string[] {
-	const path = join(home, ".pi", "agent", "auth.json");
+function piAuthenticatedProviders(home: string, env: NodeJS.ProcessEnv = process.env): string[] {
+	const path = join(resolveAgentDir(home, env), "auth.json");
 	if (!existsSync(path)) return [];
 	try {
 		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -211,7 +225,7 @@ function readinessRows(detected: readonly SubscriptionState[], options: { env: N
 		if (!state.signedIn) return `${state.vendor}: installed but signed out — run \`${LOGIN_COMMAND[state.vendor] ?? `${state.command} login`}\``;
 		return `${state.vendor}: ready`;
 	});
-	const providers = piAuthenticatedProviders(options.home);
+	const providers = piAuthenticatedProviders(options.home, options.env);
 	rows.push(
 		providers.length > 0
 			? `pi: authenticated for ${providers.join(", ")} — add a \`native\` backend for one of them to ${userConfigPath({ ...options.env, HOME: options.home }) ?? CONFIG_FILENAME} and LeanPi will run on it`
@@ -449,8 +463,7 @@ export interface BannerStyle {
 }
 
 /** Pi's own default model from `<agentDir>/settings.json`, or undefined when unset. */
-function piDefaultModel(agentDir: string): string | undefined {
-	const path = join(agentDir, "settings.json");
+function readDefaultModel(path: string): string | undefined {
 	if (!existsSync(path)) return undefined;
 	try {
 		const settings = JSON.parse(readFileSync(path, "utf8")) as { defaultModel?: unknown };
@@ -458,6 +471,16 @@ function piDefaultModel(agentDir: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * The default model Pi will run, project over global.
+ *
+ * Pi merges `<cwd>/.pi/settings.json` over its own settings file, so a project
+ * that sets `defaultModel` shadows the global one and the banner must name it.
+ */
+function piDefaultModel(agentDir: string, cwd: string): string | undefined {
+	return readDefaultModel(join(cwd, ".pi", "settings.json")) ?? readDefaultModel(join(agentDir, "settings.json"));
 }
 
 /**
@@ -472,13 +495,13 @@ function piDefaultModel(agentDir: string): string | undefined {
 export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?: string, style: BannerStyle = {}): string {
 	const cwd = style.cwd ?? process.cwd();
 	const home = style.home ?? homedir();
-	const agentDir = style.agentDir || process.env.PI_CODING_AGENT_DIR || join(home, ".pi", "agent");
+	const agentDir = style.agentDir || resolveAgentDir(home);
 	const on = style.color === true;
 	const paint = (code: string, text: string): string => (on ? `${code}${text}${OFF}` : text);
 	// The model that answers the prompt. The roles are the workers LeanPi spawns
 	// *inside* a turn, and naming them here described something the user is not
 	// about to talk to.
-	const piDefault = sessionModel === undefined ? piDefaultModel(agentDir) : undefined;
+	const piDefault = sessionModel === undefined ? piDefaultModel(agentDir, cwd) : undefined;
 	const running =
 		sessionModel !== undefined
 			? sessionModel.slice(sessionModel.indexOf("/") + 1)

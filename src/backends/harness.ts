@@ -552,12 +552,20 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 				exitCode: result.code,
 			};
 		}
-		const limit = descriptor.limitSignal(result.code, result.stderr, result.stdout);
+		const envelope = descriptor.parse(result.stdout);
+		// A successful run's stdout is the vendor's answer, not a diagnostic: a
+		// task that merely mentions "rate limit" or a `src/api.ts:429` line must
+		// not be classified as the vendor being limited. Only the envelope's own
+		// `error` field can make an exit-0 run a limit; stdout-wide scanning stays
+		// for non-zero exits, where it is the failing run's diagnostic.
+		const limit =
+			result.code === 0
+				? descriptor.limitSignal(result.code, envelope.error ?? "", "")
+				: descriptor.limitSignal(result.code, result.stderr, result.stdout);
 		if (limit) {
 			return { status: "failed", failure: "limit", reason: limit, exitCode: result.code };
 		}
 
-		const envelope = descriptor.parse(result.stdout);
 		if (result.code !== 0 && result.code !== null) {
 			return {
 				status: "failed",

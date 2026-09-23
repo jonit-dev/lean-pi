@@ -55,7 +55,7 @@ async function suggestFixture(options: { choices: Record<string, string>; pick?:
 		}
 		return session;
 	};
-	return { backend, cwd, env, asked, notes, boot };
+	return { backend, jevUrl: jev.url, cwd, env, asked, notes, boot };
 }
 
 /** The turn's own request: the one carrying the session's system prompt, not the authoring or recap call. */
@@ -103,6 +103,32 @@ describe("PRD suggestion prompt (PRD-044)", () => {
 		const headless = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[1], ui: false });
 		await (await headless.boot()).session.prompt("rework the storage layer");
 		expect(headless.asked).toEqual([]);
+	});
+
+	it("does not ask when the gate's low-confidence path resolved PRD_REQUIRED on doubt (AC-1)", async () => {
+		// PRD-044's intent: only a confident JEV decision may ask. A JEV answering
+		// the gate below the confidence threshold takes §10/§50's low-confidence
+		// path, which returns PRD_REQUIRED on doubt with `fallback_used: false` —
+		// the offer is for a plan JEV actually judged, not for the heuristic's
+		// asymmetric "prefer a PRD" default.
+		const f = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[1] });
+		writeConfig(f.cwd, {
+			backends: { local: nativeBackend(f.backend.baseUrl) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+			jev: { endpoint: f.jevUrl, apiKey: "test-key" },
+			thresholds: { gate_prd_required: 0.99 },
+		});
+		await (await f.boot()).session.prompt("rework the storage layer");
+		expect(f.asked).toEqual([]);
+	});
+
+	it("does not offer a PRD when the prompt already names one (AC-1)", async () => {
+		// Seen live: `/goal execute docs/PRDs/v1/PRD-045-mcp-execution.md` asked
+		// "write one first?" about a task that already carried its own PRD. The
+		// guard only checked LeanPi's active-PRD state, never the prompt.
+		const f = await suggestFixture({ choices: PRD_WORTHY, pick: OPTIONS[1] });
+		await (await f.boot()).session.prompt("execute docs/PRDs/v1/PRD-045-mcp-execution.md");
+		expect(f.asked).toEqual([]);
 	});
 
 	it("does not ask when the gate fell back to its heuristic (AC-1)", async () => {

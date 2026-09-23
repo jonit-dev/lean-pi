@@ -232,7 +232,12 @@ export function projectSurfaceHash(surface: ProjectSurface): string {
 export function projectSurface(root: string, declared: SurfaceDeclaration = {}): ProjectSurface {
 	const absolute = resolve(root);
 	const declaredSkills = declared.skillRoots ?? [];
-	const skillRoots = declaredSkills.filter((entry) => isProjectLocal(absolute, entry));
+	// Resolved against the project root like `mcpConfigPaths`: a session cwd can
+	// differ from `process.cwd()`, and a relative root must hash the project's
+	// skill, not whatever directory the process happens to run from.
+	const skillRoots = declaredSkills
+		.filter((entry) => isProjectLocal(absolute, entry))
+		.map((entry) => (isAbsolute(entry) ? resolve(entry) : resolve(absolute, entry)));
 	for (const fallback of [".claude/skills", ".codex/skills"]) {
 		const candidate = join(absolute, fallback);
 		if (!skillRoots.includes(candidate) && existsSync(candidate)) skillRoots.push(candidate);

@@ -431,8 +431,17 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 					evidence: result.records,
 					failedAttempts: retryHistory.length,
 					// F4: the identity that actually ran, so the reviewer lane can prefer
-					// a different model and report independence rather than guess.
-					...(ranBackend ? { executor: { backend: ranBackend.name, model: modelFor(ranBackend, role) } } : {}),
+					// a different model and report independence rather than guess. When
+					// PRD-020 pinned a routed model onto the packet, that pin — not the
+					// role's default from `modelFor` — is what ran on the routed backend.
+					...(ranBackend
+						? {
+								executor: {
+									backend: ranBackend.name,
+									model: routedIdentity && ranBackend.name === routedIdentity.backend ? routedIdentity.model : modelFor(ranBackend, role),
+								},
+							}
+						: {}),
 				});
 				const verdict = reviewOutcome.verdict;
 				if (reviewOutcome.skipped || !verdict || verdict.decision === "PASS") {

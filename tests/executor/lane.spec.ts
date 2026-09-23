@@ -13,6 +13,7 @@ import type { LeanPiConfig } from "../../src/core/types.js";
 import { ESCALATION_QUESTION, ESCALATION_SITE_ID, type EscalationCategory } from "../../src/executor/escalation.js";
 import { REVIEW_LEVEL_QUESTION_ID, REVIEW_LEVEL_SITE_ID } from "../../src/review/gate.js";
 import * as reviewLane from "../../src/review/lane.js";
+import type { ClearingSource } from "../../src/routing/candidates.js";
 import { choice, fakeExec, harness, quickContract, scriptedJev, VERIFY_COMMANDS, type ExecHarness } from "./helpers.js";
 
 const open: ExecHarness[] = [];
@@ -418,6 +419,54 @@ describe("PRD-007 — the reviewer's verdict and the escalation categories", () 
 		expect(outcome.status).toBe("completed");
 		expect(seen).toEqual([{ backend: "local", model: "cheap" }]);
 		expect(outcome.review.independence).not.toBeNull();
+	});
+
+	it("BUG E: the reviewer is told the pinned routed model that actually ran", async () => {
+		const h = await fixture();
+		const base = await quickContract(h);
+		const contract: ExecutionContract = { ...base, routing: { ...base.routing, executor_class: "quick" }, verification: { required: ["typecheck"] } };
+		const jev = scriptedJev({ [REVIEW_LEVEL_SITE_ID]: () => choice(REVIEW_LEVEL_QUESTION_ID, "QUICK_REVIEW") });
+		const seen: unknown[] = [];
+		const packets: WorkerTaskPacket[] = [];
+		const reviewRunner: reviewLane.ReviewRunner = async (_packet, _backend, deps) => {
+			seen.push(deps.executor);
+			return { status: "ok", changedFiles: [], summary: verdict("PASS") };
+		};
+		// `local/mid` clears under a candidate the contract's own `quick` role can
+		// serve, so `modelFor(local, quick)` would answer `cheap`; only the pinned
+		// routed model tells the reviewer what actually ran.
+		const clearing: ClearingSource = () => ({
+			candidates: [
+				{
+					id: "local/mid",
+					backend: "local",
+					model: "mid",
+					billing: "metered",
+					quota_class: null,
+					coding_score: 90,
+					price_input_per_mtok: 1,
+					price_output_per_mtok: 1,
+					roles: ["quick"],
+					priority: 0,
+				},
+			],
+		});
+
+		const outcome = await runExecutor(
+			contract,
+			depsFor(h, {
+				jev,
+				clearing,
+				worker: editingWorker(h.cwd, packets),
+				exec: fakeExec({ pass: true }),
+				verifyCommands: VERIFY_COMMANDS,
+				reviewRunner,
+			}),
+		);
+
+		expect(outcome.status).toBe("completed");
+		expect(packets[0]!.model).toBe("mid");
+		expect(seen).toEqual([{ backend: "local", model: "mid" }]);
 	});
 
 	it("B4: a change touching package.json widens verification to the full suite", async () => {

@@ -253,6 +253,49 @@ describe("PRD-008 Phase 3 — external harness workers", () => {
 		expect(persisted.length).toBeGreaterThan(0);
 		for (const path of persisted) expect(readFileSync(path, "utf8")).not.toContain("sk-secret-LEANPI-7f3a");
 	});
+
+	it("a successful run whose answer merely mentions a rate limit is not classified as one", async () => {
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { claude: { type: "external_harness", command: "claude", roles: ["strong"] } },
+			models: { strong: { backend: "claude", model: "claude-model" } },
+		});
+		const backend = new BackendRegistry(loadConfig(cwd)).byName("claude")!;
+		const outcome = await runHarness(
+			backend,
+			{ objective: "add rate limiting", role: "strong", files: ["api.ts"] },
+			{
+				cwd,
+				spawn: async () => ({
+					code: 0,
+					signal: null,
+					stdout: JSON.stringify({ result: "Added rate limit middleware; see src/api.ts:429", session_id: "s1" }),
+					stderr: "",
+					error: null,
+					timedOut: false,
+				}),
+			},
+		);
+		expect(outcome.status).toBe("ok");
+	});
+
+	it("a failed run whose stderr names a usage limit is still a limit", async () => {
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { claude: { type: "external_harness", command: "claude", roles: ["strong"] } },
+			models: { strong: { backend: "claude", model: "claude-model" } },
+		});
+		const backend = new BackendRegistry(loadConfig(cwd)).byName("claude")!;
+		const outcome = await runHarness(
+			backend,
+			{ objective: "create file", role: "strong", files: ["api.ts"] },
+			{
+				cwd,
+				spawn: async () => ({ code: 1, signal: null, stdout: "", stderr: "Claude AI usage limit reached", error: null, timedOut: false }),
+			},
+		);
+		expect(outcome).toMatchObject({ status: "failed", failure: "limit" });
+	});
 });
 
 describe("PRD-045 Phase 3 — MCP servers reach the vendor CLI (AC-7)", () => {

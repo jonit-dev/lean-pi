@@ -231,7 +231,7 @@ export async function runLanes(turn: TurnInput, context: TurnContext): Promise<T
 			config: context.config,
 			skills: context.skills,
 			...(context.contract ? { contract: context.contract } : {}),
-			workingState: buildWorkingState(context.workingStateSources ?? stubSources(), { filesTouched: [] }),
+			workingState: buildWorkingState(context.workingStateSources ?? stubSources(), { filesTouched: [] }, context.config.context.working_state_max_bytes),
 		});
 		// PRD-025's block is the last thing a prompt carries, and only when the
 		// list has something to say.

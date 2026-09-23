@@ -18,7 +18,7 @@ import type { LeanPiConfig } from "../core/types.js";
 import type { JevClient } from "../jev/client.js";
 import { authorPrd, resolveSkillScript, writePrdFile, type AuthoringModel } from "./creator.js";
 import { noteLaneModuleLoad, PRD_COMMAND_HELP } from "./dispatch.js";
-import { createPrdState, readPrdState, writePrdState, type PrdState } from "./state.js";
+import { createPrdState, readPrdState, writePrdState } from "./state.js";
 
 noteLaneModuleLoad("commands");
 
@@ -193,9 +193,4 @@ export function registerPrdCommands(registry: CommandRegistry, deps: PrdCommandD
 	// A later session supersedes the earlier handler, exactly like `/skills`.
 	if (registry.has("prd")) registry.unregister("prd");
 	registry.register("prd", createPrdHandler(deps), PRD_COMMAND_HELP);
-}
-
-/** The active PRD, for callers that need the state without a manager. */
-export function activePrd(cwd: string): PrdState | null {
-	return readPrdState(cwd);
 }

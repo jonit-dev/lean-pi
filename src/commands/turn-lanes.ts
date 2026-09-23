@@ -15,7 +15,6 @@ import type { LeanPiConfig, ModelRole } from "../core/types.js";
 import { runExecutor, type ExecutorDeps } from "../executor/index.js";
 import { runIsolated, ensureGitIgnored, worktreePath, worktreeRootOf, type CleanupResult, type WorktreePatch } from "../runtime/index.js";
 import type { WorktreePermissionRequest } from "../runtime/index.js";
-import { selectSkills } from "../capabilities/skill-select.js";
 import type { SkillControl, SkillRecord } from "../capabilities/skills.js";
 import { createFileSearch } from "../exploration/gather.js";
 import { explore, type ContextSelection } from "../exploration/governor.js";
@@ -150,41 +149,6 @@ export function toolSurfaceLane(deps: TurnLaneDeps): Lane {
 			if (!surface) return;
 			const contract = context.contract;
 			surface.apply((contract?.capabilities.mcps ?? []) as SelectedMcpTool[], contract ? (lspSelectionOf(contract)?.mode ?? "LSP_OFF") : "LSP_OFF");
-		},
-	};
-}
-
-/**
- * PRD-005's disclosure on a backend LeanPi does not own the loop for.
- *
- * The selection is registered as a capability provider, which only `compileTask`
- * consumes — so on a native backend, where no contract is compiled, it never
- * ran and Pi disclosed its entire library instead. This lane runs the same JEV
- * pipeline against the turn's text and puts the result on `context.skills`,
- * which is the channel `runLanes` already assembles into the prompt. JEV
- * answering "no skill required" — and JEV being unreachable, which is what the
- * documented fallback is for — discloses nothing.
- */
-export function skillLane(deps: TurnLaneDeps): Lane {
-	return {
-		name: "skills",
-		async run(turn, context) {
-			const skills = deps.skills;
-			if (!skills) return;
-			const selection = await selectSkills({
-				records: skills.records(),
-				control: skills.control,
-				request: turn.text,
-				config: deps.config,
-				...(deps.jev ? { client: deps.jev } : {}),
-				// Pointer, not body. A body belongs in the one-shot executor prompt the
-				// contract path builds; here it would sit in the cacheable prefix of
-				// every provider call Pi's loop makes. Measured on the validated suite:
-				// three bodies cost about as much as Pi's whole 199-skill catalog did.
-				// The name, what it is for and where to read it is the affordance.
-				loadBody: (record) => `${record.description}\nFull skill: ${record.source.path}`,
-			});
-			context.skills = selection.skills;
 		},
 	};
 }

@@ -315,7 +315,11 @@ export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorker
 	const now = options.now ?? Date.now;
 	const exclude: string[] = [...(options.exclude ?? [])];
 	const attempts: WorkerAttempt[] = [];
-	let sessionId = packet.sessionId;
+	// A vendor session id is meaningful only to the backend that issued it, and
+	// the backend that failed is always excluded from the next selection, so a
+	// failed attempt's id must never be carried into the chain. Only the packet's
+	// own id — a continuation of a backend the caller already reached — is sent.
+	const sessionId = packet.sessionId;
 
 	for (;;) {
 		const [backend] = registry.selectBackend(packet.role, exclude);
@@ -360,7 +364,6 @@ export async function runWorkerTurn(packet: WorkerTaskPacket, options: RunWorker
 		if ("ok" in verdict) {
 			return { status: "completed", backend: backend.name, result: verdict.ok, attempts };
 		}
-		if (isWorkerFailure(outcome) && outcome.sessionId && !sessionId) sessionId = outcome.sessionId;
 		// A timeout is treated like a limit for cooldown purposes. Measured on this
 		// machine: `opencode run` with an exhausted plan quota accepts the request
 		// and then never answers, so every turn paid the full attempt ceiling

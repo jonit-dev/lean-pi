@@ -327,6 +327,29 @@ describe("the project-local containment fallback", () => {
 });
 
 /**
+ * BUG F: a declared project-local skill root is resolved against the project
+ * root, like `mcpConfigPaths`, even when it is given relative. It used to be
+ * kept verbatim and lstat'd against `process.cwd()`, so a session cwd that is
+ * not the process cwd never hashed the skill and editing it did not revoke trust.
+ */
+describe("a declared relative skill root revokes trust on edit", () => {
+	it("resolves the root against the project, not the process cwd", () => {
+		const root = tempDir("leanpi-relative-skill-");
+		const env = { XDG_CONFIG_HOME: tempDir("leanpi-relative-xdg-") };
+		mkdirSync(join(root, "skills"), { recursive: true });
+		writeFileSync(join(root, "skills", "a.md"), "# one\n");
+		// The process cwd is the repository, never the temp project.
+		expect(root).not.toBe(process.cwd());
+
+		grantTrust(root, env, { skillRoots: ["skills"] });
+		expect(assertTrusted(root, env, { skillRoots: ["skills"] }).trusted).toBe(true);
+
+		writeFileSync(join(root, "skills", "a.md"), "# two\n");
+		expect(assertTrusted(root, env, { skillRoots: ["skills"] }).status).toBe("changed");
+	});
+});
+
+/**
  * A symlink is part of the trusted surface, so what it points at is too: a
  * trusted project could otherwise swap the contents behind a link after the
  * grant and keep its approval. The hash follows the link to its target content

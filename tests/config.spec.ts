@@ -1,10 +1,11 @@
 /**
  * PRD-001 Phase 2 — AC-3, AC-4, AC-9: config validation and the role ladder.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_FILENAME, ConfigError, configPathFor, loadConfig, resolveRole, type ModelRole } from "../src/index.js";
+import { writeRoleBinding, writeSkillsState } from "../src/core/config.js";
 import { grantTrust } from "../src/permissions/index.js";
 import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "./helpers/stub-backend.js";
@@ -223,8 +224,7 @@ describe("FR-047 / PRD-009 — `models.specialists` and `verify:` are read from 
 	});
 });
 
-describe("configuration discovery", () => {
-	it("finds the project's config from a subdirectory, and the machine's when there is no project one", () => {
+describe("configuration discovery", () => {	it("finds the project's config from a subdirectory, and the machine's when there is no project one", () => {
 		const root = tempDir("leanpi-discovery-");
 		const project = join(root, "repo");
 		const deep = join(project, "packages", "api", "src");
@@ -246,5 +246,44 @@ describe("configuration discovery", () => {
 
 		// And with neither, the answer is where a writer should put one.
 		expect(configPathFor(elsewhere, { XDG_CONFIG_HOME: join(root, "empty") })).toBe(join(elsewhere, CONFIG_FILENAME));
+	});
+});
+
+describe("config writers preserve operator comments and unrelated blocks", () => {
+	const FILE = [
+		"# keep this comment",
+		"backends:",
+		"  claude:",
+		"    type: external_harness",
+		"    vendor: claude",
+		"models:",
+		"  strong:",
+		"    backend: claude",
+		"    model: sonnet",
+		"",
+	].join("\n");
+
+	/** An env whose user scope is empty, so only the project file answers. */
+	function isolatedEnv(): { XDG_CONFIG_HOME: string; HOME: string } {
+		return { XDG_CONFIG_HOME: tempDir("leanpi-config-xdg-"), HOME: tempDir("leanpi-config-home-") };
+	}
+
+	it("writeRoleBinding keeps comments and updates only the named role", () => {
+		const cwd = tempDir("leanpi-config-write-");
+		writeFileSync(join(cwd, CONFIG_FILENAME), FILE);
+		writeRoleBinding(cwd, "strong", "claude", "opus");
+
+		expect(readFileSync(join(cwd, CONFIG_FILENAME), "utf8")).toContain("# keep this comment");
+		const config = loadConfig(cwd, {}, isolatedEnv());
+		expect(config.models.strong).toEqual({ backend: "claude", model: "opus" });
+	});
+
+	it("writeSkillsState keeps comments and records only the skills state", () => {
+		const cwd = tempDir("leanpi-config-write-skills-");
+		writeFileSync(join(cwd, CONFIG_FILENAME), FILE);
+		writeSkillsState(cwd, { rust: { enabled: false } });
+
+		expect(readFileSync(join(cwd, CONFIG_FILENAME), "utf8")).toContain("# keep this comment");
+		expect(loadConfig(cwd, {}, isolatedEnv()).skills.state).toEqual({ rust: { enabled: false } });
 	});
 });

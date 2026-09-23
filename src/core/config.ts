@@ -6,7 +6,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml, parseDocument } from "yaml";
 import { CONFIG_FILENAME, configPathFor, userConfigPath } from "./config-path.js";
 import { assertTrusted, isProjectLocal, mergePermissions, readUserState, type PermissionEnv, type RawPermissionsBlock } from "../permissions/trust.js";
 import { parseRuntimePlan } from "../runtime/plan.js";
@@ -648,12 +648,9 @@ export function apiKeyFor(declared: unknown, env: Record<string, string | undefi
 /** Persist `/skills` enable/disable/pin state without disturbing unrelated config keys. */
 export function writeSkillsState(cwd: string, state: LeanPiConfig["skills"]["state"]): void {
 	const path = configPathFor(cwd);
-	const parsed = existsSync(path) ? (parseYaml(readFileSync(path, "utf8")) as unknown) : undefined;
-	const root = parsed === undefined || parsed === null ? {} : (parsed as Record<string, unknown>);
-	const skills = (root.skills ?? {}) as Record<string, unknown>;
-	skills.state = state;
-	root.skills = skills;
-	writeFileSync(path, stringifyYaml(root));
+	const doc = parseDocument(existsSync(path) ? readFileSync(path, "utf8") : "");
+	doc.setIn(["skills", "state"], state);
+	writeFileSync(path, doc.toString());
 }
 
 /**
@@ -667,20 +664,12 @@ export function writeSkillsState(cwd: string, state: LeanPiConfig["skills"]["sta
  */
 export function writeRoleBinding(cwd: string, role: ModelRole, backend: string, model: string): void {
 	const path = configPathFor(cwd);
-	const parsed = existsSync(path) ? (parseYaml(readFileSync(path, "utf8")) as unknown) : undefined;
-	const root = parsed === undefined || parsed === null ? {} : (parsed as Record<string, unknown>);
-	const backends = (root.backends ?? {}) as Record<string, unknown>;
+	const doc = parseDocument(existsSync(path) ? readFileSync(path, "utf8") : "");
 	// A discovered CLI model is unusable until its backend is declared; the
 	// vendor's own login stays in the vendor's CLI, so the entry is two keys.
-	if (backends[backend] === undefined) backends[backend] = { type: "external_harness" };
-	root.backends = backends;
-	const models = (root.models ?? {}) as Record<string, unknown>;
-	models[role] = { backend, model };
-	root.models = models;
-	const capability = (root.capability ?? {}) as Record<string, unknown>;
-	const roles = (capability.roles ?? {}) as Record<string, unknown>;
-	roles[role] = { ...((roles[role] ?? {}) as Record<string, unknown>), pin: model };
-	capability.roles = roles;
-	root.capability = capability;
-	writeFileSync(path, stringifyYaml(root));
+	if (doc.getIn(["backends", backend]) === undefined) doc.setIn(["backends", backend], { type: "external_harness" });
+	doc.setIn(["models", role], { backend, model });
+	const roles = ((doc.toJS() as { capability?: { roles?: Record<string, unknown> } } | null)?.capability?.roles ?? {}) as Record<string, unknown>;
+	doc.setIn(["capability", "roles", role], { ...((roles[role] ?? {}) as Record<string, unknown>), pin: model });
+	writeFileSync(path, doc.toString());
 }

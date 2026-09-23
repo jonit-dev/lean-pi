@@ -298,6 +298,7 @@ export async function compileTask(
 			review_risk: risk.review_risk,
 			required_capability: capability.required_capability,
 			planning_decision: gate.decision,
+			gate_confident: gate.confident,
 		},
 		telemetry,
 		state,

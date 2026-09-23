@@ -98,6 +98,8 @@ import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagent
 /** PRD-044's answers; plain words, because not everyone knows what a PRD is. */
 const PRD_SUGGEST_YES = "Yes, write a plan first";
 const PRD_SUGGEST_NEVER = "No, and don't ask again";
+/** A prompt already about a PRD (`execute docs/PRDs/…`, `write a PRD for X`) needs no offer. */
+const PRD_MENTION = /\bPRDs?\b/i;
 
 /**
  * The host's `ask` channel for an isolated worktree, built from Pi's own UI.
@@ -240,12 +242,35 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.Pr
  * STATIC prefix always heads the message list, so its bytes are cacheable and
  * byte-stable across tasks in a session (§22).
  */
-function installExecutorPrefix(pi: ExtensionAPI, fallbackPrefix: () => string): void {
+export function installExecutorPrefix(pi: ExtensionAPI, fallbackPrefix: () => string): void {
 	pi.on("before_provider_request", (event) => {
 		const text = getActivePrefix() || fallbackPrefix();
 		if (text.length === 0) return;
-		const payload = event.payload as { messages?: Array<{ role?: string; content?: unknown }> } | undefined;
-		const messages = payload?.messages;
+		const payload = event.payload as
+			| { messages?: Array<{ role?: string; content?: unknown }>; instructions?: unknown; systemInstruction?: unknown; system?: Array<{ text?: unknown }> }
+			| undefined;
+		if (!payload) return;
+		// The system prompt travels outside `messages` on these APIs; when it does,
+		// prepend there. Bedrock's `messages` reject a system role, so the prefix
+		// must never be unshifted onto it.
+		if (typeof payload.instructions === "string") {
+			payload.instructions = `${text}\n\n${payload.instructions}`;
+			return;
+		}
+		if (typeof payload.systemInstruction === "string") {
+			payload.systemInstruction = `${text}\n\n${payload.systemInstruction}`;
+			return;
+		}
+		if (Array.isArray(payload.system)) {
+			const [first] = payload.system;
+			if (first && typeof first.text === "string") {
+				first.text = `${text}\n\n${first.text}`;
+				return;
+			}
+			payload.system.unshift({ text });
+			return;
+		}
+		const messages = payload.messages;
 		if (!Array.isArray(messages) || messages.length === 0) return;
 		const [first] = messages;
 		if (first.role === "system" && typeof first.content === "string") {
@@ -1083,11 +1108,21 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// before the loop runs it as a blind prompt. Only the first prompt of a
 		// session asks (this turn's message is not on the branch yet, so a resumed
 		// session has a user message there already), and the heuristic fallback
-		// answers PRD_REQUIRED on any doubt, so only a gate JEV answered may ask.
+		// answers PRD_REQUIRED on any doubt, so only a confident gate JEV answer
+		// may ask — and never when the prompt already names a PRD of its own.
 		let prdMessage: string | undefined;
-		const gate = context.contract ? compileRecordOf(context.contract)?.telemetry.find((row) => row.site_id === "gate.prd_required") : undefined;
+		const gateConfident = context.contract ? compileRecordOf(context.contract)?.classification.gate_confident : undefined;
 		const firstPrompt = () => !ctx.sessionManager.getBranch().some((entry) => entry.type === "message" && entry.message.role === "user");
-		if (!owns && ctx.hasUI && context.contract?.task.prd_required && gate?.fallback_used === false && firstPrompt() && prdSuggestEnabled(env) && !readPrdState(cwd)) {
+		if (
+			!owns &&
+			ctx.hasUI &&
+			context.contract?.task.prd_required &&
+			gateConfident === true &&
+			!PRD_MENTION.test(event.prompt) &&
+			firstPrompt() &&
+			prdSuggestEnabled(env) &&
+			!readPrdState(cwd)
+		) {
 			// Unattended, the dialog dismisses itself and the turn runs as asked.
 			const choice = await ctx.ui.select(
 				"Wait — this task would go better with a plan (a PRD: goals, steps and checks) before any code. Want me to write one first?",

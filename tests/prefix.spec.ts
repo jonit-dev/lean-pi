@@ -4,14 +4,16 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
 	PACKAGE_ROOT,
 	PONYTAIL_MARKER,
 	PONYTAIL_VERSION,
 	PREFIX_MAX_BYTES,
 	buildStaticPrefix,
+	installExecutorPrefix,
 	readVendoredPonytail,
+	setActivePrefix,
 } from "../src/index.js";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend } from "./helpers/stub-backend.js";
@@ -32,6 +34,55 @@ async function captureOneTurn(options: { ponytail: boolean }): Promise<{ body: R
 	session.session.dispose();
 	return { body, close: () => stub.close() };
 }
+
+/**
+ * BUG D: `before_provider_request` was only told to inject the prefix into
+ * `payload.messages`, so every provider whose payload keeps the system prompt
+ * elsewhere — Responses `instructions`, Google `systemInstruction`, Bedrock
+ * `system` — silently dropped the static prefix, and Bedrock got an invalid
+ * `{role:"system"}` message it does not allow.
+ */
+describe("BUG D — the prefix reaches every provider payload shape", () => {
+	const PREFIX = "LEANPI-PREFIX";
+
+	function prefixHandler(): (event: { payload: Record<string, unknown> }) => void {
+		let captured: ((event: { payload: Record<string, unknown> }) => void) | undefined;
+		const pi = {
+			on: (_event: string, handler: (event: { payload: Record<string, unknown> }) => void) => {
+				captured = handler;
+			},
+		};
+		installExecutorPrefix(pi as unknown as Parameters<typeof installExecutorPrefix>[0], () => PREFIX);
+		return captured!;
+	}
+
+	beforeEach(() => setActivePrefix(""));
+
+	it("prepends the responses `instructions` string and keeps the base prompt", () => {
+		const handler = prefixHandler();
+		const payload: Record<string, unknown> = { instructions: "base", input: [] };
+		handler({ payload });
+		expect(String(payload.instructions).startsWith(PREFIX)).toBe(true);
+		expect(String(payload.instructions)).toContain("base");
+	});
+
+	it("prepends Bedrock's `system` block and leaves its messages untouched", () => {
+		const handler = prefixHandler();
+		const payload: Record<string, unknown> = { system: [{ text: "base" }], messages: [{ role: "user", content: [{ text: "hi" }] }] };
+		const messagesBefore = structuredClone(payload.messages);
+		handler({ payload });
+		expect(payload.messages).toEqual(messagesBefore);
+		expect(String((payload.system as Array<{ text: string }>)[0]!.text).startsWith(PREFIX)).toBe(true);
+		expect(String((payload.system as Array<{ text: string }>)[0]!.text)).toContain("base");
+	});
+
+	it("still prepends the leading system message of an openai-completions payload", () => {
+		const handler = prefixHandler();
+		const payload: Record<string, unknown> = { messages: [{ role: "system", content: "base" }, { role: "user", content: "hi" }] };
+		handler({ payload });
+		expect(String((payload.messages as Array<{ content: string }>)[0]!.content).startsWith(PREFIX)).toBe(true);
+	});
+});
 
 describe("PRD-001 Phase 3 — static Ponytail prefix", () => {
 	it("AC-5: every executor request carries a byte-identical prefix with the version marker", async () => {
@@ -88,6 +139,21 @@ describe("PRD-001 Phase 3 — static Ponytail prefix", () => {
 		expect(Buffer.byteLength(prefix, "utf8")).toBeLessThanOrEqual(PREFIX_MAX_BYTES);
 		// The check runs against the real shipped file, not a fixture.
 		expect(prefix).toContain(readVendoredPonytail());
+	});
+
+	it("the working rules make finishing a task conditional on verification, with or without Ponytail", () => {
+		for (const ponytail of [true, false]) {
+			const prefix = buildStaticPrefix({ instructions: { ponytail } });
+			expect(prefix).toContain("Done only when tests covering your change pass.");
+			expect(prefix).toContain("Changing untested code → write tests first.");
+			expect(prefix).toContain("No check possible → say unverified.");
+		}
+	});
+
+	it("the working rules ask for independent tool calls in one turn, with or without Ponytail", () => {
+		for (const ponytail of [true, false]) {
+			expect(buildStaticPrefix({ instructions: { ponytail } })).toContain("issue them as parallel tool calls in the same turn");
+		}
 	});
 
 	it("AC-8: --check passes on the pristine tree, fails on a mutated copy, and degrades without upstream", () => {

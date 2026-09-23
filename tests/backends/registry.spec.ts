@@ -3,7 +3,15 @@
  * AC-2 (billing classes are derived once and reported separately).
  */
 import { describe, expect, it } from "vitest";
-import { BackendRegistry, billingOf, billingTotals, runWorkerTurn, type BackendInvocation } from "../../src/backends/index.js";
+import {
+	BackendRegistry,
+	billingOf,
+	billingTotals,
+	runWorkerTurn,
+	type BackendInvocation,
+	type HarnessSpawn,
+	type HarnessSpawnRequest,
+} from "../../src/backends/index.js";
 import { ConfigError, loadConfig } from "../../src/index.js";
 import { fixtureRepo, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
@@ -156,5 +164,37 @@ describe("PRD-008 Phase 1 — backend registry and billing", () => {
 			"opencode",
 			"local",
 		]);
+	});
+
+	it("a failed backend's session id is never replayed to the next backend", async () => {
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: {
+				claude: { type: "external_harness", vendor: "claude", command: "claude", roles: ["strong"], priority: 20 },
+				codex: { type: "external_harness", vendor: "codex", command: "codex", roles: ["strong"], priority: 10 },
+			},
+			models: { strong: { backend: "claude", model: "strong" } },
+		});
+		const registry = new BackendRegistry(loadConfig(cwd));
+		const requests: HarnessSpawnRequest[] = [];
+		const spawn: HarnessSpawn = async (request) => {
+			requests.push(request);
+			if (requests.length === 1) {
+				return { code: 1, signal: null, stdout: JSON.stringify({ session_id: "abc", error: "boom" }), stderr: "", error: null, timedOut: false };
+			}
+			const stdout = [
+				JSON.stringify({ type: "thread.started", thread_id: "codex-1" }),
+				JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "codex finished" } }),
+				JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 5 } }),
+			].join("\n");
+			return { code: 0, signal: null, stdout, stderr: "", error: null, timedOut: false };
+		};
+
+		const outcome = await runWorkerTurn({ objective: "do the task", role: "strong", files: ["out.txt"] }, { registry, cwd, spawn });
+
+		expect(outcome.status).toBe("completed");
+		expect(outcome.backend).toBe("codex");
+		expect(requests).toHaveLength(2);
+		expect(requests[1]!.args).not.toContain("abc");
 	});
 });

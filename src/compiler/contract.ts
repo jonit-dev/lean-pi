@@ -141,6 +141,8 @@ export interface CompileClassification {
 	review_risk: ReviewRisk;
 	required_capability: RequiredCapability;
 	planning_decision: PlanningDecision;
+	/** True only when the gate's decision came from JEV's confident branch (PRD-044). */
+	gate_confident: boolean;
 }
 
 export interface CompileRecord {

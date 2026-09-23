@@ -8,7 +8,7 @@
  * older, reading the real compilerOptions from tsconfig.json.
  */
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,5 +38,12 @@ for (const [source, out, rel] of stale) {
 	});
 	mkdirSync(dirname(out), { recursive: true });
 	writeFileSync(out, outputText);
-	if (sourceMapText !== undefined) writeFileSync(out + ".map", sourceMapText);
+	if (sourceMapText !== undefined) {
+		// `fileName` is `src`-relative, so `transpileModule` writes `sources`
+		// that resolve against the wrong directory; `tsc` names the source
+		// relative to the map's own directory, and so must this.
+		const map = JSON.parse(sourceMapText);
+		map.sources = [relative(dirname(out), source)];
+		writeFileSync(out + ".map", JSON.stringify(map));
+	}
 }

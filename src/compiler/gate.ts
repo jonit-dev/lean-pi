@@ -32,6 +32,8 @@ export interface GateOutcome {
 	/** Raised by the §10 low-confidence path and consumed by the risk classifier. */
 	elevateReview: boolean;
 	fallbackUsed: boolean;
+	/** True only when the decision came from JEV's confident branch (PRD-044). */
+	confident: boolean;
 	answers: Record<string, string>;
 	confidence: number;
 }
@@ -87,7 +89,7 @@ export function heuristicGate(request: string, packet: TaskPacket): GateOutcome 
 			: signals.localized && !signals.ambiguous
 				? "DIRECT_EXECUTION"
 				: "PRD_REQUIRED";
-	return { decision, elevateReview: false, fallbackUsed: true, answers: {}, confidence: 0, tokens: { inputTokens: 0, outputTokens: 0 } };
+	return { decision, elevateReview: false, fallbackUsed: true, confident: false, answers: {}, confidence: 0, tokens: { inputTokens: 0, outputTokens: 0 } };
 }
 
 export interface GateInput {
@@ -126,10 +128,10 @@ export async function runGate({ client, request, packet, config }: GateInput): P
 
 	if (confident) {
 		if (said("architecture") || said("multi_behavior") || said("multi_stage")) {
-			return { decision: "PRD_REQUIRED", elevateReview: false, fallbackUsed: false, answers, confidence, tokens };
+			return { decision: "PRD_REQUIRED", elevateReview: false, fallbackUsed: false, confident: true, answers, confidence, tokens };
 		}
 		if (said("localized") && !said("ambiguous")) {
-			return { decision: "DIRECT_EXECUTION", elevateReview: false, fallbackUsed: false, answers, confidence, tokens };
+			return { decision: "DIRECT_EXECUTION", elevateReview: false, fallbackUsed: false, confident: true, answers, confidence, tokens };
 		}
 	}
 
@@ -140,6 +142,7 @@ export async function runGate({ client, request, packet, config }: GateInput): P
 		decision: highRisk ? "PRD_REQUIRED" : "DIRECT_EXECUTION",
 		elevateReview: !highRisk,
 		fallbackUsed: false,
+		confident: false,
 		answers,
 		confidence,
 		tokens,
