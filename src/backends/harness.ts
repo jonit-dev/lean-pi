@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { changeSnapshot, changedPathsSince } from "../runtime/git.js";
 import type { RegisteredBackend } from "./registry.js";
-import { parseMaybeJson, type WorkerOutcome, type WorkerTaskPacket } from "./worker.js";
+import { parseMaybeJson, type WorkerMcpServer, type WorkerOutcome, type WorkerTaskPacket } from "./worker.js";
 
 export const HARNESS_VENDORS = ["claude", "codex", "opencode"] as const;
 
@@ -39,6 +39,62 @@ const CLAUDE_TOOL_NAMES: Record<string, string> = {
 	write: "Write",
 	execute: "Bash",
 };
+
+/** A TOML basic string, for Codex's `-c key=value` values. */
+function tomlString(value: string): string {
+	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+}
+
+/** Claude's `.mcp.json` shape, inline: `{ mcpServers: { <name>: {...} } }`. */
+export function claudeMcpConfig(servers: WorkerMcpServer[]): string {
+	const mcpServers: Record<string, unknown> = {};
+	for (const server of servers) {
+		mcpServers[server.name] =
+			server.transport === "stdio"
+				? {
+						command: server.command ?? "",
+						args: server.args ?? [],
+						...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
+					}
+				: { type: "http", url: server.url ?? "" };
+	}
+	return JSON.stringify({ mcpServers });
+}
+
+/** Codex's `mcp_servers.<name>.*` overrides, one `-c` per field. */
+export function codexMcpArgs(servers: WorkerMcpServer[]): string[] {
+	const args: string[] = [];
+	for (const server of servers) {
+		const prefix = `mcp_servers.${server.name}`;
+		if (server.transport === "http") {
+			args.push("-c", `${prefix}.url=${tomlString(server.url ?? "")}`);
+			continue;
+		}
+		args.push("-c", `${prefix}.command=${tomlString(server.command ?? "")}`);
+		if ((server.args ?? []).length > 0) args.push("-c", `${prefix}.args=[${(server.args ?? []).map(tomlString).join(", ")}]`);
+		if (server.env && Object.keys(server.env).length > 0) {
+			args.push("-c", `${prefix}.env={${Object.entries(server.env).map(([key, value]) => `${key}=${tomlString(value)}`).join(", ")}}`);
+		}
+	}
+	return args;
+}
+
+/** OpenCode's `mcp` block, delivered through `OPENCODE_CONFIG_CONTENT`. */
+export function opencodeMcpConfig(servers: WorkerMcpServer[]): string {
+	const mcp: Record<string, unknown> = {};
+	for (const server of servers) {
+		mcp[server.name] =
+			server.transport === "stdio"
+				? {
+						type: "local",
+						command: [server.command ?? "", ...(server.args ?? [])],
+						...(server.env && Object.keys(server.env).length > 0 ? { environment: server.env } : {}),
+						enabled: true,
+					}
+				: { type: "remote", url: server.url ?? "", enabled: true };
+	}
+	return JSON.stringify({ mcp });
+}
 
 export interface HarnessArgvContext {
 	packet: WorkerTaskPacket;
@@ -67,6 +123,11 @@ export interface HarnessDescriptor {
 	argv(context: HarnessArgvContext): string[];
 	/** `true` when the vendor wants the schema as a file path rather than inline JSON. */
 	schemaAsFile: boolean;
+	/**
+	 * Extra environment this packet needs. OpenCode exposes no per-run MCP flag, so
+	 * its servers travel as an inline config through `OPENCODE_CONFIG_CONTENT`.
+	 */
+	env?(context: HarnessArgvContext): Record<string, string>;
 	/** Parse one result envelope (single JSON object or JSONL events). */
 	parse(stdout: string): ParsedHarnessEnvelope;
 	/** Vendor's documented rate/quota signal, as a human reason; `null` when absent. */
@@ -191,7 +252,13 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			"--output-format",
 			"json",
 			"--allowedTools",
-			(packet.allowedTools ?? Object.keys(CLAUDE_TOOL_NAMES)).map((tool) => CLAUDE_TOOL_NAMES[tool] ?? tool).join(","),
+			[
+				...(packet.allowedTools ?? Object.keys(CLAUDE_TOOL_NAMES)).map((tool) => CLAUDE_TOOL_NAMES[tool] ?? tool),
+				// Claude names MCP tools the same way LeanPi does, so the selection is
+				// spelled once. `--strict-mcp-config` keeps every other config out.
+				...(packet.mcpServers ?? []).flatMap((server) => server.tools),
+			].join(","),
+			...(packet.mcpServers && packet.mcpServers.length > 0 ? ["--mcp-config", claudeMcpConfig(packet.mcpServers)] : []),
 			...(schema ? ["--json-schema", schema] : []),
 			...(packet.sessionId ? ["--resume", packet.sessionId] : []),
 			// `--allowedTools` is variadic (`<tools...>`), so a prompt that follows it
@@ -236,6 +303,9 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			// `model_reasoning_effort` — `xhigh` on the machine this was written on —
 			// runs on every turn including the mechanical ones.
 			...(packet.effort ? ["-c", `model_reasoning_effort="${packet.effort}"`] : []),
+			// PRD-045: the allowed MCP servers, one override per field. Codex's MCP
+			// table is `mcp_servers.<name>` in `config.toml`.
+			...(packet.mcpServers ? codexMcpArgs(packet.mcpServers) : []),
 			...(schemaPath ? ["--output-schema", schemaPath] : []),
 			prompt,
 		],
@@ -252,6 +322,9 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 		vendor: "opencode",
 		defaultCommand: "opencode",
 		schemaAsFile: false,
+		// `opencode run` exposes no per-run MCP flag; the installed CLI merges
+		// `OPENCODE_CONFIG_CONTENT` over its own config, which is the route.
+		env: ({ packet }): Record<string, string> => (packet.mcpServers && packet.mcpServers.length > 0 ? { OPENCODE_CONFIG_CONTENT: opencodeMcpConfig(packet.mcpServers) } : {}),
 		argv: ({ packet, prompt }) => [
 			"run",
 			"--format",
@@ -448,6 +521,7 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 
 	try {
 		const args = descriptor.argv({ packet, prompt, schema: schemaJson, schemaPath, env: deps.env ?? process.env });
+		const extraEnv = descriptor.env?.({ packet, prompt, schema: schemaJson, schemaPath, env: deps.env ?? process.env }) ?? {};
 		const result = await spawnImpl({
 			command: backend.command,
 			args,
@@ -456,8 +530,10 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 			// CLI that accepts both never waits on a terminal.
 			stdin: null,
 			// Inherited verbatim and deliberately: the vendor CLI may need its own
-			// credential from the environment, and LeanPi adds no variable of its own.
-			env: deps.env ?? process.env,
+			// credential from the environment, and LeanPi adds no variable of its own
+			// beyond the per-vendor config a route like OpenCode's requires. With no
+			// extra config the parent's own object crosses untouched.
+			env: Object.keys(extraEnv).length === 0 ? (deps.env ?? process.env) : { ...(deps.env ?? process.env), ...extraEnv },
 			timeoutMs: deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
 		});
 

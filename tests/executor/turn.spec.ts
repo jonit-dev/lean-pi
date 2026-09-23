@@ -63,14 +63,14 @@ describe("PRD-007 Phase 1 — the turn chain", () => {
 		// decision ever reaches the spend.
 		expect(ownsExecutionLoop(h.config)).toBe(false);
 		expect(registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config })).toBe(false);
-		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface"]);
 
 		// External-harness roles: LeanPi owns the loop, so the chain registers.
 		clearLanes();
 		const harnessConfig = multiBackendConfig(h.cwd);
 		expect(ownsExecutionLoop(harnessConfig)).toBe(true);
 		expect(registerTurnLanesIfOwned({ cwd: h.cwd, config: harnessConfig })).toBe(true);
-		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "executor"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface", "executor"]);
 	});
 
 	it("AC-3: a second registration supersedes LeanPi's own lanes instead of stacking them", async () => {
@@ -83,14 +83,14 @@ describe("PRD-007 Phase 1 — the turn chain", () => {
 		// the first task's workspace, captured in the earlier lane's closure).
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config });
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config });
-		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface"]);
 
 		// The owned chain follows the same rule, including a switch from a native
 		// configuration to an external-harness one: no leftover compiler, no second
 		// executor.
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: multiBackendConfig(h.cwd) });
 		registerTurnLanes({ cwd: h.cwd, config: multiBackendConfig(h.cwd) });
-		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "executor"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface", "executor"]);
 	});
 
 	it("AC-3: a lane registered by hand survives a later registration", async () => {
@@ -102,6 +102,6 @@ describe("PRD-007 Phase 1 — the turn chain", () => {
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config });
 		registerTurnLanesIfOwned({ cwd: h.cwd, config: h.config });
 
-		expect(listLanes().map((lane) => lane.name)).toEqual(["probe", "compiler"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["probe", "compiler", "tool-surface"]);
 	});
 });

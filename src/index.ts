@@ -33,7 +33,8 @@ import { clearCapabilityProviders, compileRecordOf, registerCapabilityProvider, 
 import { clearRoutePins } from "./compiler/pins.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
-import { registerMcpCommand, registerMcpDisclosure } from "./mcp/index.js";
+import { createToolSurface, mcpRequestDefinition, mcpToolName, registerMcpCommand, registerMcpDisclosure, resolveVendorServers, MCP_REQUEST_TOOL_NAME } from "./mcp/index.js";
+import type { SelectedMcpTool } from "./mcp/index.js";
 import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS } from "./commands/index.js";
 import { ensureGitIgnored, registerRuntimeVerifiers, worktreePermissionPrompt } from "./runtime/index.js";
 import type { WorktreePermissionRequest } from "./runtime/index.js";
@@ -154,6 +155,12 @@ export interface LeanPiActivation {
 	readonly workingStateSources: WorkingStateSources;
 	/** The JEV control plane, handed to lanes by reference — never a tool. */
 	readonly jev: JevClient;
+	/**
+	 * PRD-045: candidate MCP tool names from the runtime catalog. The SDK path's
+	 * tool allowlist admits them, so a tool the tool-surface lane registers later
+	 * is not filtered out of Pi's registry.
+	 */
+	mcpToolNames(): string[];
 	/**
 	 * PRD-041: record the limit `subagentsFactory` captured for this session so
 	 * `/subagents-limit` shows the value this session attached with. Called by
@@ -622,6 +629,16 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		},
 	});
 	registerMcpDisclosure({ cwd, config, home: homedir(), client: jev, catalog: () => mcpRuntime.catalog() });
+	// PRD-045: the per-turn tool surface. Created once per activation — the
+	// registered-name set must not leak into a second session — and shared by the
+	// tool-surface lane and the mid-turn `mcp_request` tool.
+	const toolSurface = createToolSurface(pi, mcpRuntime.pool);
+	/** Candidate MCP tool names from the live catalog; empty with no usable config. */
+	const mcpToolNames = (): string[] => mcpRuntime.catalog().tools.map((record) => mcpToolName(record.server, record.tool));
+	// A machine with no MCP config gains no extra tool.
+	if (mcpToolNames().length > 0) {
+		pi.registerTool(mcpRequestDefinition({ surface: toolSurface, catalog: () => mcpRuntime.catalog(), config, cwd, client: jev }));
+	}
 	registerCapabilityProvider(createLspProvider({ config, root: cwd, env }));
 	// PRD-019 at PRD-014's boundary: capture every tool result into the artifact
 	// store, then hand the executor the reduced or raw text the configured mode
@@ -779,6 +796,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// Same reason as `/verify`: the lane's facility is this session's, never a
 		// global another caller left behind.
 		browserFacility: options.browserFacility ?? null,
+		// PRD-045: the compiled MCP selection and LSP mode become this turn's active
+		// tool set, and the selected servers reach a vendor harness `allow`-only.
+		toolSurface,
+		mcpResolver: (tools: SelectedMcpTool[]) => resolveVendorServers({ tools, catalog: mcpRuntime.catalog(), permissions: permissions.permissions }),
 	});
 
 	registerJevCommands(commands, {
@@ -1169,6 +1190,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		observeTurn,
 		todo: todoCarrier,
 		workingStateSources,
+		mcpToolNames,
 		registerLane(lane) {
 			registerTurnLane(lane);
 		},
@@ -1298,24 +1320,42 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 	}
 
 	const sessionManager = options.sessionManager ?? SessionManager.inMemory();
+	// PRD-045: the MCP tools are registered per turn, so the SDK allowlist has to
+	// name them up front or Pi's registry refresh filters them out. The mid-turn
+	// `mcp_request` rides the same condition as its registration.
+	const mcpToolNames = loaded.mcpToolNames();
 	const { session } = await createAgentSessionFromServices({
 		services,
 		sessionManager,
 		model,
 		noTools: "builtin",
-		// The allowlist admits the LSP tools and the pi-subagents parent tools to
-		// the registry; the mode, applied per turn by `runTurn`, decides which LSP
-		// tools are active, and the subagents factory decides which parent tools are.
-		// They start inactive (§15), exactly as the LSP tool tests boot their session.
-		tools: [...BASELINE_TOOL_NAMES, ...LSP_TOOL_NAMES, ARTIFACT_TOOL_NAME, ...SUBAGENT_PARENT_TOOL_NAMES],
+		// The allowlist admits the LSP tools, the MCP tools the lane may register and
+		// the pi-subagents parent tools to the registry; the per-turn surface decides
+		// which of them are active, and the subagents factory decides which parent
+		// tools are. They start inactive (§15), exactly as the LSP tool tests boot
+		// their session.
+		tools: [
+			...BASELINE_TOOL_NAMES,
+			...LSP_TOOL_NAMES,
+			ARTIFACT_TOOL_NAME,
+			...SUBAGENT_PARENT_TOOL_NAMES,
+			...mcpToolNames,
+			...(mcpToolNames.length > 0 ? [MCP_REQUEST_TOOL_NAME] : []),
+		],
 	});
 	// The five baseline names plus the expand affordance, plus the pi-subagents
 	// parent tools that are actually registered: a package tool absent from this
 	// session is never activated, and the LSP tools stay inactive until a turn's
-	// mode selects its group.
+	// mode selects its group. `mcp_request` is a standing affordance whenever the
+	// catalog has rows.
 	const registered = new Set((extensionApi?.getAllTools() ?? []).map((tool) => tool.name));
 	const activeSubagents = SUBAGENT_ACTIVE_TOOL_NAMES.filter((name) => registered.has(name));
-	session.setActiveToolsByName([...BASELINE_TOOL_NAMES, ARTIFACT_TOOL_NAME, ...activeSubagents]);
+	session.setActiveToolsByName([
+		...BASELINE_TOOL_NAMES,
+		ARTIFACT_TOOL_NAME,
+		...activeSubagents,
+		...(mcpToolNames.length > 0 ? [MCP_REQUEST_TOOL_NAME] : []),
+	]);
 
 	// One §52 record per turn that compiled a contract: the seam runs the real
 	// `runTurn()`, hands the context to the activation's fan-in, and prices the
@@ -1436,7 +1476,7 @@ export type { Command, CommandInit } from "./commands/registry.js";
 export { createCommandSurface, createSessionHost, OWNED_COMMANDS, registerCommandSurface } from "./commands/index.js";
 export { usageAdapter, usageInventory, renderUsage } from "./cli/usage.js";
 export type { UsageRow } from "./cli/usage.js";
-export { compilerLane, executorLane, ownsExecutionLoop, registerTurnLanes, registerTurnLanesIfOwned, type TurnLaneDeps } from "./commands/turn-lanes.js";
+export { compilerLane, executorLane, ownsExecutionLoop, registerTurnLanes, registerTurnLanesIfOwned, toolSurfaceLane, type TurnLaneDeps } from "./commands/turn-lanes.js";
 export type { CommandSurface, CommandSurfaceDeps, ProbeResult, RoleBinding, SessionHost } from "./commands/index.js";
 export { applyRoutePins, clearRoutePins, pinOwner, pinnedDecision, routePins, setRoutePins } from "./compiler/pins.js";
 export type { RoutePins } from "./compiler/pins.js";

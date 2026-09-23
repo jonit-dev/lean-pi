@@ -30,6 +30,9 @@ import { EvidenceStore } from "../verify/evidence.js";
 import { workspaceHash } from "../verify/hash.js";
 import { registerOwnedLanes, type Lane, type TurnContext, type TurnInput } from "./session.js";
 import { feedInvocation, type RunCollector } from "../telemetry/index.js";
+import { lspSelectionOf } from "../lsp/provider.js";
+import type { ToolSurface } from "../mcp/tools.js";
+import type { SelectedMcpTool } from "../mcp/select.js";
 
 /**
  * The accumulator the registered lanes feed while a run is in flight. The lanes
@@ -75,6 +78,10 @@ export interface TurnLaneDeps {
 	browserFacility?: import("../runtime/browser.js").BrowserFacility | null;
 	/** PRD-017's `ask` channel for an isolated worktree, so an `ask` decision can be confirmed. */
 	worktreeConfirm?: (request: WorktreePermissionRequest) => boolean | Promise<boolean>;
+	/** PRD-045: the per-turn tool surface (MCP + LSP) the tool-surface lane edits. */
+	toolSurface?: ToolSurface;
+	/** PRD-045: the selected MCP tools as vendor harness configs; only `allow` travels. */
+	mcpResolver?: ExecutorDeps["mcpResolver"];
 }
 
 /** A fresh run id per isolated turn; matches PRD-022's single-safe-path-segment rule. */
@@ -121,6 +128,28 @@ export function compilerLane(deps: TurnLaneDeps): Lane {
 			// file questions per backend, so it costs nothing on the turn that routes.
 			const deviations = subscriptionDeviations(deps.config, detectSubscriptions(deps.config, deps.env ? { env: deps.env } : {}));
 			context.contract = await compileTask(turn.text, packet, deviations);
+		},
+	};
+}
+
+/**
+ * PRD-045's tool surface: the compiled contract's MCP selection and LSP mode
+ * become the turn's active tool set. It runs after `compiler` (the contract is
+ * its input) and before `executor` (the worker must see the set). One lane
+ * serves both entry points — `before_agent_start` and `runTurn` — so the
+ * interactive path gains the LSP mode `runTurn` used to apply alone.
+ *
+ * No surface is a no-op: a caller that registered the lanes without a Pi
+ * session (a bench row, a spec) keeps its own tool list.
+ */
+export function toolSurfaceLane(deps: TurnLaneDeps): Lane {
+	return {
+		name: "tool-surface",
+		async run(_turn, context) {
+			const surface = deps.toolSurface;
+			if (!surface) return;
+			const contract = context.contract;
+			surface.apply((contract?.capabilities.mcps ?? []) as SelectedMcpTool[], contract ? (lspSelectionOf(contract)?.mode ?? "LSP_OFF") : "LSP_OFF");
 		},
 	};
 }
@@ -300,6 +329,7 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 				...(deps.exec ? { exec: deps.exec } : {}),
 				...(deps.verifyCommands ? { verifyCommands: deps.verifyCommands } : {}),
 				...(deps.reviewRunner ? { reviewRunner: deps.reviewRunner } : {}),
+				...(deps.mcpResolver ? { mcpResolver: deps.mcpResolver } : {}),
 			});
 			context.onProgress?.("gating the evidence");
 			// PRD-010's gate: the contract's criteria against the evidence this turn
@@ -423,7 +453,7 @@ export function ownsExecutionLoop(config: LeanPiConfig): boolean {
 
 /** Registers the chain when this configuration puts LeanPi in charge of the loop. */
 export function registerTurnLanes(deps: TurnLaneDeps): void {
-	registerOwnedLanes([compilerLane(deps), executorLane(deps)]);
+	registerOwnedLanes([compilerLane(deps), toolSurfaceLane(deps), executorLane(deps)]);
 }
 
 /**
@@ -437,6 +467,6 @@ export function registerTurnLanes(deps: TurnLaneDeps): void {
  */
 export function registerTurnLanesIfOwned(deps: TurnLaneDeps): boolean {
 	const owned = ownsExecutionLoop(deps.config);
-	registerOwnedLanes(owned ? [compilerLane(deps), executorLane(deps)] : [compilerLane(deps)]);
+	registerOwnedLanes(owned ? [compilerLane(deps), toolSurfaceLane(deps), executorLane(deps)] : [compilerLane(deps), toolSurfaceLane(deps)]);
 	return owned;
 }

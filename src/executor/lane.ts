@@ -19,7 +19,7 @@ import type { JevClient } from "../jev/client.js";
 import type { BackendRegistry, HarnessSpawn } from "../backends/index.js";
 import { modelFor, runWorkerTurn } from "../backends/index.js";
 import type { RunWorkerTurnOptions } from "../backends/registry.js";
-import type { WorkerTaskPacket, WorkerTurnOutcome } from "../backends/worker.js";
+import type { WorkerMcpServer, WorkerTaskPacket, WorkerTurnOutcome } from "../backends/worker.js";
 import type { CapabilitySlots, ExecutionContract } from "../compiler/contract.js";
 import type { LeanPiConfig, ModelRole, SelectedSkill } from "../core/types.js";
 import type { ClearingSource } from "../routing/candidates.js";
@@ -35,6 +35,7 @@ import type { ActiveReviewLevel, ReviewLevel, ReviewVerdict } from "../review/sc
 import { classifyEscalation, escalate, needsClarification, type EscalationCategory } from "./escalation.js";
 import { nextAttempt, recordAttempt, type AttemptStrategy, type FailureInput, type RetryBudget, type RetryRecord } from "./retry.js";
 import { classifyFailure, retryUseful, FAILURE_SITE_ID, RETRY_SITE_ID, type FailureCategory } from "./sites.js";
+import type { SelectedMcpTool } from "../mcp/select.js";
 
 /** The six §28 fields, and nothing else. */
 export const EXECUTOR_TASK_KEYS = ["objective", "acceptanceCriteria", "context", "capabilities", "budget", "retryLimit"] as const;
@@ -148,6 +149,12 @@ export interface ExecutorDeps {
 	selection?: { excerpts: string };
 	/** Test seam: PRD-020's clearing candidate source; defaults to the bundled ranking. */
 	clearing?: ClearingSource;
+	/**
+	 * PRD-045: the selected MCP tools projected onto vendor harness configs. The
+	 * resolver has already applied PRD-017's `allow`-only rule; whatever it withholds
+	 * is recorded as an `mcp.withheld` site row.
+	 */
+	mcpResolver?: (tools: SelectedMcpTool[]) => { servers: WorkerMcpServer[]; withheld: Array<{ capability: string; decision: string }> };
 	now?: () => number;
 }
 
@@ -291,6 +298,11 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 		answer: routed ? `${routed.candidate.backend}/${routed.candidate.model}` : route.reason,
 		fallbackUsed: routed === null,
 	});
+	// PRD-045: the MCP half of this turn's surface, projected for the vendor. Only
+	// `allow`-resolved tools travel; the rest are recorded, because a vendor loop
+	// cannot prompt and a silent omission would read as "no such tool".
+	const mcp = deps.mcpResolver ? deps.mcpResolver(contract.capabilities.mcps as SelectedMcpTool[]) : { servers: [] as WorkerMcpServer[], withheld: [] as Array<{ capability: string; decision: string }> };
+	for (const row of mcp.withheld) sites.push({ site: "mcp.withheld", answer: `${row.capability}:${row.decision}`, fallbackUsed: false });
 	if (routed) {
 		role = routed.candidate.roles.includes(role) ? role : (routed.candidate.roles[0] ?? role);
 	}
@@ -358,6 +370,7 @@ export async function runExecutor(contract: ExecutionContract, deps: ExecutorDep
 				// setting — `xhigh` by default on the machine this was written on —
 				// and only sees LeanPi's decision if the packet carries it.
 				effort: contract.reasoning.effort,
+				...(mcp.servers.length > 0 ? { mcpServers: mcp.servers } : {}),
 			},
 			route,
 			deps.config,

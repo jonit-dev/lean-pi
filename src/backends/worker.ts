@@ -14,6 +14,23 @@ import type { ModelRole } from "../core/types.js";
 /** FR-055: the three billing classes a backend can carry. */
 export type Billing = "subscription" | "metered" | "local";
 
+/**
+ * One MCP server a vendor harness is handed (PRD-045). Only tools the guard
+ * resolves to `allow` travel: a vendor loop is outside PRD-017's chokepoint and
+ * cannot prompt. A server's `env` is a secret carrier and reaches the child's
+ * argv/env only — never telemetry, never a decision row.
+ */
+export interface WorkerMcpServer {
+	name: string;
+	transport: "stdio" | "http";
+	command?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	url?: string;
+	/** `mcp__<server>__<tool>` names the vendor may call. */
+	tools: string[];
+}
+
 /** The bounded job LeanPi hands to one backend worker. */
 export interface WorkerTaskPacket {
 	/** What the worker must accomplish; the worker prompt when `prompt` is absent. */
@@ -38,6 +55,8 @@ export interface WorkerTaskPacket {
 	agent?: string;
 	/** Vendor session to continue instead of starting a fresh one. */
 	sessionId?: string;
+	/** MCP servers this attempt may load, already filtered to `allow` (PRD-045). */
+	mcpServers?: WorkerMcpServer[];
 }
 
 /** The single result shape both `runNative` and `runHarness` return. */

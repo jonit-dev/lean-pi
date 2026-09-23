@@ -137,11 +137,11 @@ describe("PRD-001 Phase 1 — bootstrap and the baseline tool surface", () => {
 		});
 
 		const first = await bootSession({ cwd, agentDir });
-		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["compiler", "tool-surface"]);
 		// A lane the caller registered by hand is not LeanPi's to replace.
 		registerLane({ name: "probe", run: () => {} });
 		const second = await bootSession({ cwd, agentDir });
-		expect(listLanes().map((lane) => lane.name)).toEqual(["probe", "compiler"]);
+		expect(listLanes().map((lane) => lane.name)).toEqual(["probe", "compiler", "tool-surface"]);
 
 		first.session.dispose();
 		second.session.dispose();

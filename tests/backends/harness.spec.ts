@@ -10,6 +10,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BackendRegistry, runHarness, runWorkerTurn } from "../../src/backends/index.js";
+import type { WorkerMcpServer } from "../../src/backends/index.js";
 import { loadConfig, createLeanPiSession } from "../../src/index.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { fixtureRepo, gitInit, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
@@ -251,5 +252,67 @@ describe("PRD-008 Phase 3 — external harness workers", () => {
 		const persisted = [...filesUnder(sessionDir), ...filesUnder(agentDir)].filter((path) => statSync(path).isFile());
 		expect(persisted.length).toBeGreaterThan(0);
 		for (const path of persisted) expect(readFileSync(path, "utf8")).not.toContain("sk-secret-LEANPI-7f3a");
+	});
+});
+
+describe("PRD-045 Phase 3 — MCP servers reach the vendor CLI (AC-7)", () => {
+	const SERVERS: WorkerMcpServer[] = [
+		{ name: "stub", transport: "stdio", command: "/usr/bin/node", args: ["/tmp/echo.mjs"], env: { STUB_TOKEN: "s3cret" }, tools: ["mcp__stub__echo"] },
+	];
+
+	it("Claude gets --mcp-config and the mcp__ names in --allowedTools", async () => {
+		const cli = installStubCli();
+		const { cwd } = fixtureRepo();
+		gitInit(cwd);
+		writeConfig(cwd, configFor(cli, "claude"));
+		const registry = new BackendRegistry(loadConfig(cwd));
+		const restore = setStubScript(cli.recordPath, { files: { "cli.txt": "x\n" } });
+		const outcome = await runWorkerTurn({ objective: OBJECTIVE, role: "strong", files: ["cli.txt"], mcpServers: SERVERS }, { registry, cwd });
+		restore();
+
+		const [record] = cli.records();
+		expect(outcome.status).toBe("completed");
+		// `--strict-mcp-config` still holds: only LeanPi's selection loads.
+		expect(record!.argv).toContain("--strict-mcp-config");
+		const config = JSON.parse(record!.argv[record!.argv.indexOf("--mcp-config") + 1]!) as { mcpServers: Record<string, unknown> };
+		expect(config.mcpServers.stub).toMatchObject({ command: "/usr/bin/node", args: ["/tmp/echo.mjs"], env: { STUB_TOKEN: "s3cret" } });
+		// Claude names MCP tools exactly as LeanPi does.
+		expect(record!.argv[record!.argv.indexOf("--allowedTools") + 1]!.split(",")).toContain("mcp__stub__echo");
+	});
+
+	it("Codex gets one mcp_servers override per field", async () => {
+		const cli = installStubCli();
+		const { cwd } = fixtureRepo();
+		gitInit(cwd);
+		writeConfig(cwd, configFor(cli, "codex"));
+		const registry = new BackendRegistry(loadConfig(cwd));
+		const restore = setStubScript(cli.recordPath, { files: { "codex.txt": "x\n" } });
+		const outcome = await runWorkerTurn({ objective: OBJECTIVE, role: "strong", files: ["codex.txt"], mcpServers: SERVERS }, { registry, cwd });
+		restore();
+
+		const [record] = cli.records();
+		expect(outcome.status).toBe("completed");
+		const overrides = record!.argv.filter((token, index) => record!.argv[index - 1] === "-c");
+		expect(overrides).toContain('mcp_servers.stub.command="/usr/bin/node"');
+		expect(overrides).toContain('mcp_servers.stub.args=["/tmp/echo.mjs"]');
+		expect(overrides).toContain('mcp_servers.stub.env={STUB_TOKEN="s3cret"}');
+	});
+
+	it("OpenCode gets the inline config its installed CLI merges (no per-run flag exists)", async () => {
+		const cli = installStubCli();
+		const { cwd } = fixtureRepo();
+		gitInit(cwd);
+		writeConfig(cwd, configFor(cli, "opencode"));
+		const registry = new BackendRegistry(loadConfig(cwd));
+		const restore = setStubScript(cli.recordPath, { files: { "oc.txt": "x\n" } });
+		const outcome = await runWorkerTurn({ objective: OBJECTIVE, role: "strong", files: ["oc.txt"], mcpServers: SERVERS }, { registry, cwd });
+		restore();
+
+		const [record] = cli.records();
+		expect(outcome.status).toBe("completed");
+		// The route is an env variable, not argv: `opencode run` exposes no MCP flag.
+		expect(record!.argv.some((token) => token.includes("mcp"))).toBe(false);
+		const content = JSON.parse(record!.env.OPENCODE_CONFIG_CONTENT!) as { mcp: Record<string, unknown> };
+		expect(content.mcp.stub).toMatchObject({ type: "local", command: ["/usr/bin/node", "/tmp/echo.mjs"], environment: { STUB_TOKEN: "s3cret" } });
 	});
 });

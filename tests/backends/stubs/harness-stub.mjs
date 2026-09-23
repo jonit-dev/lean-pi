@@ -50,7 +50,7 @@ const FLAGS = {
 		// entirely; `--model` selects the role's model. All three exist on the
 		// installed CLI (`claude --help`).
 		bool: ["-p", "--print", "--bare", "--strict-mcp-config", "--disable-slash-commands"],
-		value: ["--output-format", "--json-schema", "--allowedTools", "--allowed-tools", "--resume", "-r", "--model"],
+		value: ["--output-format", "--json-schema", "--allowedTools", "--allowed-tools", "--resume", "-r", "--model", "--mcp-config"],
 	},
 	codex: {
 		bool: ["--json", "--skip-git-repo-check"],

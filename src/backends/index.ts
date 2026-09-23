@@ -45,6 +45,7 @@ export {
 	type WorkerAttempt,
 	type WorkerFailure,
 	type WorkerFailureKind,
+	type WorkerMcpServer,
 	type WorkerOutcome,
 	type WorkerResult,
 	type WorkerTaskPacket,

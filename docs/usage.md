@@ -113,6 +113,36 @@ A level is the whole policy — your stored scopes and every capability rule are
 ignored while it is in force, since a level a forgotten `/permissions set` could
 undercut would not be a level.
 
+## MCP tools
+
+An MCP server is configured in `~/.leanpi/mcp.json` (user scope, always read) or
+`.leanpi/mcp.json` in the project (read only while the project is trusted), in
+the usual `mcpServers` shape:
+
+```json
+{ "mcpServers": { "stub": { "transport": "stdio", "command": "node", "args": ["server.mjs"] } } }
+```
+
+A server contributes nothing until it has been connected once: `/mcp refresh
+[<server>]` connects, reads `tools/list`, writes the schema cache and
+disconnects. `/mcp` lists what each server offers — transport, scope, health and
+tool count. No server is spawned while a turn is compiled; the connection opens
+the first time a selected tool is actually called.
+
+Each turn, the compiler asks JEV which of those tools the task needs and puts
+only those on the model's surface. With JEV off, the servers marked `pinned` or
+`default` are the eligible set. The model can ask for one more mid-turn with
+`mcp_request { query }`, and only JEV (or the lexical fallback) admits it. Every
+MCP call is then an ordinary guarded tool call under the `mcp` scope, so
+`/permissions set mcp allow|ask|deny` decides whether it runs, prompts, or is
+refused before any server is spawned.
+
+On an external-harness turn (Claude Code, Codex, OpenCode) the selected servers
+are handed to the vendor CLI — `--mcp-config` for Claude, `mcp_servers.*`
+overrides for Codex, an inline config for OpenCode. A vendor loop cannot prompt,
+so **only tools resolved to `allow` are handed over**; an `ask` or `deny` tool is
+withheld and named in the turn's `mcp.withheld` site row.
+
 Tool calls render as Claude Code's compact rows — one line per call, the output
 behind `ctrl+o` (`ctrl+shift+o` for the long form), in whatever theme is active.
 How much shows is a session-level choice, and a durable one:

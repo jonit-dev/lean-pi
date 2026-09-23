@@ -19,11 +19,9 @@ import type { GoalEvaluation } from "../goal/index.js";
 import type { PrdManager } from "../prd/manager.js";
 import type { TaskPacket } from "../scout/index.js";
 import { itemsOf, withTodo, type TodoCarrier } from "../todo/index.js";
-import { lspSelectionOf } from "../lsp/provider.js";
 // The session's own level type, which includes `off`; pi-ai's `ThinkingLevel`
 // is the subset a request can ask for and cannot express "do not think".
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { applyLspTools, type LspSessionTools } from "../lsp/tools.js";
 
 export interface TurnInput {
 	text: string;
@@ -275,19 +273,9 @@ export async function runTurn(turn: TurnInput, deps: TurnDeps): Promise<TurnCont
 		}
 		throw error;
 	}
-	// PRD-018 AC-10: the turn's compiled mode decides which LSP tool group the
-	// session exposes, applied before the request so the worker's tool list is the
-	// mode's. A turn that compiled nothing exposes none: the seven tools stay
-	// registered and inactive, which is §15's "never on by default".
-	//
-	// The tool-set API is not part of the SDK's public `AgentSession` type
-	// (`pi-coding-agent` carries `setActiveToolsByName` at runtime only), so a
-	// session-shaped caller that does not expose it — the bench's stub session —
-	// simply keeps its own tool list instead of failing the turn.
-	const lspSession = deps.session as unknown as LspSessionTools | undefined;
-	if (lspSession && typeof lspSession.getActiveToolNames === "function" && typeof lspSession.setActiveToolsByName === "function") {
-		applyLspTools(lspSession, context.contract ? (lspSelectionOf(context.contract)?.mode ?? "LSP_OFF") : "LSP_OFF");
-	}
+	// PRD-018 AC-10 / PRD-045: the turn's compiled LSP mode and MCP selection are
+	// applied by the tool-surface lane inside `runLanes` — the same step the
+	// interactive `before_agent_start` path runs. There is no second copy here.
 	if (!deps.session) {
 		deps.onContext?.(context);
 		return context;

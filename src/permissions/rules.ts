@@ -457,6 +457,13 @@ export function classifyScopes(call: CallShape, root: string): ClassifiedScope[]
 		return scopes;
 	}
 
+	// PRD-045's mid-turn router asks for an MCP capability; it resolves under the
+	// `mcp` scope like the tools it can admit, not as shell reach.
+	if (toolName === "mcp_request") {
+		add("mcp", toolName);
+		return scopes;
+	}
+
 	add("shell", toolName);
 	return scopes;
 }
