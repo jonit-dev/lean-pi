@@ -328,6 +328,46 @@ describe("recap wiring (PRD-036 Phase 2)", () => {
 		clearLanes();
 	});
 
+	it("does not hold agent_settled open on the recap call", async () => {
+		// Pi defers the next prompt until every agent_settled handler returns, so an
+		// awaited recap is dead time before the user's next message starts.
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, ctx } = fakePi();
+		const calls: RecapRequest[] = [];
+		const run: RecapRunner = (request) => {
+			calls.push(request);
+			return new Promise<string>(() => {});
+		};
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: run });
+
+		await handlers.get("agent_end")?.({ messages: [message("user", "ask"), message("assistant", "answer")] }, ctx);
+		const settled = Promise.resolve(handlers.get("agent_settled")?.({}, ctx)).then(() => "settled");
+		const timer = new Promise((resolve) => setTimeout(() => resolve("blocked"), 50));
+
+		expect(await Promise.race([settled, timer])).toBe("settled");
+		expect(calls).toHaveLength(1);
+		clearLanes();
+	});
+
+	it("makes no recap call for an aborted or errored turn", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, ctx } = fakePi();
+		const stub = stubRunner();
+		stub.script.text = "RECAP: Must not run.";
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		for (const stopReason of ["aborted", "error"]) {
+			const cut = { ...(message("assistant", "half an answer") as object), stopReason };
+			await handlers.get("agent_end")?.({ messages: [message("user", "ask"), cut] }, ctx);
+			await handlers.get("agent_settled")?.({}, ctx);
+		}
+
+		expect(stub.calls).toHaveLength(0);
+		clearLanes();
+	});
+
 	it("discards a superseded in-flight call when the next turn starts", async () => {
 		const { cwd, env } = project(NATIVE);
 		const { pi, handlers, widgets, ctx } = fakePi();

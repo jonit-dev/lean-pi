@@ -231,7 +231,7 @@ function inputOf(data: { ask?: unknown; did?: unknown } | undefined): RecapTurnI
  * thinking and tool calls, so the content must carry a non-empty text block,
  * and a tool-use/progress/error/aborted stop is not a completed answer.
  */
-function isCompletedAssistant(message: unknown): boolean {
+export function isCompletedAssistant(message: unknown): boolean {
 	const stop = (message as { stopReason?: unknown }).stopReason;
 	if (stop === "toolUse" || stop === "error" || stop === "aborted" || stop === "pending" || stop === "deferred") return false;
 	const content = (message as { content?: unknown }).content;

@@ -13,10 +13,13 @@
  * which is why folding looked right and only Ctrl+T did nothing under
  * `--ui compact` while working under `--ui plain`.
  *
- * ponytail: this costs the cache on messages that carry reasoning, because
- * clearing before the render is the only hook both vendors agree on. Reasoning
- * messages are a small share of a transcript and a folded one is a few lines, so
- * the re-render is cheap. If the fold ever routes its own updates through the
+ * The cache is dropped only when the children were rebuilt: every rebuild
+ * replaces the first content child, so a different first child means stale
+ * lines. Dropping it on every frame was the bug: over 90% of real assistant
+ * messages carry reasoning, and every keystroke re-renders the whole chat.
+ *
+ * ponytail: a fold rebuild that kept the first child object would be missed; the
+ * Ctrl+T test catches that. If the fold ever routes its own updates through the
  * prototype's current method, delete this file.
  *
  * TypeScript for the same reason as `spinner.ts`: Pi routes a `.ts` extension
@@ -27,6 +30,9 @@ import { AssistantMessageComponent, type ExtensionAPI } from "@earendil-works/pi
 
 /** The compact UI's own cache key, from the global registry. */
 const MESSAGE_RENDER_CACHE = Symbol.for("pi-claude-style-tools:message-render-cache");
+
+/** The first content child the cache was last valid for; a rebuild replaces it. */
+const RENDERED_CHILD = Symbol.for("leanpi:fold-cache-child");
 
 /** Ours, so a second `session_start` does not wrap the wrapper. */
 const INSTALLED = Symbol.for("leanpi:fold-cache-invalidation");
@@ -47,7 +53,13 @@ export function installFoldCacheInvalidation(): boolean {
 	const inner = proto.render;
 	if (typeof inner !== "function") return false;
 	proto.render = function patchedRender(this: Record<string | symbol, unknown>, ...args: unknown[]): unknown {
-		if (carriesReasoning(this as never)) this[MESSAGE_RENDER_CACHE] = undefined;
+		if (carriesReasoning(this as never)) {
+			const first = (this.contentContainer as { children?: unknown[] } | undefined)?.children?.[0];
+			if (this[RENDERED_CHILD] !== first) {
+				this[MESSAGE_RENDER_CACHE] = undefined;
+				this[RENDERED_CHILD] = first;
+			}
+		}
 		return (inner as (...rest: unknown[]) => unknown).apply(this, args);
 	};
 	proto[INSTALLED] = true;

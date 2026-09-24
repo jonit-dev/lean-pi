@@ -84,7 +84,7 @@ import { learnedModels, piProviderFor, registerCliModel, registerSubscriptionMod
 import { detectSubscriptions } from "./backends/subscriptions.js";
 import { restoreRememberedModel, writeRememberedModel } from "./commands/model.js";
 import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
-import { createRecap, type RecapController, type RecapRunner } from "./recap/index.js";
+import { createRecap, isCompletedAssistant, type RecapController, type RecapRunner } from "./recap/index.js";
 import { messageText } from "./commands/context.js";
 import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
@@ -700,7 +700,9 @@ function installTurnHooks(
 			}
 			// The recap's "what the turn did" slot is the report the user just read:
 			// the deterministic half already exists, so only the sentence is bought.
-			await deps.recap.recapTurn(ctx, { ask: event.text, did: outcome });
+			// Not awaited: it would hold the handled turn open, and the next `input`
+			// clears the recap, which invalidates a late result.
+			void deps.recap.recapTurn(ctx, { ask: event.text, did: outcome }).catch(() => {});
 		} catch (error) {
 			// The lanes threw after compiling. The turn failed, but the worker and
 			// reviewer that already ran are real spend: emit one failed record from
@@ -890,8 +892,11 @@ function installTurnHooks(
 		const reversed = [...event.messages].reverse();
 		const lastUser = reversed.find((message) => message.role === "user");
 		const lastAssistant = reversed.find((message) => message.role === "assistant");
+		// An aborted or errored turn is not recapped: after Esc the user types again at once.
 		settledTurn =
-			lastUser === undefined || lastAssistant === undefined ? undefined : { ask: messageText(lastUser), did: messageText(lastAssistant) };
+			lastUser === undefined || lastAssistant === undefined || !isCompletedAssistant(lastAssistant)
+				? undefined
+				: { ask: messageText(lastUser), did: messageText(lastAssistant) };
 		const run = pendingRun;
 		pendingRun = undefined;
 		setLaneCollector(undefined);
@@ -911,11 +916,13 @@ function installTurnHooks(
 
 	// PRD-036's Pi-side trigger: after the run has fully settled. `agent_end` is
 	// taken by the telemetry sink above and fires mid-settle, so the recap waits.
-	pi.on("agent_settled", async (_event, ctx) => {
+	pi.on("agent_settled", (_event, ctx) => {
 		const turn = settledTurn;
 		settledTurn = undefined;
 		if (!turn || routePins().model) return;
-		await deps.recap.recapTurn(ctx, turn);
+		// Fire-and-forget: Pi defers the next prompt until this handler returns,
+		// and `recap.clear()` on the next `input` already invalidates a late result.
+		void deps.recap.recapTurn(ctx, turn).catch(() => {});
 	});
 }
 

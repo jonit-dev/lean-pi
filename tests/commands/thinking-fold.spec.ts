@@ -271,6 +271,19 @@ describe("the vendored fold at its render boundary", () => {
 		expect((component as unknown as Record<symbol, unknown>)[cache]).toBeUndefined();
 		expect(plain(component.render(100))).toContain(TRACE_HEAD);
 	});
+
+	it("keeps the compact UI's render cache across frames with no rebuild", () => {
+		// Every keystroke re-renders the whole chat; dropping the cache on each frame
+		// of a reasoning message made typing cost grow with the transcript.
+		const cache = Symbol.for("pi-claude-style-tools:message-render-cache");
+		const { component } = mount();
+		installFoldCacheInvalidation();
+		component.updateContent(assistant(TRACE, ANSWER), true);
+		component.render(100);
+		(component as unknown as Record<symbol, unknown>)[cache] = [["cached"]];
+		component.render(100);
+		expect((component as unknown as Record<symbol, unknown>)[cache]).toEqual([["cached"]]);
+	});
 });
 
 describe("the vendored fold's Ctrl+T listener", () => {
