@@ -13,6 +13,7 @@ import { classifyExecution, type ComplexityInput } from "../compiler/classify.js
 import { EFFORT_BY_COMPLEXITY } from "../compiler/index.js";
 import { routePins } from "../compiler/pins.js";
 import { matrixDefault } from "../compiler/route.js";
+import { piProviderFor } from "../backends/cli-provider.js";
 import { thinkingLevelFor } from "../commands/session.js";
 import { ownsExecutionLoop } from "../commands/turn-lanes.js";
 import { resolveRole } from "../core/roles.js";
@@ -41,7 +42,12 @@ export function registerSubagentRouting(pi: Pick<ExtensionAPI, "on">, deps: Suba
 			const { complexity } = await classifyExecution({ client: deps.client, request: input.task, packet: scoutTask(deps.cwd, input.task), config: deps.config });
 			const role = matrixDefault(false, complexity, "R0").executor_class;
 			const ref = resolveRole(deps.config, role);
-			const model = ctx.modelRegistry.find(ref.backend, ref.model);
+			// A subscription role is a Pi provider under `<backend>-cli` (PRD-051),
+			// never the backend's own name — Pi's built-ins own `opencode`/`opencode-go`.
+			// Looking up `ref.backend` for an `external_harness` role finds nothing and
+			// the child inherits the parent, which is how an Opus task used to leave
+			// the operator's Claude subscription unused.
+			const model = ctx.modelRegistry.find(piProviderFor(ref), ref.model);
 			if (!model) {
 				if (ctx.hasUI) ctx.ui.notify(`subagent ${agent} → inherit (${role} role has no native model)`, "info");
 				return;

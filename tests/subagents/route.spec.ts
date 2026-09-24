@@ -68,6 +68,46 @@ describe("subagent model routing (PRD-049)", () => {
 		expect(notify).toHaveBeenCalledWith("subagent worker → inherit (quick role has no native model)", "info");
 	});
 
+	it("routes a subscription role through its CLI provider, not the backend's own name", async () => {
+		// The bug this guards: `strong: claude/opus` is an `external_harness`, so the
+		// child looked up `claude/opus`, found nothing in Pi's registry, and inherited
+		// — while Pi's built-in *metered* `opencode/claude-*` was the only `opus` a
+		// planner could see. The subscription is `${backend}-cli` (PRD-051).
+		const harness = loadConfig(tempDir("leanpi-subroute-harness-"), {
+			configPath: null,
+			backends: {
+				local: { type: "native", baseUrl: "http://127.0.0.1:1/v1" },
+				claude: { type: "external_harness", vendor: "claude" },
+			},
+			models: {
+				quick: { backend: "local", model: "m-quick" },
+				balanced: { backend: "local", model: "m-balanced" },
+				strong: { backend: "claude", model: "opus" },
+			},
+		});
+		const handlers = new Map<string, Handler>();
+		registerSubagentRouting({ on: (event: string, handler: Handler) => void handlers.set(event, handler) } as never, {
+			config: harness,
+			cwd: tempDir("leanpi-subroute-harness-cwd-"),
+			client,
+		});
+		const asked: string[] = [];
+		const ctx = {
+			hasUI: true,
+			ui: { notify: vi.fn() },
+			modelRegistry: {
+				find: (provider: string, id: string) => {
+					asked.push(`${provider}/${id}`);
+					return provider === "claude-cli" ? { provider, id } : undefined;
+				},
+			},
+		};
+		const input: Record<string, unknown> = { agent: "worker", task: "fix the race condition in the runtime lock" };
+		await handlers.get("tool_call")?.({ toolName: "subagent", input }, ctx);
+		expect(asked).toContain("claude-cli/opus");
+		expect(input.model).toBe("claude-cli/opus:high");
+	});
+
 	it("activate() registers the route: a real session's tool_call routes the child (AC-1)", async () => {
 		const cwd = tempDir("leanpi-subroute-live-");
 		const env = { ...process.env, LEANPI_NO_JEV: "1" };

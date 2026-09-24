@@ -17,9 +17,11 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEventStream, type Model, type Api, type TranscriptContext, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { BackendRef, LeanPiConfig } from "../core/types.js";
+import { isModelRole } from "../core/types.js";
 import { routePins, setRoutePins } from "../compiler/pins.js";
 import type { CliRunFacts } from "./harness.js";
 import { BackendRegistry, runWorkerTurn } from "./registry.js";
+import type { SubscriptionState } from "./subscriptions.js";
 
 /** The `api` Pi records on every message this provider produces. */
 const CLI_API = "leanpi-cli";
@@ -181,28 +183,81 @@ function streamCli(backend: string, deps: CliProviderDeps, model: Model<Api>, co
 }
 
 /**
- * Registers the pinned CLI model with Pi, replacing that provider's previous
- * model: a pin is one model at a time. The caller then `setModel`s it.
+ * Registers one or more model ids on a CLI backend's Pi provider.
+ *
+ * `registerProvider` replaces a provider's whole model list, so a backend's ids
+ * must be registered together — a second call for the same backend would drop
+ * the first call's models.
  */
-export function registerCliModel(pi: Pick<ExtensionAPI, "registerProvider">, deps: CliProviderDeps, pin: BackendRef): void {
-	pi.registerProvider(cliProviderName(pin.backend), {
-		name: `${pin.backend} CLI`,
+export function registerCliModels(pi: Pick<ExtensionAPI, "registerProvider">, deps: CliProviderDeps, backend: string, ids: readonly string[]): void {
+	if (ids.length === 0) return;
+	pi.registerProvider(cliProviderName(backend), {
+		name: `${backend} CLI`,
 		baseUrl: "cli://local",
 		// Pi will not select a model with no credential; the vendor CLI holds the
 		// real one, so this literal never leaves the process.
 		apiKey: "leanpi-cli",
 		api: CLI_API,
-		streamSimple: (model, context, options) => streamCli(pin.backend, deps, model, context, options),
-		models: [
-			{
-				id: pin.model,
-				name: pin.model,
-				reasoning: false,
-				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: learnedModels(deps.env)[pin.model]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-				maxTokens: 32_000,
-			},
-		],
+		streamSimple: (model, context, options) => streamCli(backend, deps, model, context, options),
+		models: ids.map((id) => ({
+			id,
+			name: id,
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: learnedModels(deps.env)[id]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+			maxTokens: 32_000,
+		})),
 	});
+}
+
+/**
+ * Registers the pinned CLI model with Pi. The config's own models for that
+ * backend ride along, so a `/model` pick cannot replace and drop them — a
+ * subagent planning on another subscription model still finds it.
+ */
+export function registerCliModel(pi: Pick<ExtensionAPI, "registerProvider">, deps: CliProviderDeps, pin: BackendRef): void {
+	const ids = new Set<string>([pin.model]);
+	for (const [role, entry] of Object.entries(deps.config.models)) {
+		if (isModelRole(role) && entry && entry.backend === pin.backend) ids.add(entry.model);
+	}
+	registerCliModels(pi, deps, pin.backend, [...ids]);
+}
+
+/**
+ * Registers every usable subscription backend's role models as Pi providers.
+ *
+ * A subscription role (`strong: claude/opus`) is `external_harness`, which
+ * `registerBackends` deliberately leaves out of Pi's registry — so without this
+ * the only `opus` a subagent planner can see is Pi's built-in *metered*
+ * `opencode/claude-*`, and a task that asks for Opus silently leaves the
+ * operator's Claude subscription unused. `states` is a cheap probe (no vendor
+ * spawn), so an uninstalled or signed-out vendor is never offered.
+ */
+export function registerSubscriptionModels(
+	pi: Pick<ExtensionAPI, "registerProvider">,
+	deps: CliProviderDeps,
+	states: readonly SubscriptionState[],
+	extra: readonly BackendRef[] = [],
+): void {
+	const usable = new Set(states.filter((state) => state.onPath && state.signedIn).map((state) => state.backend));
+	const idsByBackend = new Map<string, Set<string>>();
+	const add = (backend: string, id: string, pinned = false): void => {
+		const backendEntry = deps.config.backends[backend];
+		if (backendEntry?.type !== "external_harness" || backendEntry.enabled === false) return;
+		// A `/model` pin is the operator's deliberate choice, registered even when
+		// the probe says the vendor is unavailable — the same as `registerCliModel`.
+		if (!pinned && !usable.has(backend)) return;
+		const ids = idsByBackend.get(backend) ?? new Set<string>();
+		ids.add(id);
+		idsByBackend.set(backend, ids);
+	};
+	for (const [role, entry] of Object.entries(deps.config.models)) {
+		if (!isModelRole(role) || !entry) continue;
+		add(entry.backend, entry.model);
+	}
+	// A restored `/model` pin on a subscription backend is a model too (PRD-051);
+	// folded in here so registering the config's set cannot replace and drop it.
+	for (const pin of extra) add(pin.backend, pin.model, true);
+	for (const [backend, ids] of idsByBackend) registerCliModels(pi, deps, backend, [...ids]);
 }

@@ -80,7 +80,8 @@ import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, manualStatusLine, statusLine } from "./cli/statusline.js";
-import { learnedModels, piProviderFor, registerCliModel, type CliProviderDeps } from "./backends/cli-provider.js";
+import { learnedModels, piProviderFor, registerCliModel, registerSubscriptionModels, type CliProviderDeps } from "./backends/cli-provider.js";
+import { detectSubscriptions } from "./backends/subscriptions.js";
 import { restoreRememberedModel, writeRememberedModel } from "./commands/model.js";
 import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
 import { createRecap, type RecapController, type RecapRunner } from "./recap/index.js";
@@ -948,10 +949,18 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// here, not per session-start reload — a fresh activation is the only
 	// startup this session gets.
 	restoreRememberedModel(config, env);
-	// PRD-051: a restored CLI pin is a Pi model too, so Pi's registry must hold it
-	// before `session_start` switches to it.
+	// Subscription role models are Pi models too: `strong: claude/opus` is an
+	// `external_harness` the native-only `registerBackends` leaves out, so without
+	// this the only `opus` a subagent planner can see is Pi's metered built-in
+	// (`opencode/claude-*`) and the operator's Claude subscription goes unused.
+	// A restored `/model` pin is folded in so it cannot be replaced and dropped.
 	const restoredPin = routePins().model;
-	if (restoredPin?.type === "external_harness") registerCliModel(pi, { config, cwd, env }, restoredPin);
+	registerSubscriptionModels(
+		pi,
+		{ config, cwd, env },
+		detectSubscriptions(config, { env }),
+		restoredPin?.type === "external_harness" ? [restoredPin] : [],
+	);
 	registerBackends(pi, config, env);
 	const tools = registerBaselineTools(pi, cwd, compactUiAttached() ? YIELDED_TOOL_NAMES : []);
 	// PRD-018: the seven LSP tools are registered once and stay inactive until a
