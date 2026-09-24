@@ -314,6 +314,19 @@ async function bodyWithRetention(base: NodeJS.ProcessEnv): Promise<Record<string
 	}
 }
 
+describe("the background extension's Ctrl+B", () => {
+	it("takes Ctrl+B off Pi's default cursor-left, but not off a user's own binding", async () => {
+		// Pi warns on every start when an extension shortcut shadows a built-in one.
+		const { KeybindingsManager } = await import("@earendil-works/pi-tui");
+		expect(new KeybindingsManager((await import("@earendil-works/pi-tui")).TUI_KEYBINDINGS).getKeys("tui.editor.cursorLeft")).toContain("ctrl+b");
+		await import("../../extensions/background/index.ts");
+		const { TUI_KEYBINDINGS } = await import("@earendil-works/pi-tui");
+		expect(new KeybindingsManager(TUI_KEYBINDINGS).getKeys("tui.editor.cursorLeft")).toEqual(["left"]);
+		const own = new KeybindingsManager(TUI_KEYBINDINGS, { "tui.editor.cursorLeft": ["left", "ctrl+b"] });
+		expect(own.getKeys("tui.editor.cursorLeft")).toContain("ctrl+b");
+	});
+});
+
 describe("long prompt-cache retention on the native path (PRD-046)", () => {
 	it("sends long retention by default, and not when the operator sets short", async () => {
 		const long = await bodyWithRetention({});
