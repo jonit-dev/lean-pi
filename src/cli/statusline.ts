@@ -89,9 +89,15 @@ export function prettyModel(backend: string, model: string): string {
  * (PRD-048 Phase 2): just the pinned model and the mode, colour-matched to
  * `statusLine`'s own — no class, effort or cost to report, because none ran.
  */
-export function manualStatusLine(pin: BackendRef, color = false): string {
+export function manualStatusLine(pin: BackendRef, color = false, goal?: string): string {
 	const model = prettyModel(pin.backend, pin.model);
-	return [color === true ? `${BOLD}${model}${RESET}` : model, color === true ? `${MANUAL}Manual${RESET}` : "Manual"].join(SEP);
+	const chip = goalChip(goal);
+	return [color === true ? `${BOLD}${model}${RESET}` : model, color === true ? `${MANUAL}Manual${RESET}` : "Manual", ...(chip ? [chip] : [])].join(SEP);
+}
+
+/** A running goal, under either mode: nothing else on screen says one is live. */
+function goalChip(goal: string | undefined): string | undefined {
+	return goal !== undefined && goal.length > 0 ? `goal: ${goal.length > 32 ? `${goal.slice(0, 31)}…` : goal}` : undefined;
 }
 
 export type Lane = "pi_loop" | "executor";
@@ -200,7 +206,8 @@ export function statusLine({ config, contract, role, model: running, effort: app
 	if (contextPercent !== undefined) parts.push(`ctx ${Math.round(contextPercent)}%`);
 	// A goal runs across turns, so nothing else on screen says one is live —
 	// which is how a leftover goal gets mistaken for the harness acting on its own.
-	if (goal !== undefined && goal.length > 0) parts.push(`goal: ${goal.length > 32 ? `${goal.slice(0, 31)}…` : goal}`);
+	const chip = goalChip(goal);
+	if (chip) parts.push(chip);
 	// Last, and only when true: both warnings are the operator's next action, and
 	// a line that ends in one is read even when the rest of it is not.
 	if (shortfall !== undefined) parts.push(color === true ? `${WARN}${shortfall}${RESET}` : shortfall);

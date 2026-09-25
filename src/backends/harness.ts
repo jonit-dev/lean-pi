@@ -172,6 +172,11 @@ export interface HarnessDescriptor {
 	parse(stdout: string): ParsedHarnessEnvelope;
 	/** Vendor's documented rate/quota signal, as a human reason; `null` when absent. */
 	limitSignal(exitCode: number | null, stderr: string, stdout: string): string | null;
+	/**
+	 * Stderr after which the vendor would only retry forever: the run is killed
+	 * there and judged by `limitSignal` like any other failed exit.
+	 */
+	stopWhen?(stderr: string): boolean;
 }
 
 /** Field paths to read out of each vendor's envelope; the parsers stay shared. */
@@ -372,6 +377,10 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 			"run",
 			"--format",
 			"json",
+			// Its only report of a provider 429 — `run` itself retries in silence.
+			"--print-logs",
+			"--log-level",
+			"ERROR",
 			...(packet.model ? ["--model", packet.model] : []),
 			...(packet.agent ? ["--agent", packet.agent] : []),
 			...(packet.sessionId ? ["--session", packet.sessionId] : []),
@@ -385,6 +394,9 @@ export const HARNESS_DESCRIPTORS: Record<HarnessVendor, HarnessDescriptor> = {
 				error: ["error"],
 			}),
 		limitSignal: (_exitCode, stderr, stdout) => matchLimit(`${stderr}\n${stdout}`, LIMIT_PATTERN),
+		// A rate-limited main agent (`small=false`; the title agent's own give-up is
+		// not the turn's) is retried with no end: the Manual turn sat on "Thinking…".
+		stopWhen: (stderr) => /message="stream error"[^\n]*small=false[^\n]*error\.error="[^"\n]*(?:usage limit|rate limit|too many requests|\b429\b)/i.test(stderr),
 	},
 };
 
@@ -397,6 +409,8 @@ export interface HarnessSpawnRequest {
 	timeoutMs: number;
 	/** Kills the process group when aborted — Esc on a Manual turn (PRD-051). */
 	signal?: AbortSignal;
+	/** Kills the process group once stderr satisfies it (`HarnessDescriptor.stopWhen`). */
+	stopWhen?: (stderr: string) => boolean;
 }
 
 export interface HarnessSpawnResult {
@@ -430,7 +444,6 @@ export const spawnProcess: HarnessSpawn = async (request) => {
 	let stderr = "";
 	let timedOut = false;
 	child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-	child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
 	child.stdin.on("error", () => {});
 	child.stdin.end(request.stdin ?? "");
 	const terminate = (): void => {
@@ -445,6 +458,10 @@ export const spawnProcess: HarnessSpawn = async (request) => {
 			child.kill("SIGKILL");
 		}
 	};
+	child.stderr.on("data", (chunk: Buffer) => {
+		stderr += chunk.toString("utf8");
+		if (request.stopWhen?.(stderr)) terminate();
+	});
 	const timer = setTimeout(() => {
 		timedOut = true;
 		terminate();
@@ -585,6 +602,7 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 			env: Object.keys(extraEnv).length === 0 ? (deps.env ?? process.env) : { ...(deps.env ?? process.env), ...extraEnv },
 			timeoutMs: deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
 			...(deps.signal ? { signal: deps.signal } : {}),
+			...(descriptor.stopWhen ? { stopWhen: descriptor.stopWhen } : {}),
 		});
 		if (deps.signal?.aborted) return { status: "failed", failure: "exit", reason: "aborted", exitCode: result.code };
 

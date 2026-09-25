@@ -412,7 +412,7 @@ function installArtifactTool(pi: ExtensionAPI, artifacts: ArtifactStore): void {
  * reported the latter's empty history as the session's was the source of
  * `/context`'s invented totals.
  */
-function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string, after: (ctx: TodoWidgetHost) => void, cli: CliProviderDeps): void {
+function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string, after: (ctx: TodoWidgetHost & { ui: { setStatus: (key: string, text: string | undefined) => void } }) => void, cli: CliProviderDeps): void {
 	for (const command of commands.entries()) {
 		pi.registerCommand(command.name, {
 			description: command.summary.length > 0 ? command.summary : command.usage,
@@ -685,7 +685,7 @@ function installTurnHooks(
 					}),
 				);
 			} else if (routePins().model) {
-				ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(routePins().model!, true));
+				ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(routePins().model!, true, deps.statusExtras(ctx).goal));
 			} else {
 				ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
 			}
@@ -808,7 +808,7 @@ function installTurnHooks(
 				}),
 			);
 		} else if (manualPin) {
-			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true, deps.statusExtras(ctx).goal));
 		}
 		// PRD-044: JEV judged the session's opening task PRD-worthy, so offer one
 		// before the loop runs it as a blind prompt. Only the first prompt of a
@@ -884,7 +884,7 @@ function installTurnHooks(
 			registerCliModel(pi, deps, resolved);
 			const found = ctx.modelRegistry.find(piProviderFor(resolved), resolved.model);
 			if (found) await pi.setModel(found);
-			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(resolved, true));
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(resolved, true, deps.statusExtras(ctx).goal));
 		}
 		// What `agent_settled` will recap: the loop's last ask and its answer. They
 		// exist here; `agent_settled` fires after Pi's own telemetry sink has already
@@ -1239,13 +1239,17 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// whether a backend is known-unusable. All read at render time — a goal set or
 	// stopped between turns must change the next line, and so must a probe.
 	const statusGoalStore = createGoalStore(cwd);
+	const runningGoal = (): string | undefined => {
+		const goal = statusGoalStore.load();
+		return isRunningHere(goal, manager.getSessionId()) ? (goal as { text: string }).text : undefined;
+	};
 	const statusExtras = (ctx: { getContextUsage: () => { percent: number | null } | undefined }): {
 		cost: number;
 		goal?: string;
 		contextPercent?: number;
 		degraded?: string;
 	} => {
-		const goal = statusGoalStore.load();
+		const goal = runningGoal();
 		// Pi's own number, not a second estimate of it: `tokens` is null right after
 		// a compaction, and `percent` is null with it, which is the one case the
 		// footer must stay silent rather than report a plausible figure.
@@ -1256,7 +1260,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		const unusable = [...surface.probes.entries()].find(([, probe]) => probe.status !== "ok");
 		return {
 			cost: sessionCost(cwd, manager.getSessionId(), resolveCostConfig(config)),
-			...(isRunningHere(goal, manager.getSessionId()) ? { goal: (goal as { text: string }).text } : {}),
+			...(goal === undefined ? {} : { goal }),
 			...(percent === null || percent === undefined ? {} : { contextPercent: percent }),
 			...(unusable ? { degraded: `${unusable[0]} ${unusable[1].status}` } : {}),
 		};
@@ -1372,7 +1376,13 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// The result is printed with `ui.notify`, not `pi.sendMessage`: a custom
 	// message would enter the LLM context and every later request in the session
 	// would carry the output of every command the user ran.
-	bridgeCommands(pi, commands, cwd, showTodo, { config, cwd, env });
+	// `/goal` sets or stops a goal between turns; a Manual line shows it at once.
+	const afterCommand = (ctx: TodoWidgetHost & { ui: { setStatus: (key: string, text: string | undefined) => void } }): void => {
+		showTodo(ctx);
+		const pin = routePins().model;
+		if (pin) ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(pin, true, runningGoal()));
+	};
+	bridgeCommands(pi, commands, cwd, afterCommand, { config, cwd, env });
 	registerClearAlias(pi);
 
 	return {

@@ -106,6 +106,9 @@ export interface McpHealthRecord {
 export const DEFAULT_MAX_TOOLS = 6;
 export const DEFAULT_PROJECT_CONFIG = ".leanpi/mcp.json";
 export const DEFAULT_USER_CONFIG = ".leanpi/mcp.json";
+/** Claude Code's own files, read first so a LeanPi file shadows the same name. */
+export const CLAUDE_PROJECT_CONFIG = ".mcp.json";
+export const CLAUDE_USER_CONFIG = ".claude.json";
 
 /**
  * `mcp.maxTools` / `mcp.state`, read structurally: the typed config block is an
@@ -208,9 +211,9 @@ export function writeServerSchemas(cwd: string, server: string, tools: CachedToo
  */
 export function resolveConfigPaths(cwd: string, config: LeanPiConfig, home: string = homedir()): { user: string[]; project: string[] } {
 	const declared = config.capabilities.mcpConfigPaths ?? [];
-	const user = [join(home, DEFAULT_USER_CONFIG), ...declared.filter((entry) => !isProjectLocal(cwd, entry))];
+	const user = [join(home, CLAUDE_USER_CONFIG), join(home, DEFAULT_USER_CONFIG), ...declared.filter((entry) => !isProjectLocal(cwd, entry))];
 	const local = declared.filter((entry) => isProjectLocal(cwd, entry)).map((entry) => (isAbsolute(entry) ? resolve(entry) : resolve(cwd, entry)));
-	const project = local.length > 0 ? local : [resolve(cwd, DEFAULT_PROJECT_CONFIG)];
+	const project = [resolve(cwd, CLAUDE_PROJECT_CONFIG), ...(local.length > 0 ? local : [resolve(cwd, DEFAULT_PROJECT_CONFIG)])];
 	return {
 		user: [...new Set(user)],
 		project: config.permissions.trust.trusted ? [...new Set(project)] : [],
@@ -246,8 +249,12 @@ function hints(value: unknown): McpToolHint[] {
 	return result;
 }
 
-/** Parse one `mcp.json` into entries; an entry that cannot ever connect is skipped. */
-export function parseServerEntries(path: string, scope: McpScope, state: Record<string, McpStateEntry> = {}): McpServerEntry[] {
+/**
+ * Parse one `mcp.json` into entries; an entry that cannot ever connect is skipped.
+ * Given `cwd`, `~/.claude.json`'s per-project `projects[cwd].mcpServers` (Claude
+ * Code's "local" scope) joins the top-level ones.
+ */
+export function parseServerEntries(path: string, scope: McpScope, state: Record<string, McpStateEntry> = {}, cwd?: string): McpServerEntry[] {
 	if (!existsSync(path)) return [];
 	let parsed: Record<string, unknown>;
 	try {
@@ -255,7 +262,8 @@ export function parseServerEntries(path: string, scope: McpScope, state: Record<
 	} catch {
 		return [];
 	}
-	const servers = record(parsed.mcpServers) ?? record(parsed.servers) ?? {};
+	const local = cwd === undefined ? null : record(record(record(parsed.projects)?.[cwd])?.mcpServers);
+	const servers = { ...(record(parsed.mcpServers) ?? record(parsed.servers) ?? {}), ...local };
 	const entries: McpServerEntry[] = [];
 	for (const [name, value] of Object.entries(servers)) {
 		const entry = record(value);
@@ -308,7 +316,7 @@ export function buildCatalog(options: BuildCatalogOptions): McpCatalog {
 	const paths = resolveConfigPaths(cwd, config, options.home);
 	const cache = readSchemaCache(cwd);
 	const byName = new Map<string, McpServerEntry>();
-	for (const path of paths.user) for (const entry of parseServerEntries(path, "user", state)) byName.set(entry.name, entry);
+	for (const path of paths.user) for (const entry of parseServerEntries(path, "user", state, cwd)) byName.set(entry.name, entry);
 	for (const path of paths.project) for (const entry of parseServerEntries(path, "project", state)) byName.set(entry.name, entry);
 
 	const entries = [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));

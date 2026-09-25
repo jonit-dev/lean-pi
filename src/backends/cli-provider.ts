@@ -7,9 +7,11 @@
  * CLI is a provider whose stream runs the vendor instead of an HTTP API, so a
  * Manual turn is an ordinary Pi turn on a different model.
  *
- * The stream answers the transcript's last user message and nothing else: the
+ * Once the vendor has a session the stream sends only the last user message: the
  * vendor keeps its own conversation through its session id (`claude --resume`
- * and equivalents), and uses its own tools — Pi's tool declarations are ignored.
+ * and equivalents). Its first turn carries the transcript so far, so a switch
+ * mid-session keeps the context. It uses its own tools — Pi's tool declarations
+ * are ignored.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -106,14 +108,35 @@ function learnModel(env: NodeJS.ProcessEnv, asked: string, ran: LearnedModel): v
 	writeFileSync(path, JSON.stringify(known, null, 2));
 }
 
-function lastUserText(context: TranscriptContext): string {
-	for (let index = context.messages.length - 1; index >= 0; index -= 1) {
-		const message = context.messages[index];
-		if (message?.role !== "user") continue;
-		if (typeof message.content === "string") return message.content;
-		return message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
-	}
-	return "";
+function messageText(message: TranscriptContext["messages"][number]): string {
+	if (message.role !== "user" && message.role !== "assistant") return "";
+	if (typeof message.content === "string") return message.content;
+	return message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+}
+
+/**
+ * The prompt argv carries — one argument, which Linux caps at 128 KiB — so the
+ * carried transcript keeps its newest turns within this many characters.
+ * ponytail: text turns only and a size cap; pipe the prompt through stdin if a
+ * switch ever needs tool output or a longer history.
+ */
+const CARRIED_HISTORY_CHARS = 60_000;
+
+/** The last user message, prefixed — on a vendor's first turn — with the conversation before it. */
+function objectiveOf(context: TranscriptContext, resumed: boolean): string {
+	const index = context.messages.findLastIndex((message) => message.role === "user");
+	if (index < 0) return "";
+	const last = messageText(context.messages[index]!);
+	if (resumed) return last;
+	let history = context.messages
+		.slice(0, index)
+		.map((message) => ({ role: message.role, text: messageText(message).trim() }))
+		.filter((turn) => turn.text.length > 0)
+		.map((turn) => `${turn.role === "user" ? "User" : "Assistant"}: ${turn.text}`)
+		.join("\n\n");
+	if (history.length === 0) return last;
+	if (history.length > CARRIED_HISTORY_CHARS) history = `[earlier turns omitted]\n\n${history.slice(-CARRIED_HISTORY_CHARS)}`;
+	return `The conversation so far (answered by another model):\n\n${history}\n\n---\n\n${last}`;
 }
 
 function streamCli(backend: string, deps: CliProviderDeps, model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions): AssistantMessageEventStream {
@@ -144,7 +167,7 @@ function streamCli(backend: string, deps: CliProviderDeps, model: Model<Api>, co
 		stream.push({ type: "start", partial: message });
 		try {
 			const outcome = await runWorkerTurn(
-				{ objective: lastUserText(context), role: "balanced", model: model.id, ...(sessionId ? { sessionId } : {}) },
+				{ objective: objectiveOf(context, sessionId !== undefined), role: "balanced", model: model.id, ...(sessionId ? { sessionId } : {}) },
 				{
 					registry,
 					cwd: deps.cwd,

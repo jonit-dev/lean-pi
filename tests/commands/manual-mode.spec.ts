@@ -240,6 +240,29 @@ describe("PRD-051: a CLI pin is a model in Pi's own loop", () => {
 		expect(session.installed.at(-1)).toEqual({ provider: "local", id: "cheap" });
 	});
 
+	it("switching to a CLI model mid-session hands the vendor the conversation so far; a resumed vendor session gets only the new message", async () => {
+		const session = cliSession();
+		await session.commands.get("model")?.handler("", session.ctx);
+		const provider = session.providers.get("claude-cli")!;
+		const model = { id: "sonnet", api: "leanpi-cli", provider: "claude-cli" };
+		const history = [
+			{ role: "user", content: "My secret word is PINEAPPLE.", timestamp: 0 },
+			{ role: "assistant", content: [{ type: "text", text: "Noted, I will remember it." }], provider: "local", model: "cheap", timestamp: 0 },
+			{ role: "user", content: [{ type: "text", text: "What is my secret word?" }], timestamp: 0 },
+		];
+		await provider.streamSimple(model, { messages: history }).result();
+		await provider.streamSimple(model, { messages: [...history, { role: "user", content: "And again?", timestamp: 0 }] }).result();
+
+		// One invocation per `-p`: the carried prompt spans several lines.
+		const argv = readFileSync(join(session.cwd, "argv.log"), "utf8").split(/^(?=-p )/m);
+		expect(argv).toHaveLength(2);
+		expect(argv[0]).toContain("PINEAPPLE");
+		expect(argv[0]).toContain("Noted, I will remember it.");
+		expect(argv[0]).toContain("What is my secret word?");
+		expect(argv[1]).toContain("--resume vendor-session-1");
+		expect(argv[1]).not.toContain("PINEAPPLE");
+	});
+
 	it("AC-2: a remembered CLI pin is registered at activation and installed on session_start", async () => {
 		const { cwd, env } = nativeProject("remember_manual_model: true\n");
 		const pinFile = join(env.HOME as string, ".leanpi", "model.json");
@@ -370,6 +393,28 @@ describe("Manual mode: the footer (docs/systems/model-modes.md)", () => {
 		expect(statuses.length).toBeGreaterThan(before);
 		// Cleared, matching what an unpinned session shows before its first turn.
 		expect(statuses.at(-1)).toBeUndefined();
+	});
+});
+
+describe("Manual mode shows a running goal", () => {
+	it("the Manual status line carries the goal chip once /goal starts one, and after a Manual turn", async () => {
+		const { cwd, env } = nativeProject();
+		const fake = fakePi();
+		const { commands, handlers, statuses, ctx } = fake;
+		const pi = { ...fake.pi, sendUserMessage: () => {} };
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+
+		await commands.get("model")?.handler("local:cheap", ctx);
+		await commands.get("goal")?.handler("ship the release", { ...ctx, isIdle: () => false });
+		expect(statuses.at(-1)).toContain("Manual");
+		expect(statuses.at(-1)).toContain("goal: ship the release");
+
+		await handlers.get("before_agent_start")?.({ prompt: "Hi", systemPrompt: "you are an assistant" }, ctx);
+		expect(statuses.at(-1)).toContain("goal: ship the release");
+
+		await commands.get("goal")?.handler("stop", { ...ctx, isIdle: () => false });
+		expect(statuses.at(-1)).not.toContain("goal:");
 	});
 });
 

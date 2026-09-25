@@ -4,12 +4,13 @@
  * Everything goes through the real command entry point (`createCommandRegistry`
  * + `/mcp`) and the real stdio fixture process, which records its own startup.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCommandRegistry, grantTrust, loadConfig } from "../../src/index.js";
 import { registerMcpCommand, type McpRuntime } from "../../src/mcp/index.js";
+import { buildCatalog } from "../../src/mcp/catalog.js";
 import { nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { mcpEnv, stdioFixtures, tempHome, writeProjectMcpConfig, writeUserMcpConfig } from "./helpers.js";
 
@@ -163,5 +164,32 @@ describe("PRD-006 AC-2 — `/mcp disable|enable` controls exposure and survives 
 		const unknown = await resumedRegistry.dispatch("/mcp disable nope", { cwd });
 		expect(unknown.ok).toBe(false);
 		expect(unknown.text).toContain('no server named "nope"');
+	});
+});
+
+describe("MCP servers configured for Claude Code are found without a LeanPi config", () => {
+	it("reads ~/.claude.json (user and this project's local servers) and a trusted project's .mcp.json", () => {
+		const home = tempHome();
+		const cwd = tempDir("leanpi-mcp-claude-");
+		const env = mcpEnv(home);
+		writeFileSync(
+			join(home, ".claude.json"),
+			JSON.stringify({
+				mcpServers: { "cc-user": { type: "stdio", command: "/bin/true" } },
+				projects: { [cwd]: { mcpServers: { "cc-local": { type: "http", url: "http://127.0.0.1:9/mcp" } } }, "/elsewhere": { mcpServers: { other: { command: "/bin/true" } } } },
+			}),
+		);
+		writeFileSync(join(cwd, ".mcp.json"), JSON.stringify({ mcpServers: { "cc-project": { command: "/bin/true" } } }));
+		baseConfig(cwd);
+		grantTrust(cwd, env);
+
+		const config = loadConfig(cwd, {}, env);
+		expect(config.permissions.trust.trusted).toBe(true);
+		const servers = buildCatalog({ cwd, config, home }).servers.map((server) => [server.name, server.scope]);
+		expect(servers).toEqual([
+			["cc-local", "user"],
+			["cc-project", "project"],
+			["cc-user", "user"],
+		]);
 	});
 });
