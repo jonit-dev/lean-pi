@@ -2,6 +2,58 @@
 
 ## Results
 
+### LeanPi vs vanilla Pi, side by side — September 23, 2026
+
+This is the direct comparison, kept here rather than on the front page because
+the number is unflattering and the reason is mundane: **LeanPi and vanilla Pi
+land at roughly the same cost per verified completion.**
+
+| arm | verified | per verified completion | ratio |
+| --- | --: | --: | --: |
+| LeanPi (default: full prefix + JEV) | 4/4 | $0.01972 | **1.000** |
+| vanilla Pi | 4/4 | $0.01972 | — |
+
+Four tasks, one model, one machine, one day (`bench/suites/validated`). Two
+ablations ran alongside it, and both lost:
+
+| arm | verified | per verified completion | ratio |
+| --- | --: | --: | --: |
+| default (full prefix + JEV) | 4/4 | $0.01972 | **1.000** |
+| minimal prefix + JEV | 3/4 | $0.03235 | 1.551 |
+| full prefix + local Laya decisions | 3/4 | $0.02875 | 1.547 |
+
+Both alternatives removed the JEV line and lost a task. Cost per verified
+completion punishes the lost verification far more than it rewards the saving.
+
+**Why parity is expected.** The vanilla arm is the benchmark's negative control:
+the same runtime with no LeanPi loaded, so no verification, no cost accounting,
+no routing, no permission scoping and no context engineering. There is very
+little in it to remove. What LeanPi *does* remove is real — it strips the skill
+catalog (200 skills, ~82.7 KB, ~20.7k tokens) that Pi re-sends with every request
+— but the JEV control plane (~6% of spend) hands the difference back.
+
+LeanPi still wins every token bucket on the same run:
+
+| bucket | LeanPi / vanilla Pi |
+| --- | --: |
+| uncached input | 0.948 |
+| cached input | 0.805 |
+| output | **0.455** |
+| reasoning | 0.911 |
+| API spend alone | 0.937 |
+| total, after JEV | 1.000 |
+
+The parity is a statement about the control plane's *price*, not about
+capability. A harness that does not verify, account, route or bound itself is
+cheap to run — and cheaper still to compare against.
+
+⚠️ n=1 per task, and within-arm cost spread is 2.4×, so a single draw cannot
+resolve a 20% effect. The earlier n=5 ratio carried a 95% CI of [0.32, 2.70].
+
+Raw runs: `bench/out/cost-beat-{smoke,minimal,full,laya-smoke,laya-full}-20260923/`.
+Per-call first-divergence analysis:
+[`2026-09-23-cost-first-divergence.md`](2026-09-23-cost-first-divergence.md).
+
 ### Long prompt-cache retention — September 22, 2026
 
 PRD-046's AC-3: the LeanPi arm on the four-task validated suite, same model,

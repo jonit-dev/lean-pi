@@ -103,9 +103,17 @@ describe("PRD-001 Phase 2 — config and role resolution", () => {
 });
 
 describe("PRD-001 AC-9 — the role ladder", () => {
+	/**
+	 * A cwd and env with no discoverable config. `configPathFor` walks up from the
+	 * working directory and then falls back to `$XDG_CONFIG_HOME`, so a test that
+	 * asserts pure overrides has to supply neither: a path inside this repo finds
+	 * the repository's own `leanpi.config.yaml`, whose role pins then contradict
+	 * the overrides and make `resolveRole` throw.
+	 */
+	const isolatedEnv = () => ({ XDG_CONFIG_HOME: tempDir("leanpi-config-xdg-"), HOME: tempDir("leanpi-config-home-") });
 	const twoRoleConfig = () =>
 		loadConfig(
-			join(import.meta.dirname, "__no_config_here__"),
+			tempDir("leanpi-no-config-"),
 			{
 				configPath: null,
 				backends: {
@@ -116,6 +124,7 @@ describe("PRD-001 AC-9 — the role ladder", () => {
 					balanced: { backend: "local", model: "balanced-model" },
 				},
 			},
+			isolatedEnv(),
 		);
 
 	it("resolves every role to its documented ladder target", () => {
@@ -137,7 +146,7 @@ describe("PRD-001 AC-9 — the role ladder", () => {
 	});
 
 	it("resolves each role to its own entry when all six are configured", () => {
-		const config = loadConfig(join(import.meta.dirname, "__no_config_here__"), {
+		const config = loadConfig(tempDir("leanpi-no-config-"), {
 			configPath: null,
 			backends: { local: { type: "native", baseUrl: "http://127.0.0.1:1/v1" } },
 			models: {
@@ -148,7 +157,7 @@ describe("PRD-001 AC-9 — the role ladder", () => {
 				review_quick: { backend: "local", model: "m-review-quick" },
 				review_strong: { backend: "local", model: "m-review-strong" },
 			},
-		});
+		}, isolatedEnv());
 		const expected: Record<ModelRole, string> = {
 			quick: "m-quick",
 			balanced: "m-balanced",
