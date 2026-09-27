@@ -402,6 +402,18 @@ function looksLikePath(token: string): boolean {
 	return token.startsWith("~") || isAbsolute(token) || token.startsWith("./") || token.startsWith("../") || token.includes("/");
 }
 
+/**
+ * The `/dev` targets a shell names as a redirect or a process fd, never a path
+ * outside the root: `find . 2>/dev/null` was refused as `external_dir:/dev/null`,
+ * because the default for that scope is `deny` and the whole call went with it.
+ * Only these exact targets are exempt — `/dev/sda` is a real read, and stays one.
+ */
+const DEVICE_TARGETS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/stdin", "/dev/tty"]);
+
+function isDeviceTarget(token: string): boolean {
+	return DEVICE_TARGETS.has(token) || /^\/dev\/fd\/\d+$/.test(token);
+}
+
 /** Split a command line into candidate path tokens; a table, not a shell parser. */
 export function pathTokens(command: string): string[] {
 	return command
@@ -423,6 +435,7 @@ function classifyCommand(command: string, root: string, add: (scope: Scope, targ
 	if (PACKAGE_INSTALL.some((pattern) => pattern.test(command))) add("package_install", command);
 	if (NETWORK_COMMAND.some((pattern) => pattern.test(command)) || (git !== null && gitIsNetwork(git))) add("network", command);
 	for (const token of pathTokens(command)) {
+		if (isDeviceTarget(token)) continue;
 		if (escapesRoot(root, token)) add("external_dir", token);
 	}
 }

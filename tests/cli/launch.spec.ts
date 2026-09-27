@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/index.js";
 import { compactUiAttached } from "../../src/core/tools.js";
 import { backgroundTasksAdapter, type BackgroundPi } from "../../src/cli/background.js";
-import { bundledExtensions, backgroundTasksExtension, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension } from "../../src/cli/launch.js";
+import { bundledExtensions, backgroundTasksExtension, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension, subagentCardExtension } from "../../src/cli/launch.js";
 import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend } from "../helpers/stub-backend.js";
 
@@ -72,6 +72,10 @@ describe("the leanpi launcher", () => {
 		}
 		mkdirSync(join(root, "dist"), { recursive: true });
 		writeFileSync(join(root, "dist", "leanpi.js"), "export {};\n");
+		// LeanPi's own entry for the subagent card ships with the package, so an
+		// installed one has it (PRD-052).
+		mkdirSync(join(root, "extensions", "subagent-card"), { recursive: true });
+		writeFileSync(join(root, "extensions", "subagent-card", "index.ts"), "export {};\n");
 		expect(existsSync(join(root, "node_modules"))).toBe(false);
 		expect(resolvePiCli(root)).toBe(realpathSync(join(consumer, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")));
 		// The hoisted extensions are found and every path handed to Pi exists.
@@ -179,6 +183,21 @@ describe("the leanpi launcher", () => {
 		// jiti's virtual-module map, which is keyed on a `.ts` extension.
 		expect(spinnerExtension(PACKAGE_ROOT).endsWith(".ts")).toBe(true);
 		expect(existsSync(spinnerExtension(PACKAGE_ROOT))).toBe(true);
+	});
+
+	it("attaches the subagent card after the compact UI, and only with it (PRD-052)", () => {
+		// The card is a prototype patch on the row the compact UI installs while
+		// loading, so it has to load after it and be a source entry (jiti resolves
+		// `@earendil-works/*` to the classes the interactive mode renders with).
+		// Under `--ui plain` the tool's own `renderCall` already names the agent, so
+		// there is nothing to take over and the entry is not attached.
+		const compact = bundledExtensions(PACKAGE_ROOT, "compact");
+		const card = subagentCardExtension(PACKAGE_ROOT);
+		expect(card.endsWith(".ts")).toBe(true);
+		expect(existsSync(card)).toBe(true);
+		expect(compact.at(-1)).toBe(card);
+		expect(compact.indexOf(card)).toBeGreaterThan(compact.findIndex((path) => path.includes("pi-claude-code-ui")));
+		expect(bundledExtensions(PACKAGE_ROOT, "plain")).not.toContain(card);
 	});
 
 	it("attaches pi-patty-bg-tasks for the background shell, and leaves execute gated", () => {

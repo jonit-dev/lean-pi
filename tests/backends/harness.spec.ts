@@ -203,6 +203,36 @@ describe("PRD-008 Phase 3 — external harness workers", () => {
 		expect(second.result?.sessionId).toBe("ses_opencode_1");
 	});
 
+	it("AC-5: an exit-0 run that said nothing and changed nothing is a failure, not a silent success", async () => {
+		// The operator's turn "succeeded" with `opencode completed without a summary`,
+		// twice in a row on `continue`. The CLI had refused the model through its
+		// whitelist, on stderr, and the envelope still carried a session id — so
+		// nothing in the result said the request had never run.
+		const cli = installStubCli();
+		const { cwd } = fixtureRepo();
+		gitInit(cwd);
+		writeConfig(cwd, configFor(cli, "opencode"));
+		const registry = new BackendRegistry(loadConfig(cwd));
+		const backend = registry.byName("opencode")!;
+		const packet = { objective: OBJECTIVE, role: "strong" as const, files: [] };
+
+		const silent = setStubScript(cli.recordPath, { files: {}, summary: "", stderr: "opencode: model not allowed: anthropic/claude-haiku\n" });
+		const refused = await runHarness(backend, packet, { cwd });
+		silent();
+
+		expect(refused).toMatchObject({ status: "failed", failure: "exit" });
+		expect(refused.status === "failed" && refused.reason).toContain("model not allowed");
+
+		// A silent run that did change the workspace still completed: the empty
+		// summary is the only thing missing, and the files are the answer.
+		const wrote = setStubScript(cli.recordPath, { files: { "oc.txt": "opencode wrote this\n" }, summary: "", stderr: "opencode: model not allowed\n" });
+		const changed = await runHarness(backend, packet, { cwd });
+		wrote();
+
+		expect(changed.status).toBe("ok");
+		expect(changed.status === "ok" && changed.changedFiles).toEqual(["oc.txt"]);
+	});
+
 	it("AC-7: no vendor credential crosses the LeanPi boundary", async () => {
 		const cli = installStubCli();
 		const stub: StubBackend = await startStubBackend([

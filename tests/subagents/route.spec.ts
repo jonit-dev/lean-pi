@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { activate, loadConfig } from "../../src/index.js";
 import { clearRoutePins, setRoutePins } from "../../src/compiler/pins.js";
 import { registerSubagentRouting } from "../../src/subagents/route.js";
+import { setAgentDiscovery } from "../../src/subagents/agents.js";
 import { tempDir } from "../helpers/fixtures.js";
 
 const config = loadConfig(tempDir("leanpi-subroute-cfg-"), {
@@ -39,7 +40,11 @@ function setup(registered: (provider: string, id: string) => boolean = () => tru
 	return { fire, notify };
 }
 
-afterEach(() => clearRoutePins());
+afterEach(() => {
+	clearRoutePins();
+	// Also restores the real agent discovery and drops what it answered.
+	setAgentDiscovery(undefined);
+});
 
 describe("subagent model routing (PRD-049)", () => {
 	it("routes a plain call by the task's complexity and names the pick (AC-1, AC-3)", async () => {
@@ -66,6 +71,29 @@ describe("subagent model routing (PRD-049)", () => {
 		const { fire, notify } = setup((_, id) => id !== "m-quick");
 		expect("model" in (await fire({ agent: "worker", task: "fix the typo in the README label" }))).toBe(false);
 		expect(notify).toHaveBeenCalledWith("subagent worker → inherit (quick role has no native model)", "info");
+	});
+
+	it("declines an external-runner agent's model and still routes a native one (AC-1)", async () => {
+		// The bug this guards: `claude-code` is a bundled `external-cli` agent with no
+		// Pi registry to route into, and upstream refuses the call outright once a model
+		// is written for it — `uses runner.type='external-cli' and does not support: model
+		// override` — so every spawn of it failed, even the ones the model left unnamed.
+		const { fire, notify } = setup();
+		expect("model" in (await fire({ agent: "claude-code", task: "fix the race condition in the runtime lock" }))).toBe(false);
+		expect((await fire({ agent: "worker", task: "fix the race condition in the runtime lock" })).model).toBe("local/m-strong:high");
+		expect(notify).toHaveBeenCalledTimes(1);
+	});
+
+	it("leaves the model untouched for both agents when the lookup itself fails (AC-1)", async () => {
+		// The bug this guards: a discovery or resolve failure used to be swallowed and
+		// read as "native", so the hook wrote a model override into a child it could not
+		// identify — the one thing an external runner refuses the call over. An
+		// unreadable profile is not proof of a native child, so nothing is written.
+		const { fire, notify } = setup();
+		setAgentDiscovery(() => Promise.reject(new Error("pi-subagents is not installed")));
+		expect("model" in (await fire({ agent: "claude-code", task: "fix the race condition in the runtime lock" }))).toBe(false);
+		expect("model" in (await fire({ agent: "worker", task: "fix the race condition in the runtime lock" }))).toBe(false);
+		expect(notify).not.toHaveBeenCalled();
 	});
 
 	it("routes a subscription role through its CLI provider, not the backend's own name", async () => {

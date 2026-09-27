@@ -99,6 +99,8 @@ import { isModelRole, type BackendRef, type JevProvider, type LeanPiConfig, type
 import { traceChildStartup } from "./cli/startup-trace.js";
 import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
 import { registerSubagentRouting } from "./subagents/route.js";
+import { resetSubagentCard } from "./subagents/card.js";
+import { resetAgentRunners } from "./subagents/agents.js";
 
 /** PRD-044's answers; plain words, because not everyone knows what a PRD is. */
 const PRD_SUGGEST_YES = "Yes, write a plan first";
@@ -508,6 +510,10 @@ function installSessionHooks(
 	pi.on("session_start", async (event, ctx) => {
 		if (event.reason !== "startup") {
 			deps.surface.resetSessionState();
+			// A session's call signs and the agent profiles it read belong to the
+			// conversation that just went away (PRD-052).
+			resetSubagentCard();
+			resetAgentRunners();
 			// Manual survives a session switch; other route pins still reset.
 			const { model, previousModel } = routePins();
 			clearRoutePins();

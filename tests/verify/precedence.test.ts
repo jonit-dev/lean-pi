@@ -6,6 +6,7 @@
  * outcome rather than a constant. The table in AC-7 rejects a permissive
  * `default` arm by driving every member of the status union through the fold.
  */
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { aggregate, type VerificationStatus } from "../../src/verify/aggregate.js";
 import { registerVerifier, verifierOutcome } from "../../src/verify/descriptors.js";
@@ -68,7 +69,11 @@ describe("deterministic failure outranks any semantic answer (AC-5)", () => {
 				// The most permissive answer this site can give: the full suite too.
 				jev: jevStub("BROADER_SUITE_REQUIRED"),
 				exec: hybridExec(commands),
-				commands: { typecheck: `${TSC} --noEmit --strict ${typecheckTarget}` },
+				// `--typeRoots` inside the fixture: a bare `tsc <file>` auto-includes every
+				// ambient `@types` above the workspace, and the fixture lands in `/tmp`,
+				// which carries an unrelated project's — so a clean file failed a check
+				// that has to pass. Nothing the fixture compiles needs them.
+				commands: { typecheck: `${TSC} --noEmit --strict --typeRoots ${join(root, "types")} ${typecheckTarget}` },
 				touchedPaths,
 				diff: { files: [typecheckTarget] },
 				assertions: [{ source: "executor", text: "tests pass" }],

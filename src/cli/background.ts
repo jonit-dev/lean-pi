@@ -22,13 +22,49 @@
  * Every other registration — `bash_bg`, `jobs`, `job_decide`, `monitor`, Ctrl+B,
  * `/bg` — forwards untouched.
  */
+
+/** `pi-patty-bg-tasks`'s report of a command log that holds nothing yet. */
+const EMPTY_LOG = "(no output yet)";
+
+/** What a command that wrote nothing actually did. */
+const NO_OUTPUT = "(no output)";
+
+interface BackgroundToolResult {
+	content?: Array<{ type?: string; text?: string }>;
+}
+
 interface BackgroundTool {
 	name: string;
+	execute?: (...args: unknown[]) => Promise<BackgroundToolResult>;
 }
 
 export interface BackgroundPi {
 	registerTool(tool: BackgroundTool): void;
 	on(event: "session_start", handler: () => Promise<void>): void;
+}
+
+/**
+ * The package reads an empty command log as the sentinel `(no output yet)` and
+ * hands that sentinel straight back: on success it is the whole result, and on a
+ * non-zero exit it *is* the error message — the exit code is lost and "yet" reads
+ * as still running. The exit code is not recoverable here (upstream keeps it), so
+ * the report says what is true instead: a non-zero exit with nothing on it.
+ */
+function reportEmptyOutput(tool: BackgroundTool): BackgroundTool {
+	const execute = tool.execute;
+	if (execute === undefined) return tool;
+	return {
+		...tool,
+		async execute(...args: unknown[]): Promise<BackgroundToolResult> {
+			try {
+				const result = await execute.apply(tool, args);
+				return { ...result, content: result.content?.map((block) => (block.text === EMPTY_LOG ? { ...block, text: NO_OUTPUT } : block)) };
+			} catch (error) {
+				if (error instanceof Error && error.message === EMPTY_LOG) throw new Error("Command failed (non-zero exit) with no output");
+				throw error;
+			}
+		},
+	};
 }
 
 export function backgroundTasksAdapter(bundled: (pi: BackgroundPi) => void): (pi: BackgroundPi) => void {
@@ -51,7 +87,7 @@ export function backgroundTasksAdapter(bundled: (pi: BackgroundPi) => void): (pi
 		});
 		bundled(proxy);
 		pi.on("session_start", async () => {
-			if (bash !== undefined) pi.registerTool(bash);
+			if (bash !== undefined) pi.registerTool(reportEmptyOutput(bash));
 		});
 	};
 }
