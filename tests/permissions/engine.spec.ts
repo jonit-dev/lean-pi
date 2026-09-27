@@ -107,6 +107,17 @@ describe("PRD-017 Phase 1 — classification returns the whole scope set", () =>
 		expect(scopesOf("execute", { command: "npm test" }, root)).toEqual(["shell:npm test"]);
 	});
 
+	it("AC-3: a `/dev` redirect is a shell call, while a real device path stays external", () => {
+		// `find . 2>/dev/null` was refused as `external_dir:/dev/null` — the token
+		// splitter reads the redirect target as a path and it is outside the root, so
+		// the `external_dir` default (`deny`) refused the whole call. Only the shell's
+		// own targets are exempt; `/dev/sda` is a real read outside the root.
+		for (const command of ["find . -name X 2>/dev/null", "cmd >/dev/null 2>&1", "echo x >/dev/stderr", "ls 3</dev/stdin", "ls >/dev/tty", "ls 4</dev/fd/7"]) {
+			expect(scopesOf("execute", { command }, root)).toEqual([`shell:${command}`]);
+		}
+		expect(scopesOf("execute", { command: "cat /dev/sda" }, root).sort()).toEqual(["external_dir:/dev/sda", "shell:cat /dev/sda"]);
+	});
+
 	it("AC-14: an out-of-root path argument implicates external_dir; a relative sibling is read alone", () => {
 		expect(scopesOf("execute", { command: "cat ../../etc/shadow" }, root).sort()).toEqual([
 			"external_dir:../../etc/shadow",

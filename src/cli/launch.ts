@@ -123,6 +123,17 @@ export function foldCacheExtension(root: string = packageRoot()): string {
 }
 
 /**
+ * The `subagent` card under the compact UI, which renders `Subagent Subagent` for
+ * every child (PRD-052). Attached after that package for the same reason the fold
+ * cache is, and for the same reason as a source entry: the row it replaces is a
+ * prototype patch, and only jiti's module map resolves `@earendil-works/*` to the
+ * class the interactive mode renders with. `src/cli/subagent-card.ts` has the why.
+ */
+export function subagentCardExtension(root: string = packageRoot()): string {
+	return join(root, "extensions", "subagent-card", "index.ts");
+}
+
+/**
  * `pi-patty-bg-tasks`: Claude Code's background-task UX, on Pi's built-in bash.
  *
  * Pi's own `bash` blocks the turn until the command exits, so a dev server or an
@@ -196,6 +207,8 @@ export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "co
 		...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])
 			.map((entry) => dependencyDir(entry, root))
 			.filter((path): path is string => path !== undefined),
+		// Last, so the row it names sits above the compact UI's own row for `subagent`.
+		...(ui === "compact" ? [subagentCardExtension(root)] : []),
 	];
 }
 

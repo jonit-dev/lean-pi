@@ -7,6 +7,10 @@
  * turn and writes `provider/id:level` into the call's `model`, the one field
  * upstream reads a thinking level from. Upstream's own resolution still runs
  * whenever this declines, so routing can only refine a dispatch, never block it.
+ *
+ * PRD-052: an external runner is declined before classification (it is a command,
+ * not a Pi child), and every call's card title is recorded here, because this hook
+ * is where the routed model — the one the card names — is decided.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { classifyExecution, type ComplexityInput } from "../compiler/classify.js";
@@ -19,6 +23,8 @@ import { ownsExecutionLoop } from "../commands/turn-lanes.js";
 import { resolveRole } from "../core/roles.js";
 import type { LeanPiConfig } from "../core/types.js";
 import { scoutTask } from "../scout/index.js";
+import { agentRunner } from "./agents.js";
+import { recordSubagentCard } from "./card.js";
 
 export interface SubagentRoutingDeps {
 	config: LeanPiConfig;
@@ -30,15 +36,20 @@ export function registerSubagentRouting(pi: Pick<ExtensionAPI, "on">, deps: Suba
 	pi.on("tool_call", async (event, ctx) => {
 		if (event.toolName !== "subagent") return;
 		const input = event.input as Record<string, unknown>;
-		// Declined without a JEV call: an explicit model is the parent's or the
-		// operator's choice; an async child cannot see LeanPi's in-process
-		// providers (PRD-041); a `/model` pin means the operator picked by hand
-		// (PRD-048); an external harness has no Pi registry to route into. A
-		// workflow call carries no single task, so its steps keep upstream's chain.
-		if (typeof input.task !== "string" || input.model !== undefined || input.async === true) return;
-		if (routePins().model !== undefined || ownsExecutionLoop(deps.config)) return;
-		const agent = typeof input.agent === "string" ? input.agent : "child";
 		try {
+			// Declined without a JEV call: an explicit model is the parent's or the
+			// operator's choice; an async child cannot see LeanPi's in-process
+			// providers (PRD-041); a `/model` pin means the operator picked by hand
+			// (PRD-048); an external harness has no Pi registry to route into. A
+			// workflow call carries no single task, so its steps keep upstream's chain.
+			if (typeof input.task !== "string" || input.model !== undefined || input.async === true) return;
+			if (routePins().model !== undefined || ownsExecutionLoop(deps.config)) return;
+			const agent = typeof input.agent === "string" ? input.agent : "child";
+			// An external runner is a command, not a Pi child, and pi-subagents refuses
+			// the whole call when one carries a model override. A profile that could not
+			// be read is not a proven native child either, so both decline and keep the
+			// old path.
+			if ((await agentRunner(deps.cwd, agent)) !== "native") return;
 			const { complexity } = await classifyExecution({ client: deps.client, request: input.task, packet: scoutTask(deps.cwd, input.task), config: deps.config });
 			const role = matrixDefault(false, complexity, "R0").executor_class;
 			const ref = resolveRole(deps.config, role);
@@ -58,6 +69,11 @@ export function registerSubagentRouting(pi: Pick<ExtensionAPI, "on">, deps: Suba
 		} catch (error) {
 			// An unresolved role or a scout failure leaves the call to upstream.
 			process.stderr.write(`leanpi: subagent routing skipped: ${error instanceof Error ? error.message : String(error)}\n`);
+		} finally {
+			// The card names this child from what routing decided, so it is recorded
+			// on every path, after the decision (PRD-052). A card that cannot be named
+			// is no reason to block the call: Pi treats a throwing hook as a refusal.
+			if (typeof input.task === "string") await recordSubagentCard(event.toolCallId, input, ctx.modelRegistry, deps.cwd).catch(() => undefined);
 		}
 	});
 }

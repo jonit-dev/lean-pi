@@ -683,6 +683,21 @@ export async function runHarness(backend: RegisteredBackend, packet: WorkerTaskP
 		}
 
 		const changed = before === null ? null : changedPathsSince(before, deps.cwd);
+		// An exit-0 run with no summary, no structured output and no change to the
+		// workspace is a vendor that refused the request and said so on stderr: its
+		// result envelope is the session id alone. Reporting `completed without a
+		// summary` there turned a rejected model into a turn the operator had to
+		// `continue` past, twice, with the CLI's own reason dropped. The exit code is
+		// 0 because the CLI considered its refusal clean; stderr is the diagnostic.
+		if (envelope.summary.length === 0 && envelope.structured === undefined && changed !== null && changed.length === 0) {
+			return {
+				status: "failed",
+				failure: "exit",
+				reason: failureReason(result.code, result.stderr, envelope),
+				exitCode: result.code,
+				sessionId: envelope.sessionId,
+			};
+		}
 		return {
 			status: "ok",
 			changedFiles: changed ?? [],

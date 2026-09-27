@@ -149,6 +149,9 @@ if (recordPath) {
 
 // ── 5. vendor scripts that are not a result ───────────────────────────────────
 const mode = (script.modes && script.modes[vendor]) ?? script.mode ?? "ok";
+// A diagnostic on stderr with the run still succeeding: what a CLI that refused
+// the model does while exiting 0.
+if (typeof script.stderr === "string") process.stderr.write(script.stderr);
 if (mode === "hang") {
 	// A vendor that accepts the request and never answers: measured on this
 	// machine, `opencode run` with an exhausted plan quota does exactly this.
