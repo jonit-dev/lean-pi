@@ -133,6 +133,46 @@ class JevResponseError extends Error {}
  */
 export const JEV_REQUEST_TIMEOUT_MS = 20_000;
 
+/**
+ * The hosted service answers most requests in ~100ms, but a request that lands
+ * on a slow replica takes ~11s — and the compile sites run three deep before Pi
+ * draws the user's message, so one unlucky turn sat 30s with nothing on screen.
+ * Slowness is per request, not per session: the same question sent again
+ * usually lands elsewhere. So a request unanswered after `JEV_HEDGE_MS` is sent
+ * again, up to `JEV_HEDGE_ATTEMPTS` in flight, and the first answer wins. The
+ * turn keeps JEV's decision; only the fallback path loses anything.
+ */
+export const JEV_HEDGE_MS = 500;
+const JEV_HEDGE_ATTEMPTS = 5;
+
+function hedged<T>(attempt: () => Promise<T>): Promise<T> {
+	return new Promise((resolve, reject) => {
+		let launched = 0;
+		let failed = 0;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const launch = (): void => {
+			launched += 1;
+			if (launched < JEV_HEDGE_ATTEMPTS) timer = setTimeout(launch, JEV_HEDGE_MS);
+			attempt().then(
+				(value) => {
+					clearTimeout(timer);
+					resolve(value);
+				},
+				(error: unknown) => {
+					failed += 1;
+					// A request that errors fast is a real failure, not a slow one: the
+					// site falls back now instead of hedging into the same error.
+					if (failed === launched) {
+						clearTimeout(timer);
+						reject(error);
+					}
+				},
+			);
+		};
+		launch();
+	});
+}
+
 function defaultTransport({ url, headers, body }: JevTransportRequest): Promise<JevTransportResponse> {
 	return fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(JEV_REQUEST_TIMEOUT_MS) }).then(async (response) => ({
 		status: response.status,
@@ -271,11 +311,13 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			},
 			salt,
 		);
-		const response = await transport({
+		const request = {
 			url: target.endpoint,
 			headers: { authorization: `Bearer ${target.key}`, "content-type": "application/json" },
 			body: serializeBody(body),
-		});
+		};
+		// A local Laya model is one process: a second request only doubles its load.
+		const response = provider?.name === "laya" ? await transport(request) : await hedged(() => transport(request));
 		reachable = response.status >= 200 && response.status < 300;
 		if (!reachable) {
 			// The status alone is not actionable; the body is redacted through the
