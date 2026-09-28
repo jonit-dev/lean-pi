@@ -40,6 +40,10 @@ export interface TelemetryAggregate {
 	verifiedSuccesses: number;
 	/** §3's objective; `null` when no run succeeded, never `Infinity`/`NaN`. */
 	costPerVerifiedSuccess: number | null;
+	/** Pi's-loop completions on runs LeanPi did not gate (a native config). */
+	completedTurns: number;
+	/** Cost over completed loop turns; `null` when none completed. */
+	costPerCompletedTurn: number | null;
 	/** §25's split: what metered APIs billed versus what pooled harnesses ran. */
 	byBackendType: Record<string, CallTotals>;
 	/** FR-055's split, which is the one that explains a zero `api_usd`. */
@@ -66,6 +70,7 @@ export function aggregateRuns(
 	let quotaUsd = 0;
 	let effectiveCostUsd = 0;
 	let verifiedSuccesses = 0;
+	let completedTurns = 0;
 	let totalTokens = 0;
 
 	for (const run of runs) {
@@ -74,6 +79,7 @@ export function aggregateRuns(
 		quotaUsd += run.cost?.estimated_quota_cost ?? 0;
 		effectiveCostUsd += run.cost?.effective_cost ?? 0;
 		if (run.result?.success === true) verifiedSuccesses += 1;
+		if (run.result?.loop === "completed") completedTurns += 1;
 		totalTokens += (run.usage?.input_tokens ?? 0) + (run.usage?.output_tokens ?? 0);
 		for (const call of run.calls ?? []) {
 			for (const bucket of [byBackendType[call.backend_type], byBilling[call.billing ?? "metered"]]) {
@@ -109,6 +115,10 @@ export function aggregateRuns(
 		effectiveCostUsd,
 		verifiedSuccesses,
 		costPerVerifiedSuccess: verifiedSuccesses === 0 ? null : effectiveCostUsd / verifiedSuccesses,
+		// The native-loop numerator: a completed turn where no gate ran, kept out
+		// of `verifiedSuccesses` so the two metrics never blur.
+		completedTurns,
+		costPerCompletedTurn: completedTurns === 0 ? null : effectiveCostUsd / completedTurns,
 		byBackendType,
 		byBilling,
 		jev: {

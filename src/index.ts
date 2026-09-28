@@ -78,9 +78,10 @@ import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
-import { resolveRole } from "./core/roles.js";
+import { resolveRole, resolveRoleAvoiding } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, manualStatusLine, statusLine } from "./cli/statusline.js";
 import { learnedModels, piProviderFor, registerCliModel, registerSubscriptionModels, type CliProviderDeps } from "./backends/cli-provider.js";
+import { classifyAssistantFailure, assistantOutcome, SessionLimits } from "./backends/session-limits.js";
 import { detectSubscriptions } from "./backends/subscriptions.js";
 import { restoreRememberedModel, writeRememberedModel } from "./commands/model.js";
 import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
@@ -613,10 +614,13 @@ function installTurnHooks(
 ): void {
 	// The run that is still open: a compiled turn's collector and context, held from
 	// `before_agent_start` until `agent_end` reports what the loop spent.
-	let pendingRun: { collector: RunCollector; context: TurnContext } | undefined;
+	let pendingRun: { collector: RunCollector; context: TurnContext; backend?: string; pinned?: boolean } | undefined;
 	// The Pi-driven path's last settled turn: `agent_end` holds what the loop
 	// produced, and `agent_settled` — after Pi's own telemetry sink — writes it.
 	let settledTurn: { ask: string; did: string } | undefined;
+	// Which backend Pi's own loop just failed on (a 402/429), so the next turn's
+	// role resolution walks the ladder past it instead of failing the same way.
+	const sessionLimits = new SessionLimits();
 
 	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
 	// configuration).
@@ -771,12 +775,23 @@ function installTurnHooks(
 		const manualPin = routePins().model;
 		// What Pi will actually run this turn, when Pi is the one running it.
 		let installed: string | undefined;
+		// The backend the turn's role resolved to, kept for the limit memory below.
+		let chosenBackend: string | undefined;
 		// The level the session ends the handler at, which is what the footer must
 		// name: the compiled effort only when it was applied.
 		let effort: ThinkingLevel | undefined;
 		// Install a native Manual pin even when compilation deliberately returned no contract.
 		if (!owns && (manualPin || context.contract)) {
-			const ref = manualPin ?? resolveRole(deps.config, context.contract!.routing.executor_class);
+			// A pin is the operator's explicit choice and is never rerouted. Without
+			// one, a backend that refused the previous turn is skipped down the role
+			// ladder, so a 429 on the session model costs one failed turn, not the
+			// session.
+			const chosen = manualPin ? undefined : resolveRoleAvoiding(deps.config, context.contract!.routing.executor_class, (backend) => sessionLimits.isLimited(backend));
+			const ref = manualPin ?? chosen!.ref;
+			chosenBackend = ref.backend;
+			if (chosen && chosen.from !== context.contract!.routing.executor_class) {
+				ctx.ui.notify(`session model fell back to ${ref.backend}/${ref.model}: ${context.contract!.routing.executor_class} backend was rate-limited`, "warning");
+			}
 			const model = ctx.modelRegistry.find(manualPin ? piProviderFor(manualPin) : ref.backend, ref.model);
 			// `setModel` answers whether it took the model. Ignoring that answer
 			// let the footer name a model the session had refused.
@@ -860,7 +875,7 @@ function installTurnHooks(
 			// the executor this handler returns *before* the loop spends anything, so
 			// emitting now would write a zeroed row for every native turn. The holder
 			// keeps the run open until the loop reports what it used.
-			pendingRun = { collector, context };
+			pendingRun = { collector, context, ...(chosenBackend ? { backend: chosenBackend } : {}), pinned: manualPin !== undefined };
 		} else {
 			setLaneCollector(undefined);
 		}
@@ -907,13 +922,37 @@ function installTurnHooks(
 		pendingRun = undefined;
 		setLaneCollector(undefined);
 		if (!run) return;
+		// A 402/429 the loop just hit is remembered so the next turn resolves past
+		// that backend. An operator interrupt is not one: `classifyAssistantFailure`
+		// refuses Pi's "This operation was aborted" text, so pressing Esc never marks
+		// a healthy provider limited. A `/model` pin is never rerouted, so it is not
+		// tracked either.
+		if (!run.pinned && run.backend !== undefined) {
+			for (const message of event.messages) {
+				if ((message as { role?: unknown }).role !== "assistant") continue;
+				const failure = classifyAssistantFailure(message as { stopReason?: unknown; errorMessage?: unknown });
+				if (failure?.kind === "limit") sessionLimits.mark(run.backend);
+			}
+		}
 		const spend = callsFromMessages(event.messages, run.context.modelRef);
 		for (const call of spend.calls) run.collector.add(call);
 		run.collector.noteToolCall(spend.toolCalls);
 		// The paths, so `file_reads`/`repeated_reads` are a measurement rather than a
 		// constant zero: the collector collapses the repeats the model asked for.
 		for (const path of spend.fileReads) run.collector.noteFileRead(path);
-		emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdictOf(run.context), {
+		// With Pi's loop as the executor no gate runs, so `success` is false for every
+		// native turn and §3's objective had no numerator. Record what the loop did
+		// separately — a completed loop is not a verified success, and an interrupt
+		// is `aborted`, not the `error` Pi's own session file writes.
+		const verdict = verdictOf(run.context) as RunVerdict & { loop?: "completed" | "aborted" | "error" };
+		if (run.context.executor === undefined) {
+			const last = [...event.messages].reverse().find((message) => (message as { role?: unknown }).role === "assistant");
+			if (last) {
+				const outcome = assistantOutcome(last as { stopReason?: unknown; errorMessage?: unknown });
+				if (outcome === "completed" || outcome === "aborted" || outcome === "error") verdict.loop = outcome;
+			}
+		}
+		emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdict, {
 			cwd: deps.cwd,
 			cost: resolveCostConfig(deps.config),
 			...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
@@ -1622,7 +1661,7 @@ export {
 } from "./core/instructions/prefix.js";
 export type { PrefixVariant } from "./core/types.js";
 export { ConfigError, CONFIG_FILENAME, configPathFor, loadConfig, toPiConfigValue, writeSkillsState } from "./core/config.js";
-export { resolveRole, ROLE_FALLBACK_CHAINS, UnresolvedRoleError } from "./core/roles.js";
+export { resolveRole, resolveRoleAvoiding, ROLE_FALLBACK_CHAINS, UnresolvedRoleError } from "./core/roles.js";
 export { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, baselineToolDefinitions, compactUiAttached, registerBaselineTools } from "./core/tools.js";
 export {
 	clearLanes,

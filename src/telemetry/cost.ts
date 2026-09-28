@@ -35,6 +35,11 @@ export function renderEffectiveCostPerSuccess(aggregate: TelemetryAggregate): st
 	return aggregate.costPerVerifiedSuccess === null ? "n/a" : money(aggregate.costPerVerifiedSuccess);
 }
 
+/** The native-loop counterpart: cost over turns Pi's loop completed, no gate involved. */
+export function renderEffectiveCostPerCompletedTurn(aggregate: TelemetryAggregate): string {
+	return aggregate.costPerCompletedTurn === null ? "n/a" : money(aggregate.costPerCompletedTurn);
+}
+
 /**
  * The spend no rate card priced, printed beside a total instead of folded into
  * it. These calls burned metered tokens and recorded $0, so a report that only
@@ -98,6 +103,8 @@ export function renderCostReport(runs: readonly RunTelemetry[], aggregate: Telem
 		...renderUnmeasured(runs),
 		`verified successes: ${aggregate.verifiedSuccesses}`,
 		`effective cost per verified success: ${renderEffectiveCostPerSuccess(aggregate)}`,
+		`completed turns: ${aggregate.completedTurns}`,
+		`effective cost per completed turn: ${renderEffectiveCostPerCompletedTurn(aggregate)}`,
 		"note: effective cost is a configured post-run valuation in USD, not a provider invoice",
 	].join("\n");
 }

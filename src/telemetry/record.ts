@@ -62,7 +62,17 @@ export interface RunResult {
 	proof_gate: string;
 	reviewer: string;
 	success: boolean;
+	/**
+	 * Pi's own loop outcome when LeanPi ran no executor lane (a native config),
+	 * so §3's objective has a numerator where no proof gate exists. Kept apart
+	 * from `success`, which still means "the gate passed": an aborted or errored
+	 * loop is never a success. Absent when LeanPi owned the turn.
+	 */
+	loop?: LoopOutcome;
 }
+
+/** What Pi's loop did: the loop's verdict, never a gate's. */
+export type LoopOutcome = "completed" | "aborted" | "error";
 
 /** A site-level answer: one value, a serialized list for a multi-question site, or null. */
 export type JevAnswer = string | number | boolean | null | Array<string | number | null>;

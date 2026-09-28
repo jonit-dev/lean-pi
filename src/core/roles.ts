@@ -47,3 +47,38 @@ export function resolveRole(config: LeanPiConfig, role: ModelRole): BackendRef {
 	}
 	throw new UnresolvedRoleError(role);
 }
+
+/** The role whose chain entry answered an avoidance request. */
+export interface RoleAvoidance {
+	ref: BackendRef;
+	/** `role` when nothing was avoided; the ladder entry that filled it otherwise. */
+	from: ModelRole;
+}
+
+/**
+ * The role's backend, walked down `ROLE_FALLBACK_CHAINS` past any backend the
+ * caller calls unavailable. Used when a provider has just refused the session
+ * (a 402/429 Pi's own loop had nothing to fall back to), so the next turn runs
+ * on a backend that can still answer instead of failing the same way again.
+ *
+ * A backend two roles share is skipped for both, which is the point: `balanced`
+ * and `quick` on one provider reach `strong` when that provider is down. When
+ * every entry is unavailable the requested role is returned unchanged — the
+ * caller's fallback is not this function's to invent.
+ */
+export function resolveRoleAvoiding(
+	config: LeanPiConfig,
+	role: ModelRole,
+	unavailable: (backend: string) => boolean,
+): RoleAvoidance {
+	for (const candidate of ROLE_FALLBACK_CHAINS[role]) {
+		let ref: BackendRef;
+		try {
+			ref = resolveRole(config, candidate);
+		} catch {
+			continue;
+		}
+		if (!unavailable(ref.backend)) return { ref, from: candidate };
+	}
+	return { ref: resolveRole(config, role), from: role };
+}

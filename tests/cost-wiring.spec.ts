@@ -142,8 +142,10 @@ describe("PRD-028 follow-up — the wiring the cost audit found open", () => {
 			//   (1000*3 + 50*15)/1e6 + (900*3 + 200*0.3 + 100*3.75 + 60*15)/1e6
 			expect(rows[0]!.cost.api_usd).toBe(0.007785);
 			// The native path runs no automatic gate chain, and the record says so
-			// rather than implying parity with an executor-lane turn.
-			expect(rows[0]!.result).toEqual({ verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: false });
+			// rather than implying parity with an executor-lane turn. `loop` records
+			// what Pi's loop did (a completed answer), which is what gives §3's
+			// objective a numerator here; `success` still means "the gate passed".
+			expect(rows[0]!.result).toEqual({ verification: "not_run", proof_gate: "not_run", reviewer: "not_run", success: false, loop: "completed" });
 		} finally {
 			session.session.dispose();
 			await backend.close();

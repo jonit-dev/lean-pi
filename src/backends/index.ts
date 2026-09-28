@@ -19,6 +19,16 @@ export {
 	type RunHarnessDeps,
 } from "./harness.js";
 export { DEFAULT_NATIVE_BUDGET, nativeStop, runNative, type NativeStop, type RunNativeDeps } from "./native.js";
+export {
+	assistantOutcome,
+	classifyAssistantFailure,
+	DEFAULT_LIMIT_COOLDOWN_MS,
+	SessionLimits,
+	type AssistantFailure,
+	type AssistantFailureKind,
+	type AssistantOutcome,
+	type SessionLimitsOptions,
+} from "./session-limits.js";
 export { detectSubscriptions, subscriptionDeviations, type SubscriptionState } from "./subscriptions.js";
 export {
 	BackendRegistry,
