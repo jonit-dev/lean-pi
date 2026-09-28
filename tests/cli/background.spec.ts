@@ -12,8 +12,9 @@
  * The tool is the real bundled one, not a stand-in: the sentinel comes from the
  * package's log reader, and a fake `execute` would prove nothing about it.
  */
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { backgroundTasksAdapter, type BackgroundPi } from "../../src/cli/background.js";
+import { backgroundTasksAdapter, compactUiAdapter, type BackgroundPi } from "../../src/cli/background.js";
 
 type BundledTool = {
 	name: string;
@@ -51,5 +52,42 @@ describe("a command with no output (AC-4)", () => {
 
 		const done = await bash.execute!("call-2", { command: "true" }, undefined, undefined, SESSION);
 		expect(done.content?.map((block) => block.text)).toEqual(["(no output)"]);
+	}, 30_000);
+});
+
+/**
+ * The backgrounding `bash` wins the name, so under the compact UI it used to
+ * render with Pi's own row: every command printed in full, wrapped over half the
+ * screen. The compact UI's `bash` row — one headline, script behind Ctrl+O — is
+ * handed to it instead, through the compact UI's adapter.
+ */
+describe("the backgrounding bash under the compact UI", () => {
+	it("renders the compact UI's one-line row, not the full command", async () => {
+		initTheme("dark");
+		const tools: Array<{ name: string; renderCall?: (...args: unknown[]) => { render(width: number): string[] } }> = [];
+		const starts: Array<(event: unknown, ctx: unknown) => Promise<void>> = [];
+		const raw: Record<string, unknown> = {
+			registerTool: (tool: (typeof tools)[number]) => void tools.push(tool),
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => event === "session_start" && starts.push(handler),
+			getAllTools: () => [],
+		};
+		const pi = new Proxy(raw, { get: (target, key: string) => target[key] ?? (() => undefined) });
+		// Launch order: the background adapter ahead of the compact UI.
+		const background = (await import("pi-patty-bg-tasks/index.ts")).default as unknown as (pi: BackgroundPi) => void;
+		backgroundTasksAdapter(background)(pi as unknown as BackgroundPi);
+		const compact = (await import("pi-claude-code-ui/extensions/index.ts")).default as unknown as (pi: unknown) => void;
+		compactUiAdapter(compact)(pi);
+		for (const start of starts) await start({}, { sessionManager: { getEntries: () => [] } });
+
+		// The runtime owner is the first `bash` registered after load: the adapter's.
+		const bash = tools.filter((tool) => tool.name === "bash").at(-1);
+		const tail = "for w in a b c d e f g; do echo $w; done";
+		const command = `cd /tmp && gh pr list --state open --json number,mergeStateStatus --limit 50 --jq '.[] | .number' | sort -n; echo "=== branches ==="; ${"x ".repeat(120)}${tail}`;
+		const theme = { fg: (_key: string, text: string) => text, bg: (_key: string, text: string) => text, bold: (text: string) => text };
+		const row = bash!.renderCall!({ command }, theme, { lastComponent: undefined, state: {}, argsComplete: true, expanded: false, cwd: "/tmp", toolCallId: "call-1", args: { command } });
+		const text = row.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		expect(text).toContain("Bash");
+		expect(text).not.toContain(command);
+		expect(text.split("\n").filter((line) => line.trim() !== "")).toHaveLength(1);
 	}, 30_000);
 });

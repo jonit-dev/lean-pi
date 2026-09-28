@@ -17,8 +17,8 @@
  * So the factory runs against a `Proxy` that holds its `bash` back and registers
  * it on `session_start`, after the load-time check, and the launcher attaches the
  * adapter ahead of the compact UI so it is the first owner. The compact UI's
- * bash-row renderer lives on its own definition, so this `bash` renders with Pi's
- * own bash rows (the definition the package spreads), as under `--ui plain`.
+ * bash row lives on its own, shadowed definition, so `compactUiAdapter` hands it
+ * over and this `bash` wears it; under `--ui plain` it keeps Pi's own rows.
  * Every other registration — `bash_bg`, `jobs`, `job_decide`, `monitor`, Ctrl+B,
  * `/bg` — forwards untouched.
  */
@@ -36,6 +36,8 @@ interface BackgroundToolResult {
 interface BackgroundTool {
 	name: string;
 	execute?: (...args: unknown[]) => Promise<BackgroundToolResult>;
+	renderCall?: unknown;
+	renderResult?: unknown;
 }
 
 export interface BackgroundPi {
@@ -87,7 +89,42 @@ export function backgroundTasksAdapter(bundled: (pi: BackgroundPi) => void): (pi
 		});
 		bundled(proxy);
 		pi.on("session_start", async () => {
-			if (bash !== undefined) pi.registerTool(reportEmptyOutput(bash));
+			if (bash !== undefined) pi.registerTool({ ...reportEmptyOutput(bash), ...compactBashRow() });
 		});
+	};
+}
+
+/**
+ * The compact UI's own `bash` row, handed from its adapter to this one.
+ *
+ * The backgrounding `bash` wins the name, and with it the row: Pi draws a tool
+ * with the definition that runs, so the compact UI's row sat on a shadowed
+ * definition and every command printed in full. The compact UI loads after this
+ * adapter, so its row is stashed at load and picked up on `session_start`.
+ */
+const COMPACT_BASH_ROW = Symbol.for("leanpi:compact-bash-row");
+
+type Row = Pick<BackgroundTool, "renderCall" | "renderResult">;
+
+function compactBashRow(): Row | undefined {
+	return (globalThis as Record<symbol, Row | undefined>)[COMPACT_BASH_ROW];
+}
+
+/** Runs `pi-claude-code-ui` unchanged, keeping a copy of its `bash` row. */
+export function compactUiAdapter<Pi extends { registerTool(tool: BackgroundTool): void }>(bundled: (pi: Pi) => void): (pi: Pi) => void {
+	return (pi: Pi) => {
+		const proxy = new Proxy(pi, {
+			get(target, property) {
+				if (property === "registerTool") {
+					return (tool: BackgroundTool) => {
+						if (tool.name === "bash") (globalThis as Record<symbol, Row>)[COMPACT_BASH_ROW] = { renderCall: tool.renderCall, renderResult: tool.renderResult };
+						target.registerTool(tool);
+					};
+				}
+				const value = Reflect.get(target, property, target);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		});
+		bundled(proxy);
 	};
 }

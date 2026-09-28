@@ -206,7 +206,10 @@ export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "co
 		...(background === undefined ? [] : [background]),
 		...(ui === "compact" ? COMPACT_UI_EXTENSIONS : [])
 			.map((entry) => dependencyDir(entry, root))
-			.filter((path): path is string => path !== undefined),
+			.filter((path): path is string => path !== undefined)
+			// The package's entry through LeanPi's adapter, which hands its `bash` row
+			// to the backgrounding `bash` (`src/cli/background.ts`).
+			.map((path) => (path.endsWith(join("extensions", "index.ts")) ? join(root, "extensions", "compact-ui", "index.ts") : path)),
 		// Last, so the row it names sits above the compact UI's own row for `subagent`.
 		...(ui === "compact" ? [subagentCardExtension(root)] : []),
 	];

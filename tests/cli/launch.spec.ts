@@ -76,12 +76,15 @@ describe("the leanpi launcher", () => {
 		// installed one has it (PRD-052).
 		mkdirSync(join(root, "extensions", "subagent-card"), { recursive: true });
 		writeFileSync(join(root, "extensions", "subagent-card", "index.ts"), "export {};\n");
+		mkdirSync(join(root, "extensions", "compact-ui"), { recursive: true });
+		writeFileSync(join(root, "extensions", "compact-ui", "index.ts"), "export {};\n");
 		expect(existsSync(join(root, "node_modules"))).toBe(false);
 		expect(resolvePiCli(root)).toBe(realpathSync(join(consumer, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")));
 		// The hoisted extensions are found and every path handed to Pi exists.
-		const compactUi = realpathSync(join(consumer, "node_modules", "pi-claude-code-ui", "extensions", "index.ts"));
+		const spinner = realpathSync(join(consumer, "node_modules", "pi-claude-code-ui", "extensions", "spinner.ts"));
 		const plan = launchPlan([], root);
-		expect(plan.bundled).toContain(compactUi);
+		expect(plan.bundled).toContain(spinner);
+		expect(plan.bundled).toContain(join(root, "extensions", "compact-ui", "index.ts"));
 		for (const path of plan.bundled) expect(existsSync(path)).toBe(true);
 	});
 
