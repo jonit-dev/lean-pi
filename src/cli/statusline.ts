@@ -177,8 +177,8 @@ export function statusLine({ config, contract, role, model: running, effort: app
 		provider = split?.[0];
 	} else {
 		const status = roleStatus(config, resolvedRole);
-		// A score under the floor, not a price over the ceiling: since PRD-053 a bound
-		// model can carry a price-only gap, and "below floor" would misname it.
+		// A score under the floor, not a price over the ceiling: a pinned model can
+		// carry a price-only gap, and "below floor" would misname it.
 		if (status.gap !== undefined && status.gap.best_available !== null && status.gap.best_available < status.gap.requested) shortfall = `⚠ below ${resolvedRole} floor`;
 		try {
 			const ref = resolveRole(config, resolvedRole);
