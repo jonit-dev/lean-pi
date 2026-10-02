@@ -151,8 +151,10 @@ export async function classifyExecution({ client, request, packet, config }: Com
 	const unanswered = COMPLEXITY_QUESTIONS.some((question) => question.kind === "Choice" && !results.some((result) => result.questionId === question.id));
 	if (client.fallbackCount() > before || unanswered || !results.every((result) => accept(result, "normal"))) {
 		// Conservative: MEDIUM with no readable marker, a band when the packet shows one.
-		const answeredInPart = unanswered && client.fallbackCount() === before;
-		const band = answeredInPart ? partialAnswerBand(request, packet) : heuristicBand(request, packet);
+		// `unanswered` alone marks the partial answer: this site's own fallback
+		// answers every question, and `fallbackCount` is shared with the gate and
+		// review-risk sites asked in parallel.
+		const band = unanswered ? partialAnswerBand(request, packet) : heuristicBand(request, packet);
 		return { band, complexity: COMPLEXITY_BY_BAND[band], fallbackUsed: true, confidence: 0, tokens: zero() };
 	}
 	const tokens = client.lastUsage?.() ?? zero();
