@@ -1,0 +1,57 @@
+# Golden config: the operator's global config as of 2026-09-22 (secrets
+# removed) — the shape that turned every normal Auto turn into a headless
+# `claude -p` in v0.1.10: `balanced` bound to a vendor CLI beside a native model.
+# STUB_* are substituted by the spec.
+backends:
+  claude:
+    type: external_harness
+    vendor: claude
+    quota_class: scarce-premium
+    command: STUB_CLAUDE
+  codex:
+    type: external_harness
+    vendor: codex
+    quota_class: premium
+    command: STUB_CODEX
+  opencode-go:
+    type: native
+    baseUrl: STUB_URL
+    api: openai-completions
+    apiKey: sk-stub
+    reasoning: true
+    compat:
+      thinkingFormat: deepseek
+    contextWindow: 1000000
+    maxTokens: 32000
+    cost:
+      input: 0.15
+      output: 0.6
+      cacheRead: 0.003
+  opencode:
+    type: external_harness
+    command: STUB_OPENCODE
+models:
+  quick:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  balanced:
+    backend: claude
+    model: opus[1m]
+  strong:
+    backend: claude
+    model: opus
+  specialist:
+    backend: claude
+    model: claude-opus-5
+  review_quick:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  review_strong:
+    backend: claude
+    model: claude-opus-5
+jev:
+  mode: STUB_JEV_MODE
+capability:
+  roles:
+    strong:
+      pin: opus
