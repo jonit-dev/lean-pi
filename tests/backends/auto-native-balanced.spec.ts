@@ -15,9 +15,9 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { clearLanes, type LeanPiSession } from "../../src/index.js";
-import { clearRoutePins } from "../../src/compiler/pins.js";
+import { clearRoutePins, routePins } from "../../src/compiler/pins.js";
 import { loadConfig } from "../../src/core/config.js";
-import { bootHarnessSession, fixtureRepo, nativeBackend, tempDir } from "../helpers/fixtures.js";
+import { bindHeadlessUI, bootHarnessSession, fixtureRepo, nativeBackend, tempDir } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend } from "../helpers/stub-backend.js";
 import { installStubCli, setStubScript } from "./helpers.js";
 
@@ -35,7 +35,7 @@ afterEach(async () => {
 
 describe("Auto on the operator's config shape", () => {
 	it("a normal turn runs the native deepseek in Pi's loop, not the Claude CLI bound to balanced", async () => {
-		native = await startStubBackend([{ text: "answered by deepseek" }]);
+		native = await startStubBackend([{ text: "answered by deepseek" }, { text: "answered by deepseek again" }]);
 		const cli = installStubCli();
 		restore = setStubScript(cli.recordPath, { summary: "answered by opus" });
 		const { cwd, agentDir } = fixtureRepo();
@@ -67,6 +67,17 @@ describe("Auto on the operator's config shape", () => {
 
 		expect(session.session.model).toMatchObject({ provider: "opencode-go", id: "deepseek-v4.1-flash" });
 		expect(native.requests.map((request) => request.model)).toEqual(["deepseek-v4.1-flash"]);
+		expect(cli.records()).toHaveLength(0);
+
+		// Mid-session switch to Manual on the native model. A HIGH task — which Auto
+		// routes to `strong: claude/opus` — must stay on the pin, in Pi's own loop.
+		await bindHeadlessUI(session);
+		await session.session.prompt("/model opencode-go:deepseek-v4.1-flash");
+		expect(routePins().model).toMatchObject({ backend: "opencode-go", model: "deepseek-v4.1-flash" });
+		await session.session.prompt("fix the race condition in the scheduler");
+
+		expect(session.session.model).toMatchObject({ provider: "opencode-go", id: "deepseek-v4.1-flash" });
+		expect(native.requests.map((request) => request.model)).toEqual(["deepseek-v4.1-flash", "deepseek-v4.1-flash"]);
 		expect(cli.records()).toHaveLength(0);
 	}, 60_000);
 });

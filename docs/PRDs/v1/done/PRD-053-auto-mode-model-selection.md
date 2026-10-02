@@ -57,6 +57,7 @@ Decisions from the 2026-10-01 interview, implemented at the shared seams so ever
 - 2026-10-01 (Joao): review/proof gate in Auto on native configs — fix the docs, not the code.
 - 2026-10-01 (Joao): config layers — global base, project overrides the keys it sets.
 - 2026-10-01 (agent, unobjected assumption): unavailable class steps down one rung; `/route reset` keeps a `/model` pin. Subscription availability reading the static binding is moot once bindings win.
+- 2026-10-02 (Joao): **AC-1 reverted.** With bindings final, the operator's global `balanced: claude/opus[1m]` (written 2026-09-22, hidden by the ranking until v0.1.10) sent every normal Auto turn to a headless `claude -p` run that shows nothing until done — live: 35 s of silence, then one blob. The ranking picks a role's model again (v0.1.9 behaviour); `capability.roles.<role>.pin` forces one. Regression guard: `tests/backends/auto-native-balanced.spec.ts` (Auto turn on native deepseek, then a mid-session `/model` pin holds a HIGH task on it). The rest of PRD-053 stands.
 - 2026-10-01 (agent, from review): the `guessed` chip shows only when JEV is enabled — with JEV off every band is the heuristic's by design. Config layers merge per entry, not per field, and `jev:` is replaced whole: a field-level merge let an untrusted repo pair the user's stored `apiKey` with its own endpoint.
 
 ## Execution Phases
