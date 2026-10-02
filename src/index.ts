@@ -792,7 +792,7 @@ function installTurnHooks(
 			if (chosen && chosen.from !== context.contract!.routing.executor_class) {
 				ctx.ui.notify(`session model fell back to ${ref.backend}/${ref.model}: ${context.contract!.routing.executor_class} backend was rate-limited`, "warning");
 			}
-			const model = ctx.modelRegistry.find(manualPin ? piProviderFor(manualPin) : ref.backend, ref.model);
+			const model = ctx.modelRegistry.find(piProviderFor(ref), ref.model);
 			// `setModel` answers whether it took the model. Ignoring that answer
 			// let the footer name a model the session had refused.
 			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;

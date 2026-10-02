@@ -113,8 +113,9 @@ describe("session-model fallback after a provider limit", () => {
 		await handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "error", errorMessage: '429: {"type":"GoUsageLimitError"}' }] }, ctx);
 
 		await handlers.get("before_agent_start")?.({ prompt: "second", systemPrompt: "sys" }, ctx);
-		// `balanced` and `quick` share `metered`, so the ladder reaches `strong`.
-		expect(installed.at(-1)).toEqual({ provider: "subscription", id: "leanpi-test-opus" });
+		// `balanced` and `quick` share `metered`, so the ladder reaches `strong`,
+		// which Pi registers under its CLI provider name.
+		expect(installed.at(-1)).toEqual({ provider: "subscription-cli", id: "leanpi-test-opus" });
 		expect(notices.some((notice) => notice.includes("rate-limited"))).toBe(true);
 		// The native-loop verdict is recorded: a provider error, not a completed turn.
 		expect(readRuns(cwd).at(-1)?.result.loop).toBe("error");
