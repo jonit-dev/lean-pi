@@ -18,18 +18,18 @@ Two gates, each catching a distinct failure:
 
 ## Acceptance Criteria
 
-- [ ] AC-1 [local]: On both golden configs, LOW and MEDIUM Auto turns run native `opencode-go/deepseek-v4.1-flash` with zero CLI calls; HIGH runs the configured strong CLI model. Red on v0.1.10's `roles.ts`. proof: `pnpm vitest run tests/routing/golden-configs.spec.ts` — Evidence: pending.
-- [ ] AC-2 [local]: The release smoke passes on the fixed build and fails on v0.1.10 with this machine's real config. proof: `node scripts/release-smoke.mjs` — Evidence: pending.
-- [ ] AC-3 [local]: `prepublishOnly` runs the smoke; full gate green. proof: `pnpm test && pnpm typecheck && pnpm lint` — Evidence: pending.
+- [x] AC-1 [local]: On both golden configs, LOW and MEDIUM Auto turns run native `opencode-go/deepseek-v4.1-flash` with zero CLI calls; HIGH runs the configured strong CLI model. Red on v0.1.10's `roles.ts`. proof: `pnpm vitest run tests/routing/golden-configs.spec.ts` — 6 passed @ 10940d1; red with v0.1.10's `roles.ts`: all 3 `operator.yaml` cases fail, `onboarding.yaml` passes on both (it binds `balanced` native).
+- [x] AC-2 [local]: The release smoke passes on the fixed build and fails on v0.1.10 with this machine's real config. proof: `node scripts/release-smoke.mjs` — green on this build: quick and balanced both `opencode-go/deepseek-v4.1-flash`, first model event 5.6 s / 5.4 s, `read` streamed, token read back. Red on installed v0.1.10: `balanced` ran `claude-cli/opus[1m]`, no tool call streamed. A first draft that left the class to JEV passed on v0.1.10 (the prompt classified LOW), so the smoke pins each everyday class with `/route executor`.
+- [x] AC-3 [local]: `prepublishOnly` runs the smoke; full gate green. proof: `pnpm test && pnpm typecheck && pnpm lint` — 1128 passed / 11 skipped, typecheck 0, lint 0; `prepublishOnly` ends with `npm run smoke:release`.
 
 ## Execution Phases
 
 #### Phase 1: CI golden-config routing matrix
-**Status:** NOT STARTED
+**Status:** DONE
 **Files:** `tests/fixtures/configs/*.yaml`, `tests/routing/golden-configs.spec.ts`
-**Verification:** AC-1.
+- [x] **Verification:** AC-1 (evidence on the AC).
 
 #### Phase 2: Live pre-release smoke
-**Status:** NOT STARTED
+**Status:** DONE
 **Files:** `scripts/release-smoke.mjs`, `package.json`
-**Verification:** AC-2, AC-3.
+- [x] **Verification:** AC-2, AC-3 (evidence on the ACs).
