@@ -35,15 +35,18 @@ flowchart TD
     D --> P{"/route executor pin?"}
     P -- yes --> R[the pinned class]
     P -- no --> R2["the routed class; the floor rises to it (never falls)"]
-    R --> B["the role's model: its models: binding; the capability ranking only fills an unbound role"]
+    R --> B["the role's model: a capability pin, else the cheapest configured model clearing the role's floor (the ranking), else the models: map"]
     R2 --> B
     B --> S["setModel before Pi's loop runs"]
 ```
 
 - **First message decides.** A follow-up like "now run the tests" stays on the model that did
   the work. A later harder message escalates; nothing drops back until `/new` or `/route reset`.
-- **Bindings are final.** `models.balanced: claude/opus` runs Opus even when the ranking knows a
-  cheaper model that clears the floor. `capability.roles.<role>.pin` still wins over a binding.
+- **The ranking picks the role's model.** Among the models the config binds to *any* role, a role
+  runs the cheapest one that clears its floor, so `balanced: claude/opus` beside a native
+  deepseek that clears 70 still runs deepseek — streaming in Pi's loop. To force a model onto a
+  role, set `capability.roles.<role>.pin`. (v0.1.10 briefly made bindings final; every normal turn
+  then ran as a headless vendor-CLI run that shows nothing until done, so v0.1.11 restored this.)
 - **Config layers.** `~/.config/leanpi/leanpi.config.yaml` is the base; a repo's
   `leanpi.config.yaml` overrides only the entries it sets. An entry (`backends.<name>`,
   `models.<role>`) is replaced whole, never field by field, and `jev:` is replaced as one

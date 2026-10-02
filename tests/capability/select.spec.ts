@@ -158,14 +158,13 @@ describe("PRD-024 Phase 2 — selectRoleModel and pins", () => {
 	});
 
 	it("AC-3: a role's price ceiling bounds the clearing set, and escalates visibly when nothing fits", () => {
-		// `review_strong` is unbound, so the ranking fills it (a bound role runs its binding, PRD-053).
-		const bound = main({ review_strong: { min_coding_index: 50, max_blended_price: 1.5 } });
-		const selection = selectRoleModel("review_strong", bound.ranking, bound.config);
+		const bound = main({ quick: { min_coding_index: 50, max_blended_price: 1.5 } });
+		const selection = selectRoleModel("quick", bound.ranking, bound.config);
 		expect(selection.model_id).toBe("a-cheap");
 		expect(selection.capability_gap).toBeUndefined();
 
-		const tight = main({ review_strong: { min_coding_index: 50, max_blended_price: 0.5 } });
-		const escalated = selectRoleModel("review_strong", tight.ranking, tight.config);
+		const tight = main({ quick: { min_coding_index: 50, max_blended_price: 0.5 } });
+		const escalated = selectRoleModel("quick", tight.ranking, tight.config);
 		expect(escalated.model_id).toBe("c-strong");
 		expect(escalated.capability_gap!.best_available).toBe(90);
 		expect(escalated.capability_gap!.reason).toMatch(/within the price ceiling 0.5/);
@@ -176,14 +175,12 @@ describe("PRD-024 Phase 2 — selectRoleModel and pins", () => {
 			record({ model_id: "b-tie", coding_score: 70, price_blended_per_mtok: 2 }),
 			record({ model_id: "a-tie", coding_score: 70, price_blended_per_mtok: 2 }),
 		];
-		// Selected for the unbound `review_strong`, so the ranking (not a binding) decides.
-		const roles = { review_strong: { min_coding_index: 50 } };
-		const config = fixtureConfig({ models: { quick: { backend: "local", model: "b-tie" }, balanced: { backend: "local", model: "a-tie" } }, capability: { rankingFile: writeRanking(tied), roles } });
-		expect(selectRoleModel("review_strong", loadRanking(config), config).model_id).toBe("a-tie");
+		const config = fixtureConfig({ models: { quick: { backend: "local", model: "b-tie" }, balanced: { backend: "local", model: "a-tie" } }, capability: { rankingFile: writeRanking(tied) } });
+		expect(selectRoleModel("quick", loadRanking(config), config).model_id).toBe("a-tie");
 
 		const withHigher = [...tied, record({ model_id: "c-higher", coding_score: 72, price_blended_per_mtok: 2 })];
-		const higherConfig = fixtureConfig({ models: { quick: { backend: "local", model: "b-tie" }, balanced: { backend: "local", model: "a-tie" }, strong: { backend: "local", model: "c-higher" } }, capability: { rankingFile: writeRanking(withHigher), roles } });
-		expect(selectRoleModel("review_strong", loadRanking(higherConfig), higherConfig).model_id).toBe("c-higher");
+		const higherConfig = fixtureConfig({ models: { quick: { backend: "local", model: "b-tie" }, balanced: { backend: "local", model: "a-tie" }, strong: { backend: "local", model: "c-higher" } }, capability: { rankingFile: writeRanking(withHigher) } });
+		expect(selectRoleModel("quick", loadRanking(higherConfig), higherConfig).model_id).toBe("c-higher");
 	});
 
 	it("AC-4: a pin naming no record is a config error, not a silent fallback", () => {
