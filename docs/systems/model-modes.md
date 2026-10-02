@@ -11,7 +11,7 @@ LeanPi has two modes, and only two.
 | Contract, JEV, PRD gate, exploration | yes | **none** |
 | Review, proof gate | only when every executor role is a vendor CLI (LeanPi owns the loop) | **none** |
 | Output | Pi's reply; the proof verdict when LeanPi owns the loop | the model's reply, nothing else |
-| Footer | the installed model, `Auto`, thinking level, task size, `guessed` when JEV could not decide | the pinned model, `Manual` in red; redrawn the moment `/model` changes — no `LeanPi: …` phase |
+| Footer | the installed model, `Auto`, thinking level, task size, `guessed` when JEV could not decide (a guess never makes a task hard) | the pinned model, `<backend> CLI` when it runs a vendor CLI (silent until done), `Manual` in red; redrawn the moment `/model` changes — no `LeanPi: …` phase |
 | Chat | Pi's messages, or LeanPi's report | a regular Pi turn on the pinned model, native or CLI: prompt, spinner, reply, Esc, usage |
 | Survives `/new`, `/resume` | — (the escalation floor resets) | yes |
 | Survives a restart | — | only with `remember_manual_model: true` |
@@ -26,7 +26,7 @@ reviewer and the proof gate.
 
 ```mermaid
 flowchart TD
-    M[message] --> C["classify: JEV, or the keyword heuristic when JEV is off or unsure (footer: guessed)"]
+    M[message] --> C["classify: JEV, or the keyword heuristic when JEV is off or unsure (footer: guessed; an unsure guess stops at normal)"]
     C --> X["LOW → quick · MEDIUM → balanced · HIGH → strong"]
     X --> F["raise to the session floor (the highest class this session has run)"]
     F --> U{class's vendor CLI usable?}

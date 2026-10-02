@@ -94,7 +94,8 @@ export function prettyModel(backend: string, model: string): string {
 export function manualStatusLine(pin: BackendRef, color = false, goal?: string): string {
 	const model = prettyModel(pin.backend, pin.model);
 	const chip = goalChip(goal);
-	return [color === true ? `${BOLD}${model}${RESET}` : model, color === true ? `${MANUAL}Manual${RESET}` : "Manual", ...(chip ? [chip] : [])].join(SEP);
+	const cli = pin.type === "external_harness" ? `${pin.backend} CLI` : undefined;
+	return [color === true ? `${BOLD}${model}${RESET}` : model, ...(cli ? [cli] : []), color === true ? `${MANUAL}Manual${RESET}` : "Manual", ...(chip ? [chip] : [])].join(SEP);
 }
 
 /** A running goal, under either mode: nothing else on screen says one is live. */

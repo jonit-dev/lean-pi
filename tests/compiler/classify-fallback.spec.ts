@@ -37,11 +37,14 @@ beforeEach(() => clearSites());
 afterEach(() => clearSites());
 
 describe("PRD-053 AC-4 — an unsure classification is the heuristic's, and says so", () => {
-	it("a dropped complexity answer falls back to the keyword band and is recorded as a fallback", async () => {
+	it("a dropped complexity answer falls back to the keyword band, capped at MEDIUM, and is recorded as a fallback", async () => {
 		const h = await harness([unsureExplicit]);
 		try {
 			const contract = await compileTask(RACE, packet());
-			expect(contract.task.execution_complexity).toBe("HIGH");
+			// A keyword guess never picks the hard-task model: on the operator's
+			// config that is a headless CLI, and "native/Android" in a threenative
+			// prompt sent every turn of the session there, silent until done.
+			expect(contract.task.execution_complexity).toBe("MEDIUM");
 			const row = compileRecordOf(contract)!.telemetry.find((entry) => entry.site_id === "classify.execution_complexity");
 			expect(row?.fallback_used).toBe(true);
 			expect(statusLine({ config: h.config, contract })).toContain("guessed");

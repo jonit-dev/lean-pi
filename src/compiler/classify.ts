@@ -101,6 +101,19 @@ export function heuristicBand(request: string, packet: TaskPacket): ExecutionBan
 	return "E2";
 }
 
+/**
+ * The keyword band when JEV answered but was unsure of some questions: never
+ * above E2. JEV could not settle the task, and a keyword is too thin to call it
+ * hard on its own — on a config that binds `strong` to a vendor CLI the turn ran
+ * silent until done, and the executor floor kept the session there
+ * ("native/Android" in a threenative prompt). JEV unreachable or disabled: the
+ * keywords are the only classifier, uncapped.
+ */
+function partialAnswerBand(request: string, packet: TaskPacket): ExecutionBand {
+	const band = heuristicBand(request, packet);
+	return band === "E3" ? "E2" : band;
+}
+
 export const COMPLEXITY_BY_BAND: Record<ExecutionBand, ExecutionComplexity> = {
 	E0: "LOW",
 	E1: "LOW",
@@ -138,7 +151,8 @@ export async function classifyExecution({ client, request, packet, config }: Com
 	const unanswered = COMPLEXITY_QUESTIONS.some((question) => question.kind === "Choice" && !results.some((result) => result.questionId === question.id));
 	if (client.fallbackCount() > before || unanswered || !results.every((result) => accept(result, "normal"))) {
 		// Conservative: MEDIUM with no readable marker, a band when the packet shows one.
-		const band = heuristicBand(request, packet);
+		const answeredInPart = unanswered && client.fallbackCount() === before;
+		const band = answeredInPart ? partialAnswerBand(request, packet) : heuristicBand(request, packet);
 		return { band, complexity: COMPLEXITY_BY_BAND[band], fallbackUsed: true, confidence: 0, tokens: zero() };
 	}
 	const tokens = client.lastUsage?.() ?? zero();
