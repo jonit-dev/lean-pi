@@ -49,7 +49,8 @@
 	"scripts": {
 		"build": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json",
 		"prepack": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json",
-		"prepublishOnly": "npm run build && npm run typecheck && npm run lint && npm test && npm run bench:cost-gate",
+		"prepublishOnly": "npm run build && npm run typecheck && npm run lint && npm test && npm run bench:cost-gate && npm run smoke:release",
+		"smoke:release": "node scripts/release-smoke.mjs",
 		"release": "npm publish",
 		"leanpi": "node scripts/vendor-thinking-fold.mjs 2> /dev/null && tsc -b tsconfig.json && node ./bin/leanpi.js",
 		"vendor:thinking-fold": "node scripts/vendor-thinking-fold.mjs",
