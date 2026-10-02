@@ -133,7 +133,10 @@ export async function classifyExecution({ client, request, packet, config }: Com
 		const band = heuristicBand(request, packet);
 		return { band, complexity: COMPLEXITY_BY_BAND[band], fallbackUsed: true, confidence: 0, tokens: zero() };
 	}
-	if (client.fallbackCount() > before || !results.every((result) => accept(result, "normal"))) {
+	// PRD-053: the client drops answers below the confidence bar, so a missing
+	// choice is unknown, not "no" — reading it as "no" made every unsure turn MEDIUM.
+	const unanswered = COMPLEXITY_QUESTIONS.some((question) => question.kind === "Choice" && !results.some((result) => result.questionId === question.id));
+	if (client.fallbackCount() > before || unanswered || !results.every((result) => accept(result, "normal"))) {
 		// Conservative: MEDIUM with no readable marker, a band when the packet shows one.
 		const band = heuristicBand(request, packet);
 		return { band, complexity: COMPLEXITY_BY_BAND[band], fallbackUsed: true, confidence: 0, tokens: zero() };

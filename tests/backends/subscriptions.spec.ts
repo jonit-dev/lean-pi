@@ -100,7 +100,8 @@ describe("subscription detection", () => {
 
 		// And §14 applies it: a HIGH task compiles to a class that can actually run.
 		const applied = applyDeviations(matrixDefault(false, "HIGH", "R0"), deviations);
-		expect(applied.routing.executor_class).not.toBe("strong");
+		// PRD-053 AC-6: one rung down the ladder, not straight to `quick`.
+		expect(applied.routing.executor_class).toBe("balanced");
 		expect(applied.deviation).toMatchObject({ from: "strong" });
 		expect(applied.deviation!.reason).toContain("claude");
 	});

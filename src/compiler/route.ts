@@ -7,6 +7,7 @@
  * `R0 → none`, `R1`/`R2 → review_quick`, `R3 → review_strong` band mapping.
  */
 import type { DeviationInput, ExecutorClass, ExecutionComplexity, ReviewerClass, ReviewRisk, RouteDeviation } from "./contract.js";
+import { ROLE_FALLBACK_CHAINS } from "../core/roles.js";
 
 export interface MatrixCell {
 	executor_class: ExecutorClass;
@@ -43,7 +44,10 @@ export function matrixDefault(prdRequired: boolean, complexity: ExecutionComplex
 	};
 }
 
-const FALLBACK_ORDER: ExecutorClass[] = ["quick", "balanced", "strong", "specialist"];
+/** PRD-053: an unavailable class steps down the role ladder (`strong → balanced → quick`) before it climbs. */
+function fallbackOrder(from: ExecutorClass): ExecutorClass[] {
+	return ROLE_FALLBACK_CHAINS[from].filter((role): role is ExecutorClass => role === "quick" || role === "balanced" || role === "strong" || role === "specialist");
+}
 
 /**
  * Consume the §14 deviation inputs. With an empty input set the defaults come
@@ -62,7 +66,7 @@ export function applyDeviations(
 		const targetsClass = input.executor_class === undefined || input.executor_class === routing.executor_class;
 		if (!unavailable || !targetsClass) continue;
 		const from = routing.executor_class;
-		const replacement = FALLBACK_ORDER.find(
+		const replacement = fallbackOrder(from).find(
 			(candidate) => candidate !== from && !inputs.some((other) => other.available === false && other.executor_class === candidate),
 		);
 		if (!replacement) continue;

@@ -27,7 +27,7 @@ import { runGate, type GateOutcome } from "./gate.js";
 import { applyDeviations, matrixDefault } from "./route.js";
 import { selectRuntimeVerifiers } from "../runtime/planner.js";
 import { createTaskState, deepFreeze } from "./state.js";
-import { applyRoutePins, pinnedDecision, routePins } from "./pins.js";
+import { applyExecutorFloor, applyRoutePins, pinnedDecision, routePins } from "./pins.js";
 
 export interface CompilerContext {
 	client: Pick<JevClient, "ask" | "fallbackCount"> & Partial<Pick<JevClient, "lastUsage">>;
@@ -185,7 +185,9 @@ export async function compileTask(
 	const pins = routePins();
 	const decision = pinnedDecision(gate.decision, pins);
 
-	const defaults = matrixDefault(decision === "PRD_REQUIRED", complexity.complexity, risk.review_risk);
+	// PRD-053: the session floor lifts the classifier's pick before an unavailable
+	// class is routed around, so a floor never forces a signed-out backend.
+	const defaults = applyExecutorFloor(matrixDefault(decision === "PRD_REQUIRED", complexity.complexity, risk.review_risk), pins);
 	const { routing: classified, deviation } = applyDeviations(defaults, deviations);
 	const routing = applyRoutePins(classified, pins);
 

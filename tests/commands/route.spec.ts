@@ -8,7 +8,7 @@
  * working.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clearRoutePins } from "../../src/compiler/pins.js";
+import { clearRoutePins, routePins, setRoutePins } from "../../src/compiler/pins.js";
 import { clearSites, compileRecordOf, compileTask } from "../../src/index.js";
 import { answerScript, harness, packet, unavailableHarness } from "../compiler/helpers.js";
 import { surfaceFixture } from "./helpers.js";
@@ -105,6 +105,21 @@ describe("/route (PRD-016 Phase 3)", () => {
 			const restored = await compileTask(DIRECT_TASK, packet());
 			expect(restored.routing.executor_class).toBe(before.routing.executor_class);
 			expect(restored.routing.reviewer_class).toBe(before.routing.reviewer_class);
+		} finally {
+			await h.close();
+		}
+	});
+
+	it("PRD-053 AC-7: reset clears the route pins and the floor, but leaves a /model pin in place", async () => {
+		const { h, fixture } = await routedFixture();
+		try {
+			const pick = { backend: "local", model: "cheap", type: "native" as const };
+			setRoutePins({ model: pick, executor_class: "strong", executor_floor: "strong" });
+			const reset = await fixture.dispatch("/route reset");
+			expect(reset.ok).toBe(true);
+			expect(routePins().model).toEqual(pick);
+			expect(routePins().executor_class).toBeUndefined();
+			expect(routePins().executor_floor).toBeUndefined();
 		} finally {
 			await h.close();
 		}

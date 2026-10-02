@@ -1,22 +1,55 @@
 # Model modes: Auto and Manual
 
-**Plane:** surface · **Entry symbol:** `routePins().model`, `compilerLane()` · **Spec:** PRD-048, PRD-051
+**Plane:** surface · **Entry symbol:** `routePins().model`, `compilerLane()` · **Spec:** PRD-048, PRD-051, PRD-053
 
 LeanPi has two modes, and only two.
 
 | | **Auto** (default) | **Manual** |
 |---|---|---|
 | Entered by | starting LeanPi; `/model` → auto | `/model` → pick a model |
-| Who picks the model | the router, per turn | the operator, once |
-| Contract, JEV, PRD gate, exploration, review, proof gate, goal boundary | yes | **none** |
-| Output | the answer plus the proof verdict | the model's reply, nothing else |
-| Footer | router's pick, `Auto` | the pinned model, `Manual` in red; redrawn the moment `/model` changes — no `LeanPi: …` phase |
+| Who picks the model | the router: the first message decides, later messages may only escalate | the operator, once |
+| Contract, JEV, PRD gate, exploration | yes | **none** |
+| Review, proof gate | only when every executor role is a vendor CLI (LeanPi owns the loop) | **none** |
+| Output | Pi's reply; the proof verdict when LeanPi owns the loop | the model's reply, nothing else |
+| Footer | the installed model, `Auto`, thinking level, task size, `guessed` when JEV could not decide | the pinned model, `Manual` in red; redrawn the moment `/model` changes — no `LeanPi: …` phase |
 | Chat | Pi's messages, or LeanPi's report | a regular Pi turn on the pinned model, native or CLI: prompt, spinner, reply, Esc, usage |
-| Survives `/new`, `/resume` | — | yes |
+| Survives `/new`, `/resume` | — (the escalation floor resets) | yes |
 | Survives a restart | — | only with `remember_manual_model: true` |
 
-**Auto** is LeanPi: the harness classifies the turn, routes it to a model, and
-proves the result.
+**Auto** is LeanPi: the harness classifies the turn and routes it to a model.
+On a config whose roles include a native backend (the usual case), Pi's own loop
+runs the turn on that model and nothing reviews it afterwards. Only an
+all-vendor-CLI config hands the turn to LeanPi's executor lane, which adds the
+reviewer and the proof gate.
+
+## How Auto picks the model
+
+```mermaid
+flowchart TD
+    M[message] --> C["classify: JEV, or the keyword heuristic when JEV is off or unsure (footer: guessed)"]
+    C --> X["LOW → quick · MEDIUM → balanced · HIGH → strong"]
+    X --> F["raise to the session floor (the highest class this session has run)"]
+    F --> U{class's vendor CLI usable?}
+    U -- no --> D["next rung on the role ladder: strong → balanced → quick (quick climbs to balanced)"]
+    U -- yes --> P
+    D --> P{"/route executor pin?"}
+    P -- yes --> R[the pinned class]
+    P -- no --> R2["the routed class; the floor rises to it (never falls)"]
+    R --> B["the role's model: its models: binding; the capability ranking only fills an unbound role"]
+    R2 --> B
+    B --> S["setModel before Pi's loop runs"]
+```
+
+- **First message decides.** A follow-up like "now run the tests" stays on the model that did
+  the work. A later harder message escalates; nothing drops back until `/new` or `/route reset`.
+- **Bindings are final.** `models.balanced: claude/opus` runs Opus even when the ranking knows a
+  cheaper model that clears the floor. `capability.roles.<role>.pin` still wins over a binding.
+- **Config layers.** `~/.config/leanpi/leanpi.config.yaml` is the base; a repo's
+  `leanpi.config.yaml` overrides only the entries it sets. An entry (`backends.<name>`,
+  `models.<role>`) is replaced whole, never field by field, and `jev:` is replaced as one
+  section, so a repo can never pair your stored `apiKey` with an endpoint it chose. Lists replace.
+- **`/route executor <class>`** pins the class for the session; `/route reset` returns to the
+  classifier and clears the floor, but leaves a `/model` pin alone.
 
 **Manual** is a plain harness: the prompt goes to the model you picked, and its
 reply comes back. It stays in effect until `/model` switches back to Auto.
@@ -24,14 +57,14 @@ reply comes back. It stays in effect until `/model` switches back to Auto.
 ```mermaid
 flowchart TD
     T[turn] --> P{"/model pin?"}
-    P -- no --> A[Auto: compile contract → route → execute → review → proof gate → goal]
+    P -- no --> A["Auto: compile contract → route → execute (→ review → proof gate when LeanPi owns the loop) → goal"]
     P -- yes --> K{pinned backend}
     K -- native --> N["Pi's own loop on the pinned model"]
     K -- CLI vendor --> N2["Pi's own loop on the &lt;backend&gt;-cli provider"]
     N2 --> C[its stream runs the vendor CLI on the prompt as-is]
     N --> R[reply]
     C --> R
-    A --> V[answer + proof verdict]
+    A --> V["answer (+ proof verdict when LeanPi owns the loop)"]
 ```
 
 ## Lifetime

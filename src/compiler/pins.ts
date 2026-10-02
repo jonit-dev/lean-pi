@@ -38,6 +38,13 @@ export interface RoutePins {
 	 * starting over. Reset whenever the pin changes or clears.
 	 */
 	manualSessionId?: string;
+	/**
+	 * PRD-053: the highest class an Auto turn of this session has routed to. The
+	 * first message decides; a later turn may escalate past it but never drops
+	 * below it, so a short follow-up stays on the model that did the work. A
+	 * session switch or `/route reset` clears it with the other pins.
+	 */
+	executor_floor?: ExecutorClass;
 }
 
 let pins: RoutePins = {};
@@ -72,6 +79,25 @@ export function clearRoutePins(): void {
 export function pinnedDecision(decision: PlanningDecision, current: RoutePins = pins): PlanningDecision {
 	if (current.prd_required === undefined) return decision;
 	return current.prd_required ? "PRD_REQUIRED" : "DIRECT_EXECUTION";
+}
+
+/** Executor classes by capability; `specialist` is a peer of `strong`, not above it. */
+const EXECUTOR_RANK: Record<ExecutorClass, number> = { quick: 0, balanced: 1, strong: 2, specialist: 2 };
+
+/** The higher of two classes; a tie keeps `routed`. */
+export function higherClass(routed: ExecutorClass, floor: ExecutorClass | undefined): ExecutorClass {
+	return floor !== undefined && EXECUTOR_RANK[floor] > EXECUTOR_RANK[routed] ? floor : routed;
+}
+
+/** The session floor raises the matrix default before deviations route around an unavailable class. */
+export function applyExecutorFloor(defaults: RoutingDefault, current: RoutePins = pins): RoutingDefault {
+	return { ...defaults, executor_class: higherClass(defaults.executor_class, current.executor_floor) };
+}
+
+/** Record an Auto turn's class; the floor only rises. A `/route executor` pin is the operator's, not a decision. */
+export function recordExecutorFloor(routed: ExecutorClass): void {
+	if (pins.executor_class !== undefined) return;
+	pins = { ...pins, executor_floor: higherClass(routed, pins.executor_floor) };
 }
 
 /** A pinned class replaces the matrix default; the deviation record is untouched. */

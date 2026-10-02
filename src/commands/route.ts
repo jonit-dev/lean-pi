@@ -111,7 +111,10 @@ export function registerRouteCommand(registry: CommandRegistry, surface: Command
 			if (subcommand === undefined) return { ok: true, text: renderRoute(surface) };
 
 			if (subcommand === "reset") {
+				// PRD-053: a `/model` pin is Manual mode, which only `/model auto` leaves.
+				const { model, previousModel, manualSessionId } = routePins();
 				clearRoutePins();
+				setRoutePins({ model, previousModel, manualSessionId });
 				return { ok: true, text: "route pins cleared — the classifier decides again" };
 			}
 

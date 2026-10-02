@@ -29,7 +29,7 @@ import { itemsOf, remainingWork, type TodoCarrier } from "../todo/index.js";
 import { EvidenceStore } from "../verify/evidence.js";
 import { workspaceHash } from "../verify/hash.js";
 import { registerOwnedLanes, type Lane, type TurnContext, type TurnInput } from "./session.js";
-import { routePins } from "../compiler/pins.js";
+import { recordExecutorFloor, routePins } from "../compiler/pins.js";
 import { feedInvocation, type RunCollector } from "../telemetry/index.js";
 import { lspSelectionOf } from "../lsp/provider.js";
 import type { ToolSurface } from "../mcp/tools.js";
@@ -147,6 +147,10 @@ export function compilerLane(deps: TurnLaneDeps): Lane {
 			// to slice a second PRD.
 			const planned = PRD_MENTION.test(turn.text) || readPrdState(deps.cwd) !== null || isRunningHere(createGoalStore(deps.cwd).load(), deps.sessionId);
 			context.contract = await compileTask(turn.text, packet, deviations, planned);
+			// PRD-053: this turn's class is the floor the rest of the session routes
+			// from — the class it asked for, not the one an unavailable backend moved it to.
+			const { routing } = context.contract;
+			recordExecutorFloor(routing.deviation?.from ?? routing.executor_class);
 		},
 	};
 }

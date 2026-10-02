@@ -113,14 +113,27 @@ function shortfallsOf(record: RankedModel, role: ModelRole, setting: CapabilityR
 	return shortfalls;
 }
 
+/** The selection, with a capability gap when its record misses the role's floor or ceiling. */
+function withShortfalls(selection: RoleSelection, record: RankedModel, setting: CapabilityRoleSetting, how: "pinned" | "bound"): RoleSelection {
+	const shortfalls = shortfallsOf(record, selection.role, setting);
+	if (shortfalls.length === 0) return selection;
+	return {
+		...selection,
+		capability_gap: {
+			requested: setting.min_coding_index,
+			best_available: record.coding_score,
+			reason: `${how} model "${record.model_id}" ${shortfalls.join("; ")}`,
+		},
+	};
+}
+
 /**
- * The cheapest bound record clearing the role's floor and price ceiling,
- * tie-broken by higher `coding_score` then `model_id`. A pin wins unconditionally
- * and reports its shortfall instead of being swapped. When nothing clears, the
- * highest-scoring bound record is escalated into the role with a `capability_gap`
- * — including a bound record with no measured score, so a configured CLI model
- * resolves to its own binding with the gap reported rather than silently falling
- * through to the static `models:` map.
+ * A pin wins unconditionally, then the role's own `models:` binding (PRD-053);
+ * each reports its shortfall instead of being swapped. Only an unbound role is
+ * filled from the ranking: the cheapest bound record clearing the role's floor
+ * and price ceiling, tie-broken by higher `coding_score` then `model_id`. When
+ * nothing clears, the highest-scoring bound record is escalated into the role
+ * with a `capability_gap` — including a bound record with no measured score.
  */
 export function selectRoleModel(role: ModelRole, ranking: Ranking, config: LeanPiConfig): RoleSelection {
 	const setting = capabilityConfigOf(config).roles[role];
@@ -141,17 +154,19 @@ export function selectRoleModel(role: ModelRole, ranking: Ranking, config: LeanP
 				pinned: true,
 			};
 		}
-		const shortfalls = shortfallsOf(record, role, setting);
-		const selection: RoleSelection = { role, model_id: record.model_id, ref: record.backend_binding, pinned: true };
-		if (shortfalls.length === 0) return selection;
-		return {
-			...selection,
-			capability_gap: {
-				requested: setting.min_coding_index,
-				best_available: record.coding_score,
-				reason: `pinned model "${record.model_id}" ${shortfalls.join("; ")}`,
-			},
-		};
+		return withShortfalls({ role, model_id: record.model_id, ref: record.backend_binding, pinned: true }, record, setting, "pinned");
+	}
+
+	// PRD-053: a role the operator bound in `models:` runs that model. The ranking
+	// fills only a role left unbound; it never swaps a written choice for a
+	// cheaper one. A shortfall against the role's floor is still reported.
+	const entry = config.models[role];
+	const backend = entry ? config.backends[entry.backend] : undefined;
+	if (entry && backend && backend.enabled !== false) {
+		const ref: BackendRef = { backend: entry.backend, model: entry.model, type: backend.type };
+		const record = ranking.models.find((candidate) => candidate.backend_binding?.backend === entry.backend && candidate.backend_binding.model === entry.model);
+		if (!record) return { role, model_id: null, ref, pinned: false };
+		return withShortfalls({ role, model_id: record.model_id, ref, pinned: false }, record, setting, "bound");
 	}
 
 	const ceiling = setting.max_blended_price;

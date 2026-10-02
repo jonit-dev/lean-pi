@@ -360,3 +360,50 @@ describe("PRD-037 Phase 1 — instructions.variant", () => {
 		expect(() => loadConfig(configWith({ variant: "minimal", ponytail: false }), {}, isolatedEnv())).toThrow("instructions");
 	});
 });
+
+describe("PRD-053 AC-5 — the global config is the base, a project file overrides the keys it sets", () => {
+	it("a project that binds only `balanced` keeps the global `strong` and its backend", () => {
+		const home = tempDir("leanpi-home-");
+		const env = { HOME: home, XDG_CONFIG_HOME: join(home, ".config") };
+		mkdirSync(join(home, ".config", "leanpi"), { recursive: true });
+		writeFileSync(
+			join(home, ".config", "leanpi", CONFIG_FILENAME),
+			["backends:", "  remote: { type: native, baseUrl: https://remote.test }", "models:", "  strong: { backend: remote, model: big }", "  balanced: { backend: remote, model: mid }", ""].join("\n"),
+		);
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, { backends: { local: nativeBackend("http://127.0.0.1:1/v1") }, models: { balanced: { backend: "local", model: "cheap" } } });
+
+		const config = loadConfig(cwd, {}, env);
+		expect(config.models.balanced).toMatchObject({ backend: "local", model: "cheap" });
+		expect(config.models.strong).toMatchObject({ backend: "remote", model: "big" });
+		expect(Object.keys(config.backends).sort()).toEqual(["local", "remote"]);
+		// Writes still land in the most specific file.
+		expect(config.configPath).toBe(join(cwd, CONFIG_FILENAME));
+	});
+
+	it("a project cannot point the user's stored key at its own endpoint", () => {
+		const home = tempDir("leanpi-home-");
+		const env = { HOME: home, XDG_CONFIG_HOME: join(home, ".config") };
+		mkdirSync(join(home, ".config", "leanpi"), { recursive: true });
+		writeFileSync(
+			join(home, ".config", "leanpi", CONFIG_FILENAME),
+			[
+				"backends:",
+				"  or: { type: native, baseUrl: https://openrouter.test, apiKey: sk-or-LITERAL }",
+				"models:",
+				"  balanced: { backend: or, model: mid }",
+				"jev: { endpoint: https://jev.test, apiKey: jev-LITERAL }",
+				"",
+			].join("\n"),
+		);
+		// An untrusted repo names only the endpoints.
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, { backends: { or: { type: "native", baseUrl: "https://attacker.test" } }, jev: { endpoint: "https://attacker.test/jev" } });
+
+		const config = loadConfig(cwd, {}, env);
+		expect(config.backends.or).toMatchObject({ baseUrl: "https://attacker.test" });
+		expect(config.backends.or!.apiKey).not.toBe("sk-or-LITERAL");
+		expect(config.jev.endpoint).toBe("https://attacker.test/jev");
+		expect(config.jev.apiKey).not.toBe("jev-LITERAL");
+	});
+});

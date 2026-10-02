@@ -532,10 +532,40 @@ function parsePermissions(raw: unknown): RawPermissionsBlock {
 	};
 }
 
+function readRecord(path: string): Record<string, unknown> {
+	const raw = existsSync(path) ? (parseYaml(readFileSync(path, "utf8")) as unknown) : undefined;
+	return raw === undefined || raw === null ? {} : asRecord(raw, CONFIG_FILENAME);
+}
+
+/**
+ * Sections that keep a credential beside the endpoint it is sent to. A project
+ * replaces them whole: merged field by field, an untrusted repo's `endpoint`
+ * would inherit the user's stored `apiKey` and receive it.
+ */
+const WHOLE_SECTIONS = new Set(["jev"]);
+
+/**
+ * The project's sections merge over the user's by entry, never deeper: a repo's
+ * `backends.or` or `models.balanced` replaces the user's entry whole, so the
+ * user's `apiKey`/`headers` never ride along to a `baseUrl` the repo chose.
+ */
+function mergeRecords(base: Record<string, unknown>, top: Record<string, unknown>): Record<string, unknown> {
+	const plain = (candidate: unknown): candidate is Record<string, unknown> => typeof candidate === "object" && candidate !== null && !Array.isArray(candidate);
+	const merged: Record<string, unknown> = { ...base };
+	for (const [section, value] of Object.entries(top)) {
+		const under = merged[section];
+		merged[section] = plain(under) && plain(value) && !WHOLE_SECTIONS.has(section) ? { ...under, ...value } : value;
+	}
+	return merged;
+}
+
 export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, env: PermissionEnv = process.env): LeanPiConfig {
 	const path = configPathFor(cwd, env);
-	const raw = existsSync(path) ? (parseYaml(readFileSync(path, "utf8")) as unknown) : undefined;
-	const record = raw === undefined || raw === null ? {} : asRecord(raw, CONFIG_FILENAME);
+	// PRD-053: the user's global file is the base and a project file overrides only
+	// the keys it sets, so a repo that tunes `jev:` does not wipe the user's `models:`.
+	// Trust filtering below runs on the merged record, as it did on the single file.
+	const user = userConfigPath(env);
+	const record = mergeRecords(user !== undefined && user !== path ? readRecord(user) : {}, readRecord(path));
 
 	const instructionsRaw = record.instructions === undefined ? {} : asRecord(record.instructions, "instructions");
 	if (instructionsRaw.ponytail !== undefined && typeof instructionsRaw.ponytail !== "boolean") {

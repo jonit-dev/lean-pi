@@ -17,6 +17,8 @@ import type { ExecutionComplexity } from "../compiler/contract.js";
 import type { LeanPiConfig, ModelRole, BackendRef } from "../core/types.js";
 import { resolveRole } from "../core/roles.js";
 import { roleStatus } from "../capability/index.js";
+import { compileRecordOf } from "../compiler/index.js";
+import { COMPLEXITY_SITE_ID } from "../compiler/classify.js";
 
 /** The footer slot LeanPi owns; one key, replaced each turn. */
 export const LEANPI_STATUS_KEY = "leanpi";
@@ -175,7 +177,9 @@ export function statusLine({ config, contract, role, model: running, effort: app
 		provider = split?.[0];
 	} else {
 		const status = roleStatus(config, resolvedRole);
-		if (status.gap !== undefined && status.gap.best_available !== null) shortfall = `⚠ below ${resolvedRole} floor`;
+		// A score under the floor, not a price over the ceiling: since PRD-053 a bound
+		// model can carry a price-only gap, and "below floor" would misname it.
+		if (status.gap !== undefined && status.gap.best_available !== null && status.gap.best_available < status.gap.requested) shortfall = `⚠ below ${resolvedRole} floor`;
 		try {
 			const ref = resolveRole(config, resolvedRole);
 			model = prettyModel(ref.backend, ref.model);
@@ -198,6 +202,10 @@ export function statusLine({ config, contract, role, model: running, effort: app
 		color === true ? `${EFFORT_COLOR[level]}${effort}${RESET}` : effort,
 		COMPLEXITY_LABEL[contract.task.execution_complexity],
 	];
+	// PRD-053: JEV was asked and could not decide, so the keyword heuristic did.
+	// With JEV off every band is the heuristic's, and the chip would only be noise.
+	const complexityRow = compileRecordOf(contract)?.telemetry.find((row) => row.site_id === COMPLEXITY_SITE_ID);
+	if (complexityRow?.fallback_used === true && config.jev.mode !== "disabled") parts.push("guessed");
 	// Spend is the one number an operator steers on, and a harness that routes
 	// for cost without ever showing the bill is asking to be trusted on it.
 	if (cost !== undefined) parts.push(`$${cost.toFixed(2)}`);
