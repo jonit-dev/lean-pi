@@ -93,6 +93,10 @@ function nativeOpenCodeGo(sessionId: string, env: NodeJS.ProcessEnv): string[] {
 		// `OPENCODE_API_KEY` as the key instead of letting it use that store.
 		...(env.OPENCODE_API_KEY === undefined ? [] : ["    apiKey: OPENCODE_API_KEY"]),
 		"    reasoning: true",
+		"    # Every model on this endpoint takes image input; without the declaration",
+		"    # Pi registers them text-only and strips every screenshot out of a tool",
+		"    # result with \"tool image omitted: model does not support images\".",
+		"    input: [text, image]",
 		"    # This endpoint serves the model with DeepSeek's `thinking` field rather",
 		"    # than OpenAI's `reasoning_effort`; without the declaration Pi sends no",
 		"    # thinking control at all and every call thinks at the server's default,",

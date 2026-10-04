@@ -292,6 +292,39 @@ describe("what Pi's own loop can run", () => {
 		expect(startupBanner(config, { source: "env" }, sessionModelFor(config))).toContain("deepseek-v4.1-flash");
 	});
 
+	it("registers the OpenCode Go models as image-capable, so screenshots reach the model", async () => {
+		// With no `input` declared, a model is registered `["text"]` and every
+		// screenshot the read tool returns is dropped with "tool image omitted:
+		// model does not support images" — every model on this endpoint takes one.
+		const { cwd, home, env } = machine({ vendors: ["opencode"] });
+		await autoConfigure({
+			cwd,
+			home,
+			env,
+			piReady: (provider) => provider === "opencode-go",
+			client: jevPicking(() => "opencode-go:deepseek-v4.1-flash"),
+		});
+
+		const registered: Record<string, Record<string, unknown>> = {};
+		const pi = {
+			on: () => {},
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerProvider: (name: string, provider: Record<string, unknown>) => {
+				registered[name] = provider;
+			},
+			setModel: async () => {},
+			setThinkingLevel: () => {},
+		};
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+		clearLanes();
+
+		const models = registered["opencode-go"]?.models as Array<{ input: string[] }>;
+		expect(models.length).toBeGreaterThan(0);
+		for (const model of models) expect(model.input).toContain("image");
+	});
+
 	it("passes no model to Pi when the role says `default`, which a native provider cannot mean", () => {
 		// `default` means "let the vendor CLI choose" and a native provider has no
 		// CLI: passed through, Pi registers `default` as a model id and the
