@@ -1,0 +1,48 @@
+# Golden config: what `leanpi` onboarding wrote on the operator's machine
+# (2026-09-20), secrets and comments removed. STUB_* are substituted by the spec.
+backends:
+  claude:
+    type: external_harness
+    vendor: claude
+    quota_class: scarce-premium
+    command: STUB_CLAUDE
+  codex:
+    type: external_harness
+    vendor: codex
+    quota_class: premium
+    command: STUB_CODEX
+  opencode-go:
+    type: native
+    baseUrl: STUB_URL
+    api: openai-completions
+    apiKey: sk-stub
+    reasoning: true
+    compat:
+      thinkingFormat: deepseek
+    contextWindow: 1000000
+    maxTokens: 32000
+    cost:
+      input: 0.15
+      output: 0.6
+      cacheRead: 0.003
+models:
+  quick:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  balanced:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  strong:
+    backend: claude
+    model: opus[1m]
+  specialist:
+    backend: claude
+    model: opus[1m]
+  review_quick:
+    backend: opencode-go
+    model: deepseek-v4.1-flash
+  review_strong:
+    backend: claude
+    model: opus[1m]
+jev:
+  mode: STUB_JEV_MODE
