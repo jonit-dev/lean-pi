@@ -153,7 +153,9 @@ async function pinModel(surface: CommandSurface, chosen: DiscoveredModel, contex
 	context.footer?.setStatus(manualStatusLine(pin, true));
 	return {
 		ok: true,
-		text: `model pinned to ${backend}/${chosen.model} (Manual) — /model auto returns to Auto`,
+		// A CLI model can share its name with a native one (opencode's
+		// `opencode-go/deepseek-v4.1-flash`); its batch run's silence reads as a hang.
+		text: `model pinned to ${backend}/${chosen.model} (Manual)${pin.type === "external_harness" ? ` — runs the ${backend} CLI, which shows nothing until it finishes` : ""} — /model auto returns to Auto`,
 	};
 }
 

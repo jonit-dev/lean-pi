@@ -586,4 +586,30 @@ describe("Manual mode: pin message and previousModel (docs/systems/model-modes.m
 		await commands.get("model")?.handler("auto", ctx);
 		expect(setModelCalls).toEqual(["sonnet", "cheap-alt", "cheap"]);
 	});
+
+	it("a CLI pin says it is the CLI in the notice and the footer, so it cannot pass for the native model of the same name", async () => {
+		const { cwd, env } = nativeProject();
+		const { pi, commands, notices, statuses, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+
+		// The `/model` picker lists opencode's `opencode-go/deepseek-v4.1-flash`
+		// beside the native `opencode-go` one; the operator picked the CLI one
+		// and read the batch run's silence as a hang.
+		const cliPick = {
+			vendor: "opencode" as const,
+			backend: "opencode",
+			model: "opencode-go/deepseek-v4.1-flash",
+			source: "test",
+			facts: { execution: "external_harness" as const, availability: "ready" as const, evidence: "", coding_score: null, price_blended_per_mtok: null },
+		};
+		await commands.get("model")?.handler("", { ...ctx, ui: { ...ctx.ui, custom: async () => ({ model: cliPick }) } });
+		expect(notices.at(-1)).toContain("opencode CLI");
+		expect(notices.at(-1)).toContain("shows nothing until it finishes");
+		expect(statuses.at(-1)).toContain("opencode CLI");
+
+		await commands.get("model")?.handler("local:cheap", ctx);
+		expect(notices.at(-1)).not.toContain("CLI");
+		expect(statuses.at(-1)).not.toContain("CLI");
+	});
 });
