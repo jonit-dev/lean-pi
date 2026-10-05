@@ -26,6 +26,8 @@ export default defineConfig({
 		// falls back to the machine-wide file, so without this the suite reads the
 		// developer's own `~/.config/leanpi/leanpi.config.yaml`.
 		setupFiles: ["tests/setup/machine-isolation.ts"],
+		// One `$TMPDIR` per run, removed at teardown: specs never clean their own.
+		globalSetup: ["tests/setup/run-tmpdir.ts"],
 		// Integration specs boot real Pi sessions and real stub HTTP servers.
 		testTimeout: 30_000,
 		hookTimeout: 30_000,
