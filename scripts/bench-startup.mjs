@@ -92,8 +92,9 @@ function packageVersion(name) {
 }
 
 // One discarded warm-up: the first launch after a build pays the transpile and cold disk cache.
+// Its timestamp still goes into `t0s` so `scripts/ux-kpi.mjs` keeps it out of the organic KPIs.
 process.stderr.write("warm-up… ");
-await launchOnce();
+const warmUp = await launchOnce();
 const rows = [];
 for (let i = 1; i <= runs; i++) {
 	const row = await launchOnce();
@@ -121,7 +122,7 @@ const summary = {
 	min: Math.min(...ms),
 	phases,
 	...(arg("note") === undefined ? {} : { note: arg("note") }),
-	t0s: rows.map((r) => r.t0),
+	t0s: [warmUp, ...rows].filter(Boolean).map((r) => r.t0),
 };
 appendFileSync(BENCH_PATH, `${JSON.stringify(summary)}\n`);
 console.log(`startup p50 ${summary.p50} ms · p90 ${summary.p90} ms · min ${summary.min} ms · ${summary.runs}/${runs} runs · ${summary.sha} · pi ${summary.pi}`);

@@ -1,3 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error -- plain ESM maintainer script, no declaration file
 import { computeReport, percentile, renderHtml, sessionTurns, startupLaunches } from "../scripts/ux-kpi.mjs";
@@ -27,6 +32,27 @@ describe("ux-kpi", () => {
 		expect(launches[0].phases).toEqual({ launcher: 1000, "pi boot": 1500, "extensions + runtime": 1500, paint: 500 });
 		expect(launches[0].cwd).toBe("");
 		expect(launches[0].imports).toEqual([{ name: "pi-subagents/index.js", ms: 795 }]);
+	});
+
+	it("counts one painted row per launch origin, keeping the first paint", () => {
+		// One origin (LEANPI_T0) is one launch: duplicate writers append later, slower rows.
+		const pi = (t0: string, painted: number) => ({
+			t0,
+			proc: "pi",
+			marks: { "node-start": 710, "leanpi-extension": 1200, session_start: 1500, "editor-painted": painted },
+		});
+		const rows = [
+			pi(at(1), 1735),
+			pi(at(1), 6976),
+			pi(at(1), 19_312_608),
+			pi(at(2), 2600),
+			{ t0: at(3), proc: "pi", marks: { "node-start": 700 } },
+			pi(at(4), 3000),
+			{ t0: at(5), proc: "launcher", marks: { "node-start": 102 } },
+		];
+		const launches = startupLaunches(rows, new Set([at(4)]));
+		expect(launches.map((l: { ms: number }) => l.ms)).toEqual([1735, 2600]);
+		expect(launches.map((l: { t: number }) => l.t)).toEqual([Date.parse(at(1)), Date.parse(at(2))]);
 	});
 
 	it("ends each turn on its last assistant stopReason and times the first reply", () => {
@@ -82,5 +108,40 @@ describe("ux-kpi", () => {
 		expect(html).not.toContain("/*DATA*/null");
 		expect(html).toContain('"sha":"abc"');
 		expect(html).not.toContain('"note":"</script>"');
+	});
+
+	it("benches a warm-up plus one measurement and records both t0s for exclusion", () => {
+		// A copy of the scripts gives the bench its own repo root, so it appends to a temp bench file.
+		const root = mkdtempSync(join(tmpdir(), "leanpi-bench-startup-"));
+		try {
+			for (const dir of ["scripts", "bench/out", "home", "work"]) mkdirSync(join(root, dir), { recursive: true });
+			for (const file of ["bench-startup.mjs", "ux-kpi.mjs"]) {
+				copyFileSync(fileURLToPath(new URL(`../scripts/${file}`, import.meta.url)), join(root, "scripts", file));
+			}
+			// Each launch appends one painted `pi` row: warm-up 2000 ms, measurement 4000 ms.
+			const launcher = join(root, "launcher.sh");
+			writeFileSync(
+				launcher,
+				'#!/bin/sh\nmkdir -p "$HOME/.leanpi"\nnode -e \'const fs=require("node:fs");const p=process.env.HOME+"/.leanpi/startup.jsonl";const n=fs.existsSync(p)?fs.readFileSync(p,"utf8").trim().split("\\n").filter(Boolean).length:0;fs.appendFileSync(p,JSON.stringify({t0:new Date().toISOString(),proc:"pi",cwd:process.env.FAKE_CWD,marks:{"node-start":1000,"leanpi-extension":2000,session_start:3000,"editor-painted":n?4000:2000}})+"\\n")\'' +
+					"\n",
+			);
+			chmodSync(launcher, 0o755);
+			execFileSync("node", [join(root, "scripts", "bench-startup.mjs"), "--runs", "1", "--launcher", launcher, "--cwd", join(root, "work")], {
+				env: { ...process.env, HOME: join(root, "home"), FAKE_CWD: join(root, "work") },
+				stdio: "pipe",
+			});
+			const trace = readFileSync(join(root, "home", ".leanpi", "startup.jsonl"), "utf8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line));
+			const summary = JSON.parse(readFileSync(join(root, "bench", "out", "startup-bench.jsonl"), "utf8").trim());
+			expect(trace.map((r: { marks: { "editor-painted": number } }) => r.marks["editor-painted"])).toEqual([2000, 4000]);
+			expect(summary.runs).toBe(1);
+			expect(summary.t0s).toEqual(trace.map((r: { t0: string }) => r.t0));
+			expect([summary.p50, summary.p90, summary.min]).toEqual([4000, 4000, 4000]);
+			expect(startupLaunches(trace, new Set(summary.t0s))).toHaveLength(0);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

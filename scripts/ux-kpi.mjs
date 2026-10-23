@@ -62,9 +62,14 @@ function shortName(path) {
 /** One entry per painted launch: total ms, the four phases, and Pi's per-extension import times. */
 export function startupLaunches(rows, excludeT0 = new Set()) {
 	const launches = [];
+	// Every process of one launch stamps the same `LEANPI_T0`, and the trace carries no
+	// process/run id, so one t0 is one launch. Duplicate `pi` rows (a second paint writer)
+	// reuse the origin; only the first is counted.
+	const seen = new Set();
 	for (const row of rows) {
 		const m = row.marks ?? {};
-		if (row.proc !== "pi" || m["editor-painted"] === undefined || excludeT0.has(row.t0)) continue;
+		if (row.proc !== "pi" || m["editor-painted"] === undefined || excludeT0.has(row.t0) || seen.has(row.t0)) continue;
+		seen.add(row.t0);
 		const imports = [];
 		for (const line of row.pi_timing ?? []) {
 			const match = /^(.*) module import: (\d+)ms$/.exec(line);
