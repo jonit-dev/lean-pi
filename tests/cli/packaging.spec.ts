@@ -74,7 +74,11 @@ describe("the published package", () => {
 			// package, and the shipped default entry the CLI/SDK attach is a real
 			// factory. A tarball that lost the dependency or flattened the default
 			// export would install but never register `subagent`.
-			const manifest = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")) as { dependencies?: Record<string, string> };
+			const manifest = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")) as {
+				bin?: Record<string, string>;
+				dependencies?: Record<string, string>;
+			};
+			expect(manifest.bin?.leanpi).toBe("bin/leanpi.js");
 			expect(manifest.dependencies?.["pi-subagents"]).toBe("0.70.1");
 			const shipped = (await import(/* @vite-ignore */ pathToFileURL(join(pkg, "dist", "index.js")).href)) as {
 				default?: unknown;
