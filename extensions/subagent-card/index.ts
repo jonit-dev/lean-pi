@@ -4,10 +4,8 @@
  * Runs on `session_start` rather than at load, because that is the first point at
  * which every extension has been loaded — the compact UI patches its tool rows
  * while loading, so this is the first moment its `subagent` row exists to be named.
- * `src/cli/subagent-card.ts` carries the why, and why this is a source entry: the
- * prototype patched here has to be the one the interactive mode renders with, and
- * only jiti's module map resolves `@earendil-works/*` to it. The card's facts come
- * from `dist/`, so the compiled extension and this entry share one copy of them.
+ * `src/cli/subagent-card.ts` carries the why. The compiled entry uses the native
+ * bridge to reach the exact prototype the interactive mode renders with.
  */
 import { ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { installSubagentCard } from "../../dist/cli/subagent-card.js";

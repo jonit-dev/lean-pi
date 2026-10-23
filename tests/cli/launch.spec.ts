@@ -34,7 +34,7 @@ describe("the leanpi launcher", () => {
 			"--extension",
 			plan.extension,
 			"--extension",
-			join(PACKAGE_ROOT, "extensions", "usage", "index.ts"),
+			join(PACKAGE_ROOT, "dist", "extensions", "local", "usage", "index.js"),
 			...bundled,
 			"--extension",
 			spinnerExtension(PACKAGE_ROOT),
@@ -74,17 +74,19 @@ describe("the leanpi launcher", () => {
 		writeFileSync(join(root, "dist", "leanpi.js"), "export {};\n");
 		// LeanPi's own entry for the subagent card ships with the package, so an
 		// installed one has it (PRD-052).
-		mkdirSync(join(root, "extensions", "subagent-card"), { recursive: true });
-		writeFileSync(join(root, "extensions", "subagent-card", "index.ts"), "export {};\n");
-		mkdirSync(join(root, "extensions", "compact-ui"), { recursive: true });
-		writeFileSync(join(root, "extensions", "compact-ui", "index.ts"), "export {};\n");
+		mkdirSync(join(root, "dist", "extensions", "local", "subagent-card"), { recursive: true });
+		writeFileSync(join(root, "dist", "extensions", "local", "subagent-card", "index.js"), "export {};\n");
+		mkdirSync(join(root, "dist", "extensions", "local", "compact-ui"), { recursive: true });
+		writeFileSync(join(root, "dist", "extensions", "local", "compact-ui", "index.js"), "export {};\n");
+		mkdirSync(join(root, "dist", "extensions", "pi-claude-code-ui", "extensions"), { recursive: true });
+		writeFileSync(join(root, "dist", "extensions", "pi-claude-code-ui", "extensions", "spinner.js"), "export {};\n");
 		expect(existsSync(join(root, "node_modules"))).toBe(false);
 		expect(resolvePiCli(root)).toBe(realpathSync(join(consumer, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")));
 		// The hoisted extensions are found and every path handed to Pi exists.
-		const spinner = realpathSync(join(consumer, "node_modules", "pi-claude-code-ui", "extensions", "spinner.ts"));
+		const spinner = join(root, "dist", "extensions", "pi-claude-code-ui", "extensions", "spinner.js");
 		const plan = launchPlan([], root);
 		expect(plan.bundled).toContain(spinner);
-		expect(plan.bundled).toContain(join(root, "extensions", "compact-ui", "index.ts"));
+		expect(plan.bundled).toContain(join(root, "dist", "extensions", "local", "compact-ui", "index.js"));
 		for (const path of plan.bundled) expect(existsSync(path)).toBe(true);
 	});
 
@@ -175,28 +177,23 @@ describe("the leanpi launcher", () => {
 		// machine; the adapter runs the same factory but owns the single `usage`
 		// registration, so Pi never renames it to usage:1/usage:2.
 		expect(plan.bundled.some((path) => path.includes("pi-usage-bars"))).toBe(false);
-		expect(plan.args).toContain(join(PACKAGE_ROOT, "extensions", "usage", "index.ts"));
-		expect(existsSync(join(PACKAGE_ROOT, "extensions", "usage", "index.ts"))).toBe(true);
+		expect(plan.args).toContain(join(PACKAGE_ROOT, "dist", "extensions", "local", "usage", "index.js"));
+		expect(existsSync(join(PACKAGE_ROOT, "dist", "extensions", "local", "usage", "index.js"))).toBe(true);
 	});
 
-	it("attaches the frames as TypeScript, so Pi loads them through jiti", () => {
-		// A compiled `.js` extension is imported by Node and gets this package's own
-		// pi-tui, so its patch lands on a prototype the interactive mode never
-		// draws with. The Loader class Pi renders with is only reachable through
-		// jiti's virtual-module map, which is keyed on a `.ts` extension.
-		expect(spinnerExtension(PACKAGE_ROOT).endsWith(".ts")).toBe(true);
+	it("attaches compiled frames through the native Pi module bridge", () => {
+		expect(spinnerExtension(PACKAGE_ROOT).endsWith(".js")).toBe(true);
 		expect(existsSync(spinnerExtension(PACKAGE_ROOT))).toBe(true);
 	});
 
 	it("attaches the subagent card after the compact UI, and only with it (PRD-052)", () => {
 		// The card is a prototype patch on the row the compact UI installs while
-		// loading, so it has to load after it and be a source entry (jiti resolves
-		// `@earendil-works/*` to the classes the interactive mode renders with).
+		// loading, so it has to load after it. The native bridge preserves identity.
 		// Under `--ui plain` the tool's own `renderCall` already names the agent, so
 		// there is nothing to take over and the entry is not attached.
 		const compact = bundledExtensions(PACKAGE_ROOT, "compact");
 		const card = subagentCardExtension(PACKAGE_ROOT);
-		expect(card.endsWith(".ts")).toBe(true);
+		expect(card.endsWith(".js")).toBe(true);
 		expect(existsSync(card)).toBe(true);
 		expect(compact.at(-1)).toBe(card);
 		expect(compact.indexOf(card)).toBeGreaterThan(compact.findIndex((path) => path.includes("pi-claude-code-ui")));
@@ -212,7 +209,7 @@ describe("the leanpi launcher", () => {
 		// `bash` is the interactive shell, while `execute` stays LeanPi's own
 		// bounded definition.
 		const path = backgroundTasksExtension(PACKAGE_ROOT);
-		expect(path).toBe(join(PACKAGE_ROOT, "extensions", "background", "index.ts"));
+		expect(path).toBe(join(PACKAGE_ROOT, "dist", "extensions", "local", "background", "index.js"));
 		expect(existsSync(path!)).toBe(true);
 		// Under both UIs, the default compact one included: the adapter holds the
 		// package's `bash` back until `session_start`, so `pi-claude-code-ui`'s own
@@ -292,7 +289,7 @@ describe("the leanpi launcher", () => {
 		expect(attached[0]).toBe(plan.extension);
 		// The `/usage` adapter follows LeanPi's own extension, then the bundled
 		// extensions, then the frames.
-		expect(attached.slice(1)).toEqual([join(PACKAGE_ROOT, "extensions", "usage", "index.ts"), ...bundledExtensions(), spinnerExtension(), foldCacheExtension()]);
+		expect(attached.slice(1)).toEqual([join(PACKAGE_ROOT, "dist", "extensions", "local", "usage", "index.js"), ...bundledExtensions(), spinnerExtension(), foldCacheExtension()]);
 		// Every bundled path is a real file, so Pi is never handed a missing one.
 		for (const path of bundledExtensions()) expect(existsSync(path)).toBe(true);
 		// Nothing LeanPi already owns: PRD-018 (LSP), PRD-019 (output reduction),

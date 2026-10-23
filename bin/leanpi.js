@@ -150,7 +150,7 @@ if (modelOverride.status === "unavailable") {
 	process.stderr.write(`leanpi: pi's /model could not be overridden — ${modelOverride.reason}. Pi's own selector will answer /model, and LeanPi's picker is unavailable until this patch is updated.\n`);
 }
 
-const child = spawn(process.execPath, [plan.cli, ...plan.args], {
+const child = spawn(process.execPath, ["--import", new URL("../dist/cli/extension-loader.js", import.meta.url).href, plan.cli, ...plan.args], {
 	stdio: "inherit",
 	env: { ...launchEnv(flags, jevWarned), ...startupTraceEnv() },
 });

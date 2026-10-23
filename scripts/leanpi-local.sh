@@ -7,19 +7,38 @@
 LEANPI_T0="$(date +%s%3N)"
 export LEANPI_T0
 root="$(dirname "$(dirname "$(readlink -f "$0")")")"
+exec 4>&1
 for candidate in "$(command -v node)" "$HOME"/.nvm/versions/node/v*/bin/node; do
 	[ -x "$candidate" ] || continue
-	"$candidate" -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 19) ? 0 : 1)' || continue
-	PATH="$(dirname "$candidate"):$PATH"
-	export PATH
-	# The `leanpi` package script's steps, run directly: `pnpm --dir` costs ~1s
-	# and runs the script inside the checkout, so the session opened there
-	# instead of in the caller's directory. `dev-build.mjs` transpiles stale
-	# files only; a full `tsc -b` type check here would add ~6.5s per launch.
-	node "$root/scripts/vendor-thinking-fold.mjs" 2>/dev/null &&
-		node "$root/scripts/dev-build.mjs" &&
-		exec node "$root/bin/leanpi.js" "$@"
-	exit
+	# fd 3 carries runtime rejection separately from valid CLI exit codes;
+	# fd 4 streams stdout to the caller while the shell waits for that result.
+	unsupported="$(PATH="$(dirname "$candidate"):$PATH" "$candidate" -e '
+		const [major, minor] = process.versions.node.split(".").map(Number);
+		const fs = require("fs");
+		if (major < 22 || (major === 22 && minor < 19)) {
+			fs.writeSync(3, "unsupported");
+			process.exit(1);
+		}
+		fs.closeSync(3);
+		fs.closeSync(4);
+		const { pathToFileURL } = require("url");
+		const root = process.argv[1];
+		process.argv[1] = `${root}/bin/leanpi.js`;
+		(async () => {
+			try {
+				const { vendorThinkingFold } = await import(pathToFileURL(`${root}/scripts/vendor-thinking-fold.mjs`));
+				vendorThinkingFold();
+			} catch {
+				process.exit(1);
+			}
+			const { devBuild } = await import(pathToFileURL(`${root}/scripts/dev-build.mjs`));
+			await devBuild();
+			await import(pathToFileURL(process.argv[1]));
+		})();
+	' "$root" "$@" 3>&1 1>&4)"
+	status=$?
+	[ -n "$unsupported" ] && continue
+	exit "$status"
 done
 echo "leanpi: no Node >= 22.19 found" >&2
 exit 1

@@ -17,6 +17,7 @@ describe("dev-build source maps", () => {
 		const root = mkdtempSync(join(tmpdir(), "leanpi-devbuild-"));
 		mkdirSync(join(root, "scripts"), { recursive: true });
 		writeFileSync(join(root, "scripts", "dev-build.mjs"), readFileSync(join(ROOT, "scripts", "dev-build.mjs"), "utf8"));
+		writeFileSync(join(root, "scripts", "build-extensions.mjs"), "export async function buildExtensions() {}\n");
 		writeFileSync(join(root, "tsconfig.json"), readFileSync(join(ROOT, "tsconfig.json"), "utf8"));
 		mkdirSync(join(root, "src", "cli"), { recursive: true });
 		writeFileSync(join(root, "src", "cli", "x.ts"), "export const a = 1;\n");

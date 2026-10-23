@@ -7,8 +7,7 @@
  * status bar, captures and drops its `usage` command, and registers LeanPi's own
  * inventory in its place. `src/cli/usage.ts` carries the why and the rows.
  *
- * Loaded by Pi through jiti, so it imports the built library entry the same way
- * the launcher's other `.ts` extensions resolve Pi's own modules.
+ * Precompiled with its dependencies; the native bridge resolves Pi imports.
  */
 import usageBars from "@hk_net/pi-usage-bars/extensions/usage-bars/index.ts";
 import { fetchClaudeUsageWithFallback, fetchCodexUsage } from "@hk_net/pi-usage-bars/extensions/usage-bars/core.ts";
