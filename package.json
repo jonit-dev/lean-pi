@@ -60,6 +60,8 @@
 		"sync:ponytail": "node scripts/sync-ponytail.mjs",
 		"bench:skills": "vitest run --config vitest.bench.config.ts",
 		"bench:cost-gate": "node bench/cost/gate.mjs",
+		"bench:startup": "node scripts/bench-startup.mjs",
+		"kpi": "node scripts/ux-kpi.mjs",
 		"bench": "node scripts/vendor-thinking-fold.mjs && tsc -p tsconfig.json && node dist/bench/lane.js",
 		"sync:skills": "node scripts/sync-skills.mjs",
 		"record:demo": "bash scripts/record-demo.sh"

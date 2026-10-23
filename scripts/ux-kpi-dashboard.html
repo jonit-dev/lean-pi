@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LeanPi UX KPIs</title>
+<!-- Template for scripts/ux-kpi.mjs: it replaces the DATA marker below with the report JSON. -->
+<style>
+:root {
+	color-scheme: light;
+	--page: #f4f4f2; --surface-1: #fcfcfb; --line: #e4e3df; --grid: #ecebe7;
+	--text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #77766f;
+	--series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+	--good: #0ca30c; --critical: #d03b3b; --warning: #fab219;
+}
+@media (prefers-color-scheme: dark) {
+	:root:where(:not([data-theme="light"])) {
+		color-scheme: dark;
+		--page: #111110; --surface-1: #1a1a19; --line: #2f2f2c; --grid: #262624;
+		--text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+		--series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+	}
+}
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--page: #111110; --surface-1: #1a1a19; --line: #2f2f2c; --grid: #262624;
+	--text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+	--series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text-primary); font: 14px/1.45 system-ui, sans-serif; padding: 24px 16px 48px; }
+main { max-width: 1100px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 4px; }
+.sub, .note { color: var(--text-secondary); margin: 0 0 12px; font-size: 13px; }
+section { background: var(--surface-1); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-top: 16px; }
+.hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; align-items: end; }
+.big { font-size: 40px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.label { color: var(--text-secondary); font-size: 12px; }
+.chip { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--text-secondary); margin: 4px 10px 0 0; }
+.chip i { font-style: normal; font-weight: 700; }
+.chip.pass i { color: var(--good); } .chip.fail i { color: var(--critical); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.tile .value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.chart { width: 100%; }
+.chart svg, .spark svg { display: block; width: 100%; overflow: visible; }
+.axis text, .lbl { fill: var(--text-muted); font-size: 11px; }
+.lbl.strong { fill: var(--text-primary); font-weight: 600; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.target { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 4 4; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+.legend span.line::before { height: 2px; vertical-align: 3px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+td, th { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { color: var(--text-muted); font-weight: 500; font-size: 12px; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+code { font-size: 12px; }
+#tip { position: fixed; pointer-events: none; background: var(--text-primary); color: var(--surface-1); font-size: 12px; padding: 6px 8px; border-radius: 6px; white-space: pre-line; max-width: 320px; z-index: 10; }
+</style>
+</head>
+<body>
+<main>
+	<h1>LeanPi UX KPIs</h1>
+	<p class="sub" id="sub"></p>
+	<section class="hero" id="hero" aria-label="Time to ready"></section>
+	<section>
+		<h2>Every launch: time to ready</h2>
+		<p class="note">One dot per launch, from the shell command to a usable editor. Line: median of the last 10 launches. Dashed: target. A dot at the top edge is off the scale; hover for its value.</p>
+		<div class="legend"><span style="--c: var(--series-1)">launch</span><span class="line" style="--c: var(--text-primary)">rolling median</span></div>
+		<div class="chart" id="launches"></div>
+	</section>
+	<section>
+		<h2>Where startup time goes, per day (median of each phase)</h2>
+		<p class="note">launcher: shell wrapper, build check, Node start · pi boot: Pi loads until the LeanPi extension runs · extensions + runtime: the other extensions and the session · paint: session start to the first editor frame.</p>
+		<div class="legend" id="phase-legend"></div>
+		<div class="chart" id="phases"></div>
+	</section>
+	<section>
+		<h2>Startup bench (controlled runs, <code>pnpm bench:startup</code>)</h2>
+		<p class="note">Organic launches vary with the project and the machine load. Bench runs repeat one launch in this repo, so use them to judge a change.</p>
+		<div class="legend"><span class="line" style="--c: var(--series-1)">p50</span><span class="line" style="--c: var(--series-2)">p90</span></div>
+		<div class="chart" id="bench"></div>
+		<div class="scroll"><table id="bench-table"></table></div>
+	</section>
+	<section>
+		<h2>Other KPIs</h2>
+		<p class="note">Line: daily value over the last 30 days. Dashed: target.</p>
+		<div class="grid" id="tiles"></div>
+	</section>
+	<section>
+		<h2>Slowest extension imports (median per launch)</h2>
+		<div class="chart" id="imports"></div>
+	</section>
+	<section>
+		<h2>All KPIs</h2>
+		<div class="scroll"><table id="kpi-table"></table></div>
+	</section>
+</main>
+<div id="tip" role="tooltip" hidden></div>
+<script>const DATA = /*DATA*/null;</script>
+<script>
+const NS = "http://www.w3.org/2000/svg";
+const $ = (id) => document.getElementById(id);
+const PHASE_COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)"];
+const DAY = 86400000;
+
+function fmt(v, unit) {
+	if (v === undefined || v === null) return "–";
+	if (unit === "ms") return v >= 10000 ? (v / 1000).toFixed(1) + " s" : Math.round(v) + " ms";
+	if (unit === "%") return v.toFixed(1) + "%";
+	return String(v);
+}
+const day = (t) => new Date(t).toISOString().slice(5, 10);
+const when = (t) => new Date(t).toISOString().slice(0, 16).replace("T", " ");
+function median(xs) {
+	if (!xs.length) return undefined;
+	const s = [...xs].sort((a, b) => a - b);
+	return s[Math.ceil(s.length / 2) - 1];
+}
+function el(tag, attrs, parent, text) {
+	const node = document.createElementNS(NS, tag);
+	for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+	if (text !== undefined) node.textContent = text;
+	parent.appendChild(node);
+	return node;
+}
+function niceMax(v) {
+	const step = 10 ** Math.floor(Math.log10(v || 1));
+	return [1, 2, 3, 4, 6, 8, 10].map((m) => m * step).find((m) => m >= v);
+}
+function chip(pass) {
+	if (pass === undefined || pass === null) return `<span class="chip"><i>–</i>no data</span>`;
+	return pass ? `<span class="chip pass"><i>✓</i>on target</span>` : `<span class="chip fail"><i>✕</i>off target</span>`;
+}
+function delta(k) {
+	if (k.value === undefined || k.prev === undefined || k.value === k.prev) return "";
+	const better = k.value < k.prev;
+	return ` · ${better ? "▼" : "▲"} ${fmt(Math.abs(k.value - k.prev), k.unit)} ${better ? "better" : "worse"} than the window before`;
+}
+
+/** An SVG frame with a y axis from 0 to `ymax`; returns scales. */
+function frame(container, height, ymax, unit, margin = { l: 52, r: 56, t: 10, b: 26 }) {
+	container.textContent = "";
+	const w = Math.max(container.clientWidth, 120);
+	const svg = el("svg", { viewBox: `0 0 ${w} ${height}`, height, role: "img" }, container);
+	const iw = w - margin.l - margin.r;
+	const ih = height - margin.t - margin.b;
+	const y = (v) => margin.t + ih - (Math.min(v, ymax) / ymax) * ih;
+	const axis = el("g", { class: "axis" }, svg);
+	for (let i = 0; i <= 4; i++) {
+		const v = (ymax / 4) * i;
+		el("line", { class: "gridline", x1: margin.l, x2: margin.l + iw, y1: y(v), y2: y(v) }, axis);
+		el("text", { x: margin.l - 8, y: y(v) + 4, "text-anchor": "end" }, axis, fmt(v, unit));
+	}
+	return { svg, axis, w, iw, ih, y, margin };
+}
+function targetLine(f, target, unit) {
+	el("line", { class: "target", x1: f.margin.l, x2: f.margin.l + f.iw, y1: f.y(target), y2: f.y(target) }, f.svg);
+	el("text", { class: "lbl", x: f.margin.l + f.iw + 4, y: f.y(target) + 4 }, f.svg, `target ${fmt(target, unit)}`);
+}
+function hit(parent, attrs, tip) {
+	const node = el(attrs.tag ?? "circle", { ...attrs, fill: "transparent", "data-tip": tip }, parent);
+	node.removeAttribute("tag");
+	return node;
+}
+
+function renderHero() {
+	const [p50, p90] = ["ready_p50", "ready_p90"].map((id) => DATA.kpis.find((k) => k.id === id));
+	const phases = Object.entries(DATA.phases).sort((a, b) => b[1] - a[1]);
+	$("hero").innerHTML = [p50, p90]
+		.map((k) => `<div><div class="label">${k.label}</div><div class="big">${fmt(k.value, k.unit)}</div><div>${chip(k.pass)}<span class="chip">target ≤ ${fmt(k.target, k.unit)}${delta(k)}</span></div></div>`)
+		.join("") +
+		`<div><div class="label">Largest phase (median)</div><div class="big" style="font-size:24px">${phases[0] ? phases[0][0] : "–"}</div><div class="chip">${phases[0] ? fmt(phases[0][1], "ms") + " of " + fmt(phases.reduce((a, p) => a + p[1], 0), "ms") : ""}</div></div>`;
+}
+
+function renderLaunches() {
+	const box = $("launches");
+	const pts = DATA.launches;
+	const target = DATA.kpis.find((k) => k.id === "ready_p50").target;
+	if (!pts.length) return (box.textContent = "No launches in this window.");
+	const sorted = pts.map((p) => p.ms).sort((a, b) => a - b);
+	const ymax = niceMax(Math.max(sorted[Math.floor(sorted.length * 0.95)] * 1.1, target * 1.5));
+	const f = frame(box, 280, ymax, "ms");
+	const t0 = DATA.windowStart, t1 = Date.parse(DATA.generated);
+	const x = (t) => f.margin.l + ((t - t0) / (t1 - t0)) * f.iw;
+	for (let i = 0; i <= 5; i++) {
+		const t = t0 + ((t1 - t0) / 5) * i;
+		el("text", { x: x(t), y: f.margin.t + f.ih + 18, "text-anchor": "middle" }, f.axis, day(t));
+	}
+	targetLine(f, target, "ms");
+	const dots = el("g", {}, f.svg);
+	for (const p of pts) {
+		const off = p.ms > ymax;
+		const cy = f.y(p.ms);
+		if (off) el("path", { d: `M${x(p.t) - 5},${cy + 4} L${x(p.t)},${cy - 4} L${x(p.t) + 5},${cy + 4} Z`, fill: "var(--series-1)" }, dots);
+		else el("circle", { cx: x(p.t), cy, r: 4, fill: "var(--series-1)", "fill-opacity": 0.75, stroke: "var(--surface-1)", "stroke-width": 2 }, dots);
+		const tip = `${when(p.t)} UTC · ${p.cwd}\nTime to ready ${fmt(p.ms, "ms")}\n` + Object.entries(p.phases).map(([n, v]) => `${n}: ${fmt(v, "ms")}`).join("\n");
+		hit(dots, { cx: x(p.t), cy, r: 9 }, tip);
+	}
+	const rolling = pts.map((p, i) => [p.t, median(pts.slice(Math.max(0, i - 9), i + 1).map((q) => q.ms))]);
+	el("path", { d: rolling.map(([t, v], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${f.y(v).toFixed(1)}`).join(" "), fill: "none", stroke: "var(--text-primary)", "stroke-width": 2, "pointer-events": "none" }, f.svg);
+	const last = rolling[rolling.length - 1];
+	el("text", { class: "lbl strong", x: x(last[0]) + 6, y: f.y(last[1]) - 6 }, f.svg, `median ${fmt(last[1], "ms")}`);
+}
+
+function renderPhases() {
+	const box = $("phases");
+	const names = Object.keys(DATA.phases);
+	$("phase-legend").innerHTML = names.map((n, i) => `<span style="--c:${PHASE_COLORS[i]}">${n}</span>`).join("");
+	const byDay = new Map();
+	for (const p of DATA.launches) {
+		const d = Math.floor(p.t / DAY);
+		if (!byDay.has(d)) byDay.set(d, []);
+		byDay.get(d).push(p);
+	}
+	if (!byDay.size) return (box.textContent = "No launches in this window.");
+	const days = [...byDay.entries()].sort((a, b) => a[0] - b[0]).map(([d, ps]) => ({ d, n: ps.length, phases: names.map((n) => median(ps.map((p) => p.phases[n]))) }));
+	const ymax = niceMax(Math.max(...days.map((d) => d.phases.reduce((a, b) => a + b, 0))));
+	const f = frame(box, 240, ymax, "ms");
+	const band = f.iw / days.length;
+	const bw = Math.min(28, band * 0.7);
+	days.forEach((d, i) => {
+		const cx = f.margin.l + band * i + band / 2;
+		let acc = 0;
+		d.phases.forEach((v, j) => {
+			const top = f.y(acc + v), bottom = f.y(acc);
+			if (bottom - top > 0) el("rect", { x: cx - bw / 2, y: top, width: bw, height: bottom - top, fill: PHASE_COLORS[j], stroke: "var(--surface-1)", "stroke-width": 2 }, f.svg);
+			acc += v;
+		});
+		if (i % Math.ceil(44 / band) === 0) el("text", { x: cx, y: f.margin.t + f.ih + 18, "text-anchor": "middle" }, f.axis, day(d.d * DAY));
+		const tip = `${day(d.d * DAY)} · ${d.n} launch${d.n === 1 ? "" : "es"}\n` + names.map((n, j) => `${n}: ${fmt(d.phases[j], "ms")}`).join("\n") + `\nsum of medians: ${fmt(acc, "ms")}`;
+		hit(f.svg, { tag: "rect", x: cx - band / 2, y: f.margin.t, width: band, height: f.ih }, tip);
+	});
+}
+
+function renderBench() {
+	const box = $("bench");
+	const runs = DATA.bench;
+	const target = DATA.kpis.find((k) => k.id === "ready_p50").target;
+	if (!runs.length) {
+		box.textContent = "No bench runs yet. Run: pnpm bench:startup";
+		return;
+	}
+	const ymax = niceMax(Math.max(...runs.map((r) => r.p90), target * 1.5));
+	const f = frame(box, 240, ymax, "ms");
+	const x = (i) => f.margin.l + (runs.length === 1 ? f.iw / 2 : (i / (runs.length - 1)) * f.iw);
+	targetLine(f, target, "ms");
+	runs.forEach((r, i) => {
+		if (i % Math.ceil(60 / (f.iw / Math.max(1, runs.length - 1))) === 0) el("text", { x: x(i), y: f.margin.t + f.ih + 18, "text-anchor": "middle" }, f.axis, r.sha.slice(0, 7));
+	});
+	[["p50", "var(--series-1)"], ["p90", "var(--series-2)"]].forEach(([key, color]) => {
+		el("path", { d: runs.map((r, i) => `${i ? "L" : "M"}${x(i)},${f.y(r[key])}`).join(" "), fill: "none", stroke: color, "stroke-width": 2 }, f.svg);
+		runs.forEach((r, i) => el("circle", { cx: x(i), cy: f.y(r[key]), r: 4, fill: color, stroke: "var(--surface-1)", "stroke-width": 2 }, f.svg));
+		const last = runs[runs.length - 1];
+		el("text", { class: "lbl strong", x: x(runs.length - 1) + 8, y: f.y(last[key]) + 4 }, f.svg, key);
+	});
+	runs.forEach((r, i) => {
+		const tip = `${when(Date.parse(r.date))} UTC · ${r.sha} · pi ${r.pi ?? "?"} · ${r.host ?? ""}\np50 ${fmt(r.p50, "ms")} · p90 ${fmt(r.p90, "ms")} · ${r.runs} runs` + (r.note ? `\n${r.note}` : "");
+		hit(f.svg, { tag: "rect", x: x(i) - 12, y: f.margin.t, width: 24, height: f.ih }, tip);
+	});
+	const rows = runs.slice().reverse().slice(0, 15).map((r) => {
+		const tr = document.createElement("tr");
+		for (const [v, cls] of [[when(Date.parse(r.date)), ""], [r.sha, ""], [r.pi ?? "", ""], [r.runs, "num"], [fmt(r.p50, "ms"), "num"], [fmt(r.p90, "ms"), "num"], [fmt(r.min, "ms"), "num"], [r.note ?? "", ""]]) {
+			const td = document.createElement("td");
+			td.className = cls;
+			td.textContent = v;
+			tr.appendChild(td);
+		}
+		return tr;
+	});
+	$("bench-table").innerHTML = `<thead><tr><th>date (UTC)</th><th>sha</th><th>pi</th><th class="num">runs</th><th class="num">p50</th><th class="num">p90</th><th class="num">min</th><th>note</th></tr></thead>`;
+	const body = document.createElement("tbody");
+	rows.forEach((r) => body.appendChild(r));
+	$("bench-table").appendChild(body);
+}
+
+function renderTiles() {
+	const others = DATA.kpis.filter((k) => !k.id.startsWith("ready_"));
+	$("tiles").innerHTML = others.map((k) => `<div class="tile" id="tile-${k.id}"><div class="label">${k.label}</div><div class="value">${fmt(k.value, k.unit)}</div><div>${chip(k.pass)}<span class="chip">target ≤ ${fmt(k.target, k.unit)}</span></div><div class="spark"></div></div>`).join("");
+	for (const k of others) {
+		const box = $("tile-" + k.id).querySelector(".spark");
+		const vals = k.series.filter((v) => v !== null);
+		const ymax = niceMax(Math.max(k.target, ...vals) || 1);
+		const f = frame(box, 70, ymax, k.unit, { l: 52, r: 8, t: 6, b: 6 });
+		f.axis.querySelectorAll("line, text").forEach((n, i) => i % 4 > 1 && n.remove());
+		el("line", { class: "target", x1: f.margin.l, x2: f.margin.l + f.iw, y1: f.y(k.target), y2: f.y(k.target) }, f.svg);
+		const x = (i) => f.margin.l + (i / 29) * f.iw;
+		const today = Date.parse(DATA.generated);
+		k.series.forEach((v, i) => {
+			if (v === null) return;
+			el("circle", { cx: x(i), cy: f.y(v), r: 2.5, fill: "var(--series-1)" }, f.svg);
+			hit(f.svg, { cx: x(i), cy: f.y(v), r: 7 }, `${day(today - (29 - i) * DAY)}: ${fmt(v, k.unit)}`);
+		});
+		const segs = [];
+		k.series.forEach((v, i) => v !== null && segs.push(`${segs.length ? "L" : "M"}${x(i)},${f.y(v)}`));
+		el("path", { d: segs.join(" "), fill: "none", stroke: "var(--series-1)", "stroke-width": 1.5, "pointer-events": "none" }, f.svg);
+	}
+}
+
+function renderImports() {
+	const box = $("imports");
+	const rows = DATA.imports;
+	if (!rows.length) return (box.textContent = "No Pi timing data in this window.");
+	box.textContent = "";
+	const w = Math.max(box.clientWidth, 280);
+	const labelW = Math.min(300, w * 0.45);
+	const rowH = 26;
+	const svg = el("svg", { viewBox: `0 0 ${w} ${rows.length * rowH}`, height: rows.length * rowH, role: "img" }, box);
+	const max = rows[0].p50 || 1;
+	const bw = w - labelW - 70;
+	rows.forEach((r, i) => {
+		const y = i * rowH;
+		const name = r.name.length > 44 ? "…" + r.name.slice(-43) : r.name;
+		el("text", { class: "lbl", x: labelW - 8, y: y + 17, "text-anchor": "end" }, svg, name);
+		el("rect", { x: labelW, y: y + 6, width: Math.max(2, (r.p50 / max) * bw), height: 14, rx: 3, fill: "var(--series-1)" }, svg);
+		el("text", { class: "lbl strong", x: labelW + (r.p50 / max) * bw + 6, y: y + 17 }, svg, fmt(r.p50, "ms"));
+		hit(svg, { tag: "rect", x: 0, y, width: w, height: rowH }, `${r.name}\nmodule import median ${fmt(r.p50, "ms")}`);
+	});
+}
+
+function renderTable() {
+	$("kpi-table").innerHTML = `<thead><tr><th>KPI</th><th class="num">value</th><th class="num">target</th><th class="num">window before</th><th>status</th></tr></thead><tbody>` +
+		DATA.kpis.map((k) => `<tr><td>${k.label}</td><td class="num">${fmt(k.value, k.unit)}</td><td class="num">≤ ${fmt(k.target, k.unit)}</td><td class="num">${fmt(k.prev, k.unit)}</td><td>${chip(k.pass)}</td></tr>`).join("") + "</tbody>";
+}
+
+function render() {
+	$("sub").textContent = `Last ${DATA.days} days · ${DATA.samples.launches} launches · ${DATA.samples.turns} turns · generated ${when(Date.parse(DATA.generated))} UTC · regenerate with: pnpm kpi`;
+	renderHero();
+	renderLaunches();
+	renderPhases();
+	renderBench();
+	renderTiles();
+	renderImports();
+	renderTable();
+}
+
+const tip = $("tip");
+document.addEventListener("pointermove", (e) => {
+	const target = e.target.closest ? e.target.closest("[data-tip]") : null;
+	if (!target) return void (tip.hidden = true);
+	tip.textContent = target.getAttribute("data-tip");
+	tip.hidden = false;
+	const r = tip.getBoundingClientRect();
+	tip.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 8) + "px";
+	tip.style.top = (e.clientY + 14 + r.height > innerHeight ? e.clientY - r.height - 10 : e.clientY + 14) + "px";
+});
+let resizeTimer;
+addEventListener("resize", () => {
+	clearTimeout(resizeTimer);
+	resizeTimer = setTimeout(render, 150);
+});
+render();
+</script>
+</body>
+</html>
