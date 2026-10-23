@@ -99,7 +99,8 @@ export function sessionTurns(rows) {
 			turns.push(turn);
 		} else if (role === "assistant" && turn) {
 			turn.firstReplyMs ??= Date.parse(row.timestamp) - turn.t;
-			turn.end = row.message.stopReason;
+			const { stopReason, errorMessage } = row.message;
+			turn.end = stopReason === "error" && errorMessage === "This operation was aborted" ? "aborted" : stopReason;
 		}
 	}
 	return turns;

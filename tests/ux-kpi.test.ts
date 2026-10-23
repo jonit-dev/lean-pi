@@ -46,6 +46,26 @@ describe("ux-kpi", () => {
 		]);
 	});
 
+	it("rates the aborted-operation error as an abort and other errors as errors", () => {
+		const failure = (ms: number, stopReason: string, errorMessage: string) => ({
+			type: "message",
+			timestamp: at(1, ms),
+			message: { role: "assistant", stopReason, errorMessage },
+		});
+		const turns = sessionTurns([
+			user(at(1)),
+			failure(1000, "error", "This operation was aborted"),
+			user(at(1, 60_000)),
+			failure(61_000, "error", "429 GoUsageLimitError"),
+			user(at(1, 120_000)),
+			failure(121_000, "error", "503 server_error"),
+		]);
+		const report = computeReport({ launches: [], turns, crashTimes: [], now, days: 7 });
+		const kpi = (id: string) => report.kpis.find((k: { id: string }) => k.id === id);
+		expect(kpi("abort_rate")!.value).toBeCloseTo(100 / 3);
+		expect(kpi("error_rate")!.value).toBeCloseTo(200 / 3);
+	});
+
 	it("rates answered turns only, compares windows, and renders", () => {
 		const turns = [
 			...sessionTurns([user(at(1)), assistant(at(1, 2000), "stop"), user(at(1, 9000)), assistant(at(1, 13_000), "error")]),
