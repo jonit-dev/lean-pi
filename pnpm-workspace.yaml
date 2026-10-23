@@ -9,13 +9,6 @@ allowBuilds:
   # leaving the question open and the error firing every time.
   '@google/genai': false
   protobufjs: false
-minimumReleaseAgeExclude:
-  - '@earendil-works/chord@0.86.1 || 0.87.0 || 0.87.1'
-  - '@earendil-works/pi-agent-core@0.86.1 || 0.87.0 || 0.87.1'
-  - '@earendil-works/pi-ai@0.86.1 || 0.87.0 || 0.87.1'
-  - '@earendil-works/pi-coding-agent@0.86.1 || 0.87.0 || 0.87.1'
-  - '@earendil-works/pi-telemetry@0.86.1 || 0.87.0 || 0.87.1'
-  - '@earendil-works/pi-tui@0.86.1 || 0.87.0 || 0.87.1'
 overrides:
   # One copy of each, Pi's own pins: pi-subagents and LeanPi each resolved their
   # own, so every launch loaded three typeboxes (1,707 modules) and three yamls.

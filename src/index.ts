@@ -8,7 +8,8 @@
  *
  * The default export attaches LeanPi and its bundled delegation package.
  */
-import type { AgentSession, ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -207,7 +208,7 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.Pr
 		// endpoint that does not speak OpenAI's `reasoning_effort` has to say so.
 		// Without the declaration Pi sends no thinking control at all and the model
 		// thinks at the server's default on every call.
-		const compat = backend.compat !== null && typeof backend.compat === "object" && !Array.isArray(backend.compat) ? (backend.compat as ProviderModelConfig["compat"]) : undefined;
+		const compat = backend.compat !== null && typeof backend.compat === "object" && !Array.isArray(backend.compat) ? (backend.compat as Model<Api>["compat"]) : undefined;
 		pi.registerProvider(name, {
 			name: backend.name ?? name,
 			baseUrl: backend.baseUrl,
@@ -742,7 +743,8 @@ function installTurnHooks(
 	// that compiled a contract writes its §52 record here: this path owns no
 	// session object, so the verdict is read off the executor's own outcome.
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (isTurnInFlight()) return;
+		// Pi 1.2+ also fires this for extension-triggered runs, which carry no prompt to route.
+		if (event.messageType !== "user" || isTurnInFlight()) return;
 		// PRD-015's accumulator is created before the lanes run, not after: the
 		// executor lane's backend calls are what the record has to carry, and they
 		// are spent while the lane runs.
