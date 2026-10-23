@@ -39,14 +39,24 @@ export function writeStartupTrace(proc: string, extra: Record<string, unknown> =
 
 /**
  * The child's half: marks the extension load and `session_start`, captures
- * Pi's timing block, and writes the line when the editor's border first
- * reaches stdout — the moment the operator can start typing.
+ * Pi's timing block, and writes the line once the editor's border has first
+ * reached stdout — the moment the operator can start typing — and
+ * `session_start` has fired, whichever comes last.
  */
 export function traceChildStartup(pi: Pick<ExtensionAPI, "on">, path?: string): void {
 	if (process.env.LEANPI_T0 === undefined) return; // not launched by `leanpi`
 	mark("leanpi-extension");
-	pi.on("session_start", () => mark("session_start"));
 	const piTiming: string[] = [];
+	// Pi >= 1.x paints the editor before `session_start`; the line waits for both.
+	const writeWhenReady = () => {
+		if (marks["editor-painted"] === undefined || marks.session_start === undefined) return;
+		writeStartupTrace("pi", { pi_timing: piTiming, cwd: process.cwd(), term: process.env.TERM_PROGRAM ?? process.env.TERM }, path);
+	};
+	pi.on("session_start", () => {
+		if (marks.session_start !== undefined) return; // only the launch's first one
+		mark("session_start");
+		writeWhenReady();
+	});
 	const error = console.error;
 	if (process.env.LEANPI_CAPTURE_PI_TIMING === "1") {
 		let inBlock = false;
@@ -64,7 +74,7 @@ export function traceChildStartup(pi: Pick<ExtensionAPI, "on">, path?: string): 
 			process.stdout.write = write;
 			console.error = error;
 			mark("editor-painted");
-			writeStartupTrace("pi", { pi_timing: piTiming, cwd: process.cwd(), term: process.env.TERM_PROGRAM ?? process.env.TERM }, path);
+			writeWhenReady();
 		}
 		return (write as (...args: unknown[]) => boolean).call(this, chunk, ...rest);
 	} as typeof process.stdout.write;

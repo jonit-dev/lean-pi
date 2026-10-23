@@ -889,7 +889,7 @@ describe("the status line reaches the footer", () => {
 		const handler = handlers.get("before_agent_start");
 		expect(handler).toBeDefined();
 		await handler?.(
-			{ prompt: "rename the helper in src/target.ts", systemPrompt: "you are an assistant" },
+			{ messageType: "user", prompt: "rename the helper in src/target.ts", systemPrompt: "you are an assistant" },
 			{
 				// Pi has no model for the `strong` class here — it is a vendor CLI —
 				// so `setModel` is skipped and Pi keeps running the session model.

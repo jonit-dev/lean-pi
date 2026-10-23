@@ -106,13 +106,17 @@ describe("session-model fallback after a provider limit", () => {
 			},
 		});
 
-		await handlers.get("before_agent_start")?.({ prompt: "first", systemPrompt: "sys" }, ctx);
+		// Pi 1.2+ also fires the event for extension-triggered runs; those carry no prompt and are not routed.
+		await handlers.get("before_agent_start")?.({ messageType: "custom", message: { role: "custom" }, systemPrompt: "sys" }, ctx);
+		expect(installed).toEqual([]);
+
+		await handlers.get("before_agent_start")?.({ messageType: "user", prompt: "first", systemPrompt: "sys" }, ctx);
 		expect(installed.at(-1)).toEqual({ provider: "metered", id: "leanpi-test-flash" });
 
 		// The turn runs, and Pi's loop reports the 429 the provider sent.
 		await handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "error", errorMessage: '429: {"type":"GoUsageLimitError"}' }] }, ctx);
 
-		await handlers.get("before_agent_start")?.({ prompt: "second", systemPrompt: "sys" }, ctx);
+		await handlers.get("before_agent_start")?.({ messageType: "user", prompt: "second", systemPrompt: "sys" }, ctx);
 		// `balanced` and `quick` share `metered`, so the ladder reaches `strong`,
 		// which Pi registers under its CLI provider name.
 		expect(installed.at(-1)).toEqual({ provider: "subscription-cli", id: "leanpi-test-opus" });
@@ -134,10 +138,10 @@ describe("session-model fallback after a provider limit", () => {
 			},
 		});
 
-		await handlers.get("before_agent_start")?.({ prompt: "first", systemPrompt: "sys" }, ctx);
+		await handlers.get("before_agent_start")?.({ messageType: "user", prompt: "first", systemPrompt: "sys" }, ctx);
 		// Esc: Pi's stopReason is "error" but the text is the operator's, not a limit.
 		await handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "error", errorMessage: "This operation was aborted" }] }, ctx);
-		await handlers.get("before_agent_start")?.({ prompt: "second", systemPrompt: "sys" }, ctx);
+		await handlers.get("before_agent_start")?.({ messageType: "user", prompt: "second", systemPrompt: "sys" }, ctx);
 
 		expect(installed.at(-1)).toEqual({ provider: "metered", id: "leanpi-test-flash" });
 		expect(notices.some((notice) => notice.includes("rate-limited"))).toBe(false);
