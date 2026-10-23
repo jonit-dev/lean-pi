@@ -22,7 +22,7 @@ import { routePins, setRoutePins } from "../compiler/pins.js";
 import { discoverInventory, modelFactsLine, type DiscoveredModel } from "../cli/allocate.js";
 import { modelPicker } from "../cli/model-picker.js";
 import { manualStatusLine } from "../cli/statusline.js";
-import { learnedModels } from "../backends/cli-provider.js";
+import { learnedModels } from "../backends/learned-models.js";
 import type { HarnessVendor } from "../backends/harness.js";
 import type { CommandContext, CommandRegistry, CommandResult } from "./registry.js";
 import type { CommandSurface } from "./surface.js";

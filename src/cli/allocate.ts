@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { VENDOR_MODEL_DEFAULT, type HarnessVendor } from "../backends/harness.js";
-import { learnedModels } from "../backends/cli-provider.js";
+import { learnedModels } from "../backends/learned-models.js";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
 import { BUNDLED_RANKING_PATH, matchModel } from "../capability/index.js";
 import { parseRankingFile } from "../capability/schema.js";
