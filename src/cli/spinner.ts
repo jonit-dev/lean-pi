@@ -13,13 +13,8 @@
  * active UI; if the vendor's loader patch grows a behaviour this copy lacks,
  * take the frames upstream instead of widening this.
  *
- * This file is the extension Pi is handed — the `.ts` source, not its build
- * output — and that is the reason the glyphs were still Claude's stars. Pi
- * loads a `.ts` extension through jiti, which resolves `@earendil-works/pi-tui`
- * through its virtual-module map to the Loader class the interactive mode
- * renders with. A compiled `.js` extension is imported by Node itself, so it
- * gets this package's own copy of pi-tui and patches a prototype nothing draws
- * with. Keep it TypeScript, and keep the import a value import.
+ * The launcher attaches the compiled JavaScript. Its native module bridge
+ * resolves this value import to the Loader embedded in Pi's running CLI.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Loader } from "@earendil-works/pi-tui";

@@ -11,6 +11,7 @@ import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-
 import { getKeybindings, KeybindingsManager, MouseRegion, setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import { applyThinkingFoldPatches } from "../../scripts/vendor-thinking-fold.mjs";
+import ts from "typescript";
 import { createCommandRegistry } from "../../src/index.js";
 import { registerThinkingFoldCommand } from "../../src/commands/thinking-fold.js";
 import { bundledExtensions, dependencyDir, foldCacheExtension, launchPlan, packageRoot, thinkingFoldExtension } from "../../src/cli/launch.js";
@@ -56,16 +57,14 @@ describe("/thinking-fold", () => {
 		// user then sees, rendered by `pi-claude-code-ui`.
 		const folded = launchPlan([], undefined, undefined, "compact", true);
 		const live = launchPlan([], undefined, undefined, "compact", false);
-		// `.ts`, and that is the whole point: Pi native-imports a `.js` extension
-		// instead of routing it through jiti, so the vendor's `index.min.js`
-		// patched a second copy of `AssistantMessageComponent` and folded nothing
-		// while loading without error. The vendored copy is the same bytes renamed.
-		expect(folded.bundled.filter((path) => path.includes("pi-thinking-fold"))).toEqual([expect.stringMatching(/\.ts$/)]);
+		// The launcher attaches the precompiled sidecar; its Pi imports resolve to
+		// the same classes as the host extension.
+		expect(folded.bundled.filter((path) => path === thinkingFoldExtension())).toEqual([thinkingFoldExtension()]);
 		// Before the compact UI, and that order is the fix: folding delegates to
 		// whichever `updateContent` was on the prototype when it loaded, and only
 		// Pi's own honours `hideThinkingBlock`. Attached after `pi-claude-code-ui`,
 		// every trace streamed in full under the default `--ui compact`.
-		const order = folded.bundled.map((path) => (path.includes("pi-thinking-fold") ? "fold" : path.includes("pi-claude-code-ui") ? "cc-ui" : "other"));
+		const order = folded.bundled.map((path) => (path === thinkingFoldExtension() ? "fold" : path.includes("pi-claude-code-ui") ? "cc-ui" : "other"));
 		expect(order.indexOf("fold")).toBeLessThan(order.indexOf("cc-ui"));
 		expect(live.bundled.some((path) => path.includes("pi-thinking-fold"))).toBe(false);
 		expect(live.bundled.some((path) => path.includes("pi-claude-code-ui"))).toBe(true);
@@ -101,7 +100,13 @@ describe("/thinking-fold", () => {
 		const upstream = readFileSync(installed as string, "utf8");
 		const expected = applyThinkingFoldPatches(upstream);
 		expect(expected).not.toBe(upstream);
-		expect(readFileSync(thinkingFoldExtension(), "utf8")).toBe(expected);
+		const source = join(packageRoot(), "vendor", "pi-thinking-fold", "index.min.ts");
+		expect(readFileSync(source, "utf8")).toBe(expected);
+		const compiled = ts.transpileModule(expected, {
+			fileName: source,
+			compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, isolatedModules: true, esModuleInterop: true },
+		}).outputText;
+		expect(readFileSync(thinkingFoldExtension(), "utf8")).toBe(compiled);
 		// The working-status label is forced generic at the call site; the summary
 		// lookup that drives the linger timing is left in place.
 		expect(expected).toContain("let n=U;if(n===V)return");

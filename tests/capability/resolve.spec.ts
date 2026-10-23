@@ -2,11 +2,11 @@
  * PRD-024 Phase 3 — AC-5: `resolveRole()` consults the ranking, and the static
  * `models:` map is the provable fallback when the ranking cannot be read.
  *
- * PRD-053 AC-1: a role bound in `models:` resolves to that binding. The ranking
- * fills only a role the config leaves unbound, and a `capability.roles.<role>.pin`
- * still wins over both. The fixture binds each ranked model under a role that is
- * *not* the one the ranking would pick, so a ranking-first resolution is visibly
- * different from the binding.
+ * Reachability is a config declaration, so the fixture declares four ranked
+ * models — each under a role that is *not* the one the ranking picks, which is
+ * what makes the two paths distinguishable: the same six calls return the
+ * declared entry when the ranking is unreadable, and the ranking's cheapest
+ * clearing record when it is not.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MODEL_ROLES, resolveRole, type BackendRef, type LeanPiConfig, type ModelRole } from "../../src/index.js";
@@ -39,14 +39,14 @@ const ROLE_SETTINGS = {
 	review_strong: { min_coding_index: 85 },
 };
 
-/** What resolves: the pin where one is set, otherwise the role's own binding. */
-const RESOLVED: Record<ModelRole, BackendRef> = {
-	quick: { backend: "metered", model: "ranked-balanced", type: "native" },
-	balanced: { backend: "metered", model: "ranked-strong", type: "native" },
-	strong: { backend: "local", model: "ranked-specialist", type: "native" },
+/** What the ranking picks: the cheapest bound record clearing each role's floor. */
+const RANKED: Record<ModelRole, BackendRef> = {
+	quick: { backend: "local", model: "ranked-quick", type: "native" },
+	balanced: { backend: "metered", model: "ranked-balanced", type: "native" },
+	strong: { backend: "metered", model: "ranked-strong", type: "native" },
 	specialist: { backend: "local", model: "ranked-specialist", type: "native" },
 	review_quick: { backend: "local", model: "ranked-quick", type: "native" },
-	review_strong: { backend: "metered", model: "ranked-balanced", type: "native" },
+	review_strong: { backend: "metered", model: "ranked-strong", type: "native" },
 };
 
 /** What the static ladder returns instead, following each role's fallback chain. */
@@ -68,23 +68,17 @@ afterEach(() => {
 });
 
 describe("PRD-024 Phase 3 — resolveRole through the ranking", () => {
-	it("PRD-053 AC-1: a bound role resolves to its binding even when a cheaper ranked model clears its floor", () => {
+	it("AC-5: all six roles resolve to the ranking-selected model for their configured floors and ceilings", () => {
 		const config = rankedConfig();
 		for (const role of MODEL_ROLES) {
-			expect(resolveRole(config, role)).toEqual(RESOLVED[role]);
+			expect(resolveRole(config, role)).toEqual(RANKED[role]);
 		}
-		// Only the pinned, unbound `specialist` differs from the static ladder.
-		expect(MODEL_ROLES.filter((role) => JSON.stringify(RESOLVED[role]) !== JSON.stringify(STATIC[role]))).toEqual(["specialist"]);
+		// Five of the six differ from the declared entry, so a static resolution
+		// could not have produced these answers.
+		expect(MODEL_ROLES.filter((role) => JSON.stringify(RANKED[role]) !== JSON.stringify(STATIC[role]))).toHaveLength(5);
 	});
 
-	it("PRD-053 AC-1: the ranking still fills a role the config leaves unbound", () => {
-		const { specialist: _pinned, ...settings } = ROLE_SETTINGS;
-		const config = fixtureConfig({ models: DECLARED, capability: { rankingFile: writeRanking(RANKING), roles: settings } });
-		// Unbound and unpinned: the cheapest bound record clearing the floor of 70.
-		expect(resolveRole(config, "specialist")).toEqual({ backend: "metered", model: "ranked-balanced", type: "native" });
-	});
-
-	it("PRD-053 AC-1: a booted session dispatches the declared role entry, not the ranking's cheaper pick", async () => {
+	it("AC-5: a booted session resolves and dispatches the ranking's pick, not the declared role entry", async () => {
 		const stub = await startStubBackend([{ text: "hello" }]);
 		try {
 			const backends: LeanPiConfig["backends"] = {
@@ -100,10 +94,10 @@ describe("PRD-024 Phase 3 — resolveRole through the ranking", () => {
 			const session = await bootSession({ cwd, agentDir: tempDir("leanpi-agent-"), config });
 			try {
 				// The declared `quick` entry is `metered/ranked-balanced`; the ranking
-				// knows the cheaper `ranked-quick`, and the backend still sees the binding.
-				expect(session.modelFor("quick")).toEqual({ provider: "metered", model: "ranked-balanced" });
+				// picks the cheaper clearing record, and that is what the backend sees.
+				expect(session.modelFor("quick")).toEqual({ provider: "local", model: "ranked-quick" });
 				await session.runTurn({ text: "quick task", role: "quick" });
-				expect(stub.requests.map((request) => request.model)).toEqual(["ranked-balanced"]);
+				expect(stub.requests.map((request) => request.model)).toEqual(["ranked-quick"]);
 			} finally {
 				session.session.dispose();
 			}
@@ -129,7 +123,7 @@ describe("PRD-024 Phase 3 — resolveRole through the ranking", () => {
 	it("AC-5: a stale ranking is reported and still used", () => {
 		const config = rankedConfig(RANKING.map((model) => ({ ...model, updated_at: "2010-01-01" })));
 		expect(loadRanking(config, { now: new Date("2026-09-19T00:00:00Z") }).stale).toBe(true);
-		expect(MODEL_ROLES.map((role) => resolveRole(config, role))).toEqual(MODEL_ROLES.map((role) => RESOLVED[role]));
+		expect(MODEL_ROLES.map((role) => resolveRole(config, role))).toEqual(MODEL_ROLES.map((role) => RANKED[role]));
 	});
 });
 

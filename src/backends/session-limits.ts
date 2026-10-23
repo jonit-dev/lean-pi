@@ -7,11 +7,10 @@
  * turn reported, carried to the next turn so role resolution can walk
  * `ROLE_FALLBACK_CHAINS` past the backend that just refused.
  *
- * A user interrupt is not a provider failure. Pi reports Esc as
- * `stopReason:"error"` with `errorMessage:"This operation was aborted"` — the
- * shape a crash carries — so the classifier refuses to name it: otherwise
- * pressing Esc would mark a healthy provider limited and route the next turn
- * somewhere else for no reason.
+ * A user interrupt is not a provider failure. Pi reports a cancelled run as
+ * `stopReason:"aborted"`; abort error text alone does not establish its cause.
+ * Neither explicit cancellation nor an unclassified abort error marks a
+ * provider limited.
  */
 
 export type AssistantFailureKind = "limit" | "auth";
@@ -26,7 +25,7 @@ export interface AssistantFailure {
 const LIMIT = /\b(?:402|429)\b|insufficient (?:account )?funds|usage limit|rate[ -]?limit/i;
 /** An auth/entitlement refusal: the backend is reachable but will not serve this key. */
 const AUTH = /\b(?:401|403)\b|invalid api key|free tier/i;
-/** Pi's own wording for a cancelled request; never a provider verdict. */
+/** Abort wording alone identifies neither cancellation nor a provider limit. */
 const ABORT = /operation was aborted|request aborted|aborted by user/i;
 
 /** What Pi's loop did with the turn: the loop's own outcome, apart from any gate. */
@@ -35,14 +34,12 @@ export type AssistantOutcome = "completed" | "aborted" | "error" | "toolUse" | "
 /**
  * The loop's outcome for an assistant message. Distinct from
  * `classifyAssistantFailure`, which names the provider fault: here a 429 is
- * just an `error`, and the operator's interrupt is `aborted` — the label Pi's
- * own session file should carry but does not (Pi writes `error` +
- * "This operation was aborted").
+ * just an `error`, and a cancelled run is `aborted`. The host's stopReason
+ * carries cancellation provenance; the same error text can come from a provider.
  */
 export function assistantOutcome(message: { stopReason?: unknown; errorMessage?: unknown }): AssistantOutcome {
 	const stop = message.stopReason;
-	const text = typeof message.errorMessage === "string" ? message.errorMessage : "";
-	if (stop === "aborted" || (stop === "error" && ABORT.test(text))) return "aborted";
+	if (stop === "aborted") return "aborted";
 	if (stop === "error") return "error";
 	if (stop === "toolUse" || stop === "pending" || stop === "deferred") return stop;
 	return "completed";

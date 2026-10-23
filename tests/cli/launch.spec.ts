@@ -8,8 +8,9 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { PACKAGE_ROOT } from "../../src/index.js";
+import { describe, expect, it, vi } from "vitest";
+import attach, { PACKAGE_ROOT } from "../../src/index.js";
+import { loadConfig } from "../../src/core/config.js";
 import { compactUiAttached } from "../../src/core/tools.js";
 import { backgroundTasksAdapter, type BackgroundPi } from "../../src/cli/background.js";
 import { bundledExtensions, backgroundTasksExtension, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension, subagentCardExtension } from "../../src/cli/launch.js";
@@ -34,7 +35,7 @@ describe("the leanpi launcher", () => {
 			"--extension",
 			plan.extension,
 			"--extension",
-			join(PACKAGE_ROOT, "extensions", "usage", "index.ts"),
+			join(PACKAGE_ROOT, "dist", "extensions", "local", "usage", "index.js"),
 			...bundled,
 			"--extension",
 			spinnerExtension(PACKAGE_ROOT),
@@ -43,6 +44,7 @@ describe("the leanpi launcher", () => {
 			"--exclude-tools",
 			"agent_bg",
 			"--no-skills",
+			"--no-mcp",
 			...theme,
 			"--print",
 			"do the thing",
@@ -52,6 +54,11 @@ describe("the leanpi launcher", () => {
 		// store link, which is why the path is realpath'd.
 		expect(plan.cli).toBe(realpathSync(join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")));
 		expect(existsSync(plan.cli)).toBe(true);
+	});
+
+	it("does not duplicate the built-in MCP opt-out when the caller already passed it", () => {
+		const args = launchPlan(["--no-mcp"], PACKAGE_ROOT).args;
+		expect(args.filter((argument) => argument === "--no-mcp")).toHaveLength(1);
 	});
 
 	it("finds dependencies hoisted above the package, as npm and npx install them", () => {
@@ -74,17 +81,19 @@ describe("the leanpi launcher", () => {
 		writeFileSync(join(root, "dist", "leanpi.js"), "export {};\n");
 		// LeanPi's own entry for the subagent card ships with the package, so an
 		// installed one has it (PRD-052).
-		mkdirSync(join(root, "extensions", "subagent-card"), { recursive: true });
-		writeFileSync(join(root, "extensions", "subagent-card", "index.ts"), "export {};\n");
-		mkdirSync(join(root, "extensions", "compact-ui"), { recursive: true });
-		writeFileSync(join(root, "extensions", "compact-ui", "index.ts"), "export {};\n");
+		mkdirSync(join(root, "dist", "extensions", "local", "subagent-card"), { recursive: true });
+		writeFileSync(join(root, "dist", "extensions", "local", "subagent-card", "index.js"), "export {};\n");
+		mkdirSync(join(root, "dist", "extensions", "local", "compact-ui"), { recursive: true });
+		writeFileSync(join(root, "dist", "extensions", "local", "compact-ui", "index.js"), "export {};\n");
+		mkdirSync(join(root, "dist", "extensions", "pi-claude-code-ui", "extensions"), { recursive: true });
+		writeFileSync(join(root, "dist", "extensions", "pi-claude-code-ui", "extensions", "spinner.js"), "export {};\n");
 		expect(existsSync(join(root, "node_modules"))).toBe(false);
 		expect(resolvePiCli(root)).toBe(realpathSync(join(consumer, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")));
 		// The hoisted extensions are found and every path handed to Pi exists.
-		const spinner = realpathSync(join(consumer, "node_modules", "pi-claude-code-ui", "extensions", "spinner.ts"));
+		const spinner = join(root, "dist", "extensions", "pi-claude-code-ui", "extensions", "spinner.js");
 		const plan = launchPlan([], root);
 		expect(plan.bundled).toContain(spinner);
-		expect(plan.bundled).toContain(join(root, "extensions", "compact-ui", "index.ts"));
+		expect(plan.bundled).toContain(join(root, "dist", "extensions", "local", "compact-ui", "index.js"));
 		for (const path of plan.bundled) expect(existsSync(path)).toBe(true);
 	});
 
@@ -175,28 +184,23 @@ describe("the leanpi launcher", () => {
 		// machine; the adapter runs the same factory but owns the single `usage`
 		// registration, so Pi never renames it to usage:1/usage:2.
 		expect(plan.bundled.some((path) => path.includes("pi-usage-bars"))).toBe(false);
-		expect(plan.args).toContain(join(PACKAGE_ROOT, "extensions", "usage", "index.ts"));
-		expect(existsSync(join(PACKAGE_ROOT, "extensions", "usage", "index.ts"))).toBe(true);
+		expect(plan.args).toContain(join(PACKAGE_ROOT, "dist", "extensions", "local", "usage", "index.js"));
+		expect(existsSync(join(PACKAGE_ROOT, "dist", "extensions", "local", "usage", "index.js"))).toBe(true);
 	});
 
-	it("attaches the frames as TypeScript, so Pi loads them through jiti", () => {
-		// A compiled `.js` extension is imported by Node and gets this package's own
-		// pi-tui, so its patch lands on a prototype the interactive mode never
-		// draws with. The Loader class Pi renders with is only reachable through
-		// jiti's virtual-module map, which is keyed on a `.ts` extension.
-		expect(spinnerExtension(PACKAGE_ROOT).endsWith(".ts")).toBe(true);
+	it("attaches compiled frames through the native Pi module bridge", () => {
+		expect(spinnerExtension(PACKAGE_ROOT).endsWith(".js")).toBe(true);
 		expect(existsSync(spinnerExtension(PACKAGE_ROOT))).toBe(true);
 	});
 
 	it("attaches the subagent card after the compact UI, and only with it (PRD-052)", () => {
 		// The card is a prototype patch on the row the compact UI installs while
-		// loading, so it has to load after it and be a source entry (jiti resolves
-		// `@earendil-works/*` to the classes the interactive mode renders with).
+		// loading, so it has to load after it. The native bridge preserves identity.
 		// Under `--ui plain` the tool's own `renderCall` already names the agent, so
 		// there is nothing to take over and the entry is not attached.
 		const compact = bundledExtensions(PACKAGE_ROOT, "compact");
 		const card = subagentCardExtension(PACKAGE_ROOT);
-		expect(card.endsWith(".ts")).toBe(true);
+		expect(card.endsWith(".js")).toBe(true);
 		expect(existsSync(card)).toBe(true);
 		expect(compact.at(-1)).toBe(card);
 		expect(compact.indexOf(card)).toBeGreaterThan(compact.findIndex((path) => path.includes("pi-claude-code-ui")));
@@ -212,7 +216,7 @@ describe("the leanpi launcher", () => {
 		// `bash` is the interactive shell, while `execute` stays LeanPi's own
 		// bounded definition.
 		const path = backgroundTasksExtension(PACKAGE_ROOT);
-		expect(path).toBe(join(PACKAGE_ROOT, "extensions", "background", "index.ts"));
+		expect(path).toBe(join(PACKAGE_ROOT, "dist", "extensions", "local", "background", "index.js"));
 		expect(existsSync(path!)).toBe(true);
 		// Under both UIs, the default compact one included: the adapter holds the
 		// package's `bash` back until `session_start`, so `pi-claude-code-ui`'s own
@@ -292,7 +296,7 @@ describe("the leanpi launcher", () => {
 		expect(attached[0]).toBe(plan.extension);
 		// The `/usage` adapter follows LeanPi's own extension, then the bundled
 		// extensions, then the frames.
-		expect(attached.slice(1)).toEqual([join(PACKAGE_ROOT, "extensions", "usage", "index.ts"), ...bundledExtensions(), spinnerExtension(), foldCacheExtension()]);
+		expect(attached.slice(1)).toEqual([join(PACKAGE_ROOT, "dist", "extensions", "local", "usage", "index.js"), ...bundledExtensions(), spinnerExtension(), foldCacheExtension()]);
 		// Every bundled path is a real file, so Pi is never handed a missing one.
 		for (const path of bundledExtensions()) expect(existsSync(path)).toBe(true);
 		// Nothing LeanPi already owns: PRD-018 (LSP), PRD-019 (output reduction),
@@ -300,6 +304,95 @@ describe("the leanpi launcher", () => {
 		// by a second implementation answering to no gate of ours.
 		const owned = ["pi-lsp", "pi-output-limits", "pi-mcp-adapter", "pi-context-view", "rpiv-todo"];
 		for (const name of owned) expect(plan.args.join(" ")).not.toContain(name);
+	});
+});
+
+/**
+ * PRD-056: the auth readiness probe decides only whether to print a warning, so
+ * it must not sit on the launcher's critical path. It runs from the Pi child's
+ * `session_start`, which Pi fires after the editor is painted, and it must still
+ * reach a user in an interactive and a `--print` run.
+ */
+describe("the backend-key warning after the editor paints (PRD-056)", () => {
+	const VARIABLE = "LEANPI_TEST_ABSENT_BACKEND_KEY";
+	const BACKEND = "leanpi-absent";
+	const warning = `leanpi: backend "${BACKEND}" reads its key from $${VARIABLE}`;
+
+	function host(): {
+		pi: Record<string, unknown>;
+		startup: Array<(event: unknown, ctx: unknown) => Promise<unknown>>;
+		notices: string[];
+		ctx: (hasUI: boolean) => Record<string, unknown>;
+	} {
+		const startup: Array<(event: unknown, ctx: unknown) => Promise<unknown>> = [];
+		const notices: string[] = [];
+		return {
+			notices,
+			startup,
+			pi: {
+				on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => {
+					if (event === "session_start") startup.push(handler);
+				},
+				registerTool: () => {},
+				registerCommand: () => {},
+				registerProvider: () => {},
+				setModel: async () => true,
+				setThinkingLevel: () => {},
+				setSessionName: () => {},
+				getSessionName: () => undefined,
+				appendEntry: () => {},
+				getAllTools: () => [],
+			},
+			ctx: (hasUI: boolean) => ({
+				hasUI,
+				cwd: process.cwd(),
+				sessionManager: { getSessionId: () => "pi-session" },
+				getContextUsage: () => ({ tokens: 0, contextWindow: 200_000, percent: 0 }),
+				modelRegistry: { find: () => undefined },
+				ui: {
+					notify: (message: string) => notices.push(message),
+					setStatus: () => {},
+					setWidget: () => {},
+					input: async () => undefined,
+				},
+			}),
+		};
+	}
+
+	function configAndEnv(): { cwd: string; env: NodeJS.ProcessEnv; config: ReturnType<typeof loadConfig> } {
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { [BACKEND]: { type: "native", baseUrl: "https://example.test", api: "openai-completions", apiKey: VARIABLE } },
+			models: { balanced: { backend: BACKEND, model: "cheap" } },
+			lsp: { mode: "off" },
+			jev: { mode: "disabled" },
+		});
+		const env = { HOME: tempDir("leanpi-home-"), PATH: "", XDG_CONFIG_HOME: join(tempDir("leanpi-xdg-"), ".config"), LEANPI_NO_JEV: "1" };
+		return { cwd, env, config: loadConfig(cwd, {}, env) };
+	}
+
+	it("probes only from session_start, and still warns interactive and --print runs", async () => {
+		const { cwd, env, config } = configAndEnv();
+
+		// Interactive: the probe must not run while the first screen is being built.
+		const interactive = host();
+		attach(interactive.pi as never, { cwd, config, env: env as never });
+		expect(interactive.notices).toEqual([]);
+		await Promise.all(interactive.startup.map((handler) => handler({ reason: "startup" }, interactive.ctx(true))));
+		await expect.poll(() => interactive.notices.join("\n"), { timeout: 10_000, interval: 50 }).toContain(warning);
+
+		// `--print`: no editor and no later screen, so the line goes to stderr and
+		// the handler waits for it rather than ending the session before it lands.
+		const printed = host();
+		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true as never);
+		try {
+			attach(printed.pi as never, { cwd, config, env: env as never });
+			expect(stderr.mock.calls.map((call) => String(call[0])).join("")).not.toContain(warning);
+			await Promise.all(printed.startup.map((handler) => handler({ reason: "startup" }, printed.ctx(false))));
+			expect(stderr.mock.calls.map((call) => String(call[0])).join("")).toContain(warning);
+		} finally {
+			stderr.mockRestore();
+		}
 	});
 });
 

@@ -22,7 +22,7 @@ import { routePins, setRoutePins } from "../compiler/pins.js";
 import { discoverInventory, modelFactsLine, type DiscoveredModel } from "../cli/allocate.js";
 import { modelPicker } from "../cli/model-picker.js";
 import { manualStatusLine } from "../cli/statusline.js";
-import { learnedModels } from "../backends/cli-provider.js";
+import { learnedModels } from "../backends/learned-models.js";
 import type { HarnessVendor } from "../backends/harness.js";
 import type { CommandContext, CommandRegistry, CommandResult } from "./registry.js";
 import type { CommandSurface } from "./surface.js";
@@ -153,7 +153,9 @@ async function pinModel(surface: CommandSurface, chosen: DiscoveredModel, contex
 	context.footer?.setStatus(manualStatusLine(pin, true));
 	return {
 		ok: true,
-		text: `model pinned to ${backend}/${chosen.model} (Manual) — /model auto returns to Auto`,
+		// A CLI model can share its name with a native one (opencode's
+		// `opencode-go/deepseek-v4.1-flash`); its batch run's silence reads as a hang.
+		text: `model pinned to ${backend}/${chosen.model} (Manual)${pin.type === "external_harness" ? ` — runs the ${backend} CLI, which shows nothing until it finishes` : ""} — /model auto returns to Auto`,
 	};
 }
 

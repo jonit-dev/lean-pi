@@ -8,10 +8,11 @@
  *
  * The default export attaches LeanPi and its bundled delegation package.
  */
-import type { AgentSession, ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	getActivePrefix,
 	isTurnInFlight,
@@ -80,7 +81,8 @@ import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole, resolveRoleAvoiding } from "./core/roles.js";
 import { LEANPI_STATUS_KEY, manualStatusLine, statusLine } from "./cli/statusline.js";
-import { learnedModels, piProviderFor, registerCliModel, registerSubscriptionModels, type CliProviderDeps } from "./backends/cli-provider.js";
+import { piProviderFor, registerCliModel, registerSubscriptionModels, type CliProviderDeps } from "./backends/cli-provider.js";
+import { learnedModels } from "./backends/learned-models.js";
 import { classifyAssistantFailure, assistantOutcome, SessionLimits } from "./backends/session-limits.js";
 import { detectSubscriptions } from "./backends/subscriptions.js";
 import { restoreRememberedModel, writeRememberedModel } from "./commands/model.js";
@@ -89,7 +91,7 @@ import { createRecap, isCompletedAssistant, type RecapController, type RecapRunn
 import { messageText } from "./commands/context.js";
 import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
-import { jevWarning } from "./cli/bootstrap.js";
+import { backendKeyWarning, jevWarning, unusableBackendKeys } from "./cli/bootstrap.js";
 import { resolveCredential } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
 import { defaultLayaDeps, ensureLayaRuntime, layaProvider, layaStatus } from "./jev/laya.js";
@@ -207,7 +209,7 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.Pr
 		// endpoint that does not speak OpenAI's `reasoning_effort` has to say so.
 		// Without the declaration Pi sends no thinking control at all and the model
 		// thinks at the server's default on every call.
-		const compat = backend.compat !== null && typeof backend.compat === "object" && !Array.isArray(backend.compat) ? (backend.compat as ProviderModelConfig["compat"]) : undefined;
+		const compat = backend.compat !== null && typeof backend.compat === "object" && !Array.isArray(backend.compat) ? (backend.compat as Model<Api>["compat"]) : undefined;
 		pi.registerProvider(name, {
 			name: backend.name ?? name,
 			baseUrl: backend.baseUrl,
@@ -509,6 +511,24 @@ function installSessionHooks(
 	// previous session's pins: the route overrides and the recorded contract
 	// belonged to the conversation that just went away.
 	pi.on("session_start", async (event, ctx) => {
+		// PRD-056: the launcher used to block on `pi auth check` only to decide
+		// whether to print this warning. Pi fires `session_start` after the editor
+		// is painted, so the probe runs here instead; interactive sessions do not
+		// await it, and a failure is silent because it only suppresses a warning.
+		if (event.reason === "startup") {
+			const keys = unusableBackendKeys(deps.config, deps.env);
+			if (ctx.hasUI) {
+				void keys
+					.then((unusable) => {
+						if (unusable.length > 0) ctx.ui.notify(unusable.map(backendKeyWarning).join("\n"), "warning");
+					})
+					.catch(() => {});
+			} else {
+				// `--print` has no later screen to lose the line on and exits with the
+				// turn, so this surface waits for the probe rather than dropping it.
+				for (const entry of await keys.catch(() => [])) process.stderr.write(`${backendKeyWarning(entry)}\n`);
+			}
+		}
 		if (event.reason !== "startup") {
 			deps.surface.resetSessionState();
 			// A session's call signs and the agent profiles it read belong to the
@@ -587,7 +607,7 @@ function installSessionHooks(
  * Per-turn hooks (F7): `input` → `before_agent_start` → `agent_start` →
  * `agent_end` → `agent_settled`, in registration order. Extracted from
  * `activate()` with no behavior change. The in-flight holders (`pendingRun`,
- * `settledTurn`) lived as `activate()` locals; they live here now, owned by
+ * `settledMessages`) lived as `activate()` locals; they live here now, owned by
  * the hooks that write and read them.
  */
 function installTurnHooks(
@@ -613,11 +633,11 @@ function installTurnHooks(
 	},
 ): void {
 	// The run that is still open: a compiled turn's collector and context, held from
-	// `before_agent_start` until `agent_end` reports what the loop spent.
-	let pendingRun: { collector: RunCollector; context: TurnContext; backend?: string; pinned?: boolean } | undefined;
-	// The Pi-driven path's last settled turn: `agent_end` holds what the loop
-	// produced, and `agent_settled` — after Pi's own telemetry sink — writes it.
-	let settledTurn: { ask: string; did: string } | undefined;
+	// `before_agent_start` until `agent_settled` reports the complete turn.
+	let pendingRun: { collector: RunCollector; context: TurnContext; backend?: string; pinned?: boolean; retried?: boolean } | undefined;
+	// Attempts accumulate until the logical user turn settles, including a quota fallback.
+	let settledMessages: AgentMessage[] = [];
+	let fallbackNotice: string | undefined;
 	// Which backend Pi's own loop just failed on (a 402/429), so the next turn's
 	// role resolution walks the ladder past it instead of failing the same way.
 	const sessionLimits = new SessionLimits();
@@ -641,7 +661,7 @@ function installTurnHooks(
 		// A new prompt invalidates the previous turn's recap before anything runs.
 		deps.recap.clear(ctx);
 		// The recap for this prompt is written below; Pi's loop is not the path here.
-		settledTurn = undefined;
+		if (!pendingRun) settledMessages = [];
 		if (!ownsTurn(deps.config)) return;
 		// `runTurn()` drives the lanes itself; this hook must not run them again
 		// for the prompt that entry point is about to send.
@@ -742,7 +762,8 @@ function installTurnHooks(
 	// that compiled a contract writes its §52 record here: this path owns no
 	// session object, so the verdict is read off the executor's own outcome.
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (isTurnInFlight()) return;
+		// Pi 1.2+ also fires this for extension-triggered runs, which carry no prompt to route.
+		if (event.messageType !== "user" || isTurnInFlight()) return;
 		// PRD-015's accumulator is created before the lanes run, not after: the
 		// executor lane's backend calls are what the record has to carry, and they
 		// are spent while the lane runs.
@@ -870,12 +891,14 @@ function installTurnHooks(
 		// discovery, and that is 82,343 bytes of the system prompt of every
 		// request (~20.6k tokens) duplicating disclosure LeanPi already did.
 		const systemPrompt = withoutSkillCatalog(event.systemPrompt);
-		if (context.contract) {
-			// The record is written at `agent_end`, not here: with Pi's own loop as
+		if (context.contract || !owns) {
+			// The record is written at `agent_settled`, not here: with Pi's own loop as
 			// the executor this handler returns *before* the loop spends anything, so
 			// emitting now would write a zeroed row for every native turn. The holder
 			// keeps the run open until the loop reports what it used.
-			pendingRun = { collector, context, ...(chosenBackend ? { backend: chosenBackend } : {}), pinned: manualPin !== undefined };
+			const backend = chosenBackend ?? ctx.model?.provider;
+			pendingRun = { collector, context, ...(backend ? { backend } : {}), pinned: manualPin !== undefined };
+			if (!context.contract) setLaneCollector(undefined);
 		} else {
 			setLaneCollector(undefined);
 		}
@@ -888,10 +911,13 @@ function installTurnHooks(
 	// rather than left looking like this turn's answer.
 	pi.on("agent_start", (_event, ctx) => {
 		deps.recap.clear(ctx);
+		if (fallbackNotice) {
+			ctx.ui.notify(fallbackNotice, "warning");
+			fallbackNotice = undefined;
+		}
 	});
 
-	// PRD-015's sink for the path Pi itself drives: one call per assistant message
-	// the loop produced, plus the tool calls it made, then exactly one record.
+	// Collect each attempt; settlement below emits exactly one record for the user turn.
 	pi.on("agent_end", async (event, ctx) => {
 		deps.showTodo(ctx);
 		// PRD-051: a CLI pin on an alias (`opus`) learned its full id this turn, so
@@ -907,67 +933,71 @@ function installTurnHooks(
 			if (found) await pi.setModel(found);
 			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(resolved, true, deps.statusExtras(ctx).goal));
 		}
-		// What `agent_settled` will recap: the loop's last ask and its answer. They
-		// exist here; `agent_settled` fires after Pi's own telemetry sink has already
-		// written this turn's record.
-		const reversed = [...event.messages].reverse();
-		const lastUser = reversed.find((message) => message.role === "user");
-		const lastAssistant = reversed.find((message) => message.role === "assistant");
-		// An aborted or errored turn is not recapped: after Esc the user types again at once.
-		settledTurn =
-			lastUser === undefined || lastAssistant === undefined || !isCompletedAssistant(lastAssistant)
-				? undefined
-				: { ask: messageText(lastUser), did: messageText(lastAssistant) };
+		settledMessages.push(...event.messages);
+		const run = pendingRun;
+		if (!run) return;
+		if (!run.pinned && run.backend !== undefined) {
+			const last = [...event.messages].reverse().find((message) => message.role === "assistant");
+			if (last && classifyAssistantFailure(last)?.kind === "limit") sessionLimits.mark(run.backend);
+		}
+	});
+
+	pi.on("agent_before_settle", async (event, ctx) => {
+		const run = pendingRun;
+		if (!run || run.pinned || routePins().model || run.retried) return;
+		const last = [...settledMessages].reverse().find((message) => message.role === "assistant");
+		if (!last || classifyAssistantFailure(last)?.kind !== "limit") return;
+		const chosen = resolveRoleAvoiding(deps.config, run.context.contract?.routing.executor_class ?? run.context.role, (backend) => sessionLimits.isLimited(backend));
+		if (chosen.ref.backend === run.backend || sessionLimits.isLimited(chosen.ref.backend)) return;
+		const failed = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && entry.message.role === "assistant");
+		const model = ctx.modelRegistry.find(piProviderFor(chosen.ref), chosen.ref.model);
+		if (!failed || !model || !(await pi.setModel(model))) return;
+		run.retried = true;
+		run.backend = chosen.ref.backend;
+		fallbackNotice = `session quota exceeded; retrying this turn on ${chosen.ref.backend}/${chosen.ref.model}`;
+		// Keep the refusal in raw history while restoring the original runnable request.
+		return { entries: [...event.entries, { type: "context_edit" as const, targetId: failed.id, replacement: null }], continue: true };
+	});
+
+	// A fallback may emit two agent_end events; bill and classify the settled turn once.
+	pi.on("agent_settled", (_event, ctx) => {
+		const messages = settledMessages;
+		settledMessages = [];
+		fallbackNotice = undefined;
 		const run = pendingRun;
 		pendingRun = undefined;
 		setLaneCollector(undefined);
-		if (!run) return;
-		// A 402/429 the loop just hit is remembered so the next turn resolves past
-		// that backend. An operator interrupt is not one: `classifyAssistantFailure`
-		// refuses Pi's "This operation was aborted" text, so pressing Esc never marks
-		// a healthy provider limited. A `/model` pin is never rerouted, so it is not
-		// tracked either.
-		if (!run.pinned && run.backend !== undefined) {
-			for (const message of event.messages) {
-				if ((message as { role?: unknown }).role !== "assistant") continue;
-				const failure = classifyAssistantFailure(message as { stopReason?: unknown; errorMessage?: unknown });
-				if (failure?.kind === "limit") sessionLimits.mark(run.backend);
+		if (run?.context.contract) {
+			const spend = callsFromMessages(messages, run.context.modelRef);
+			for (const call of spend.calls) run.collector.add(call);
+			run.collector.noteToolCall(spend.toolCalls);
+			// The paths, so `file_reads`/`repeated_reads` are a measurement rather than a
+			// constant zero: the collector collapses the repeats the model asked for.
+			for (const path of spend.fileReads) run.collector.noteFileRead(path);
+			// With Pi's loop as the executor no gate runs, so `success` is false for every
+			// native turn and §3's objective had no numerator. Record what the loop did
+			// separately — a completed loop is not a verified success, and the host's
+			// stopReason distinguishes cancellation from a provider error.
+			const verdict = verdictOf(run.context) as RunVerdict & { loop?: "completed" | "aborted" | "error" };
+			if (run.context.executor === undefined) {
+				const last = [...messages].reverse().find((message) => (message as { role?: unknown }).role === "assistant");
+				if (last) {
+					const outcome = assistantOutcome(last as { stopReason?: unknown; errorMessage?: unknown });
+					if (outcome === "completed" || outcome === "aborted" || outcome === "error") verdict.loop = outcome;
+				}
 			}
+			emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdict, {
+				cwd: deps.cwd,
+				cost: resolveCostConfig(deps.config),
+				...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
+			});
 		}
-		const spend = callsFromMessages(event.messages, run.context.modelRef);
-		for (const call of spend.calls) run.collector.add(call);
-		run.collector.noteToolCall(spend.toolCalls);
-		// The paths, so `file_reads`/`repeated_reads` are a measurement rather than a
-		// constant zero: the collector collapses the repeats the model asked for.
-		for (const path of spend.fileReads) run.collector.noteFileRead(path);
-		// With Pi's loop as the executor no gate runs, so `success` is false for every
-		// native turn and §3's objective had no numerator. Record what the loop did
-		// separately — a completed loop is not a verified success, and an interrupt
-		// is `aborted`, not the `error` Pi's own session file writes.
-		const verdict = verdictOf(run.context) as RunVerdict & { loop?: "completed" | "aborted" | "error" };
-		if (run.context.executor === undefined) {
-			const last = [...event.messages].reverse().find((message) => (message as { role?: unknown }).role === "assistant");
-			if (last) {
-				const outcome = assistantOutcome(last as { stopReason?: unknown; errorMessage?: unknown });
-				if (outcome === "completed" || outcome === "aborted" || outcome === "error") verdict.loop = outcome;
-			}
-		}
-		emitRunTelemetry(run.collector, run.context.contract as ExecutionContract, verdict, {
-			cwd: deps.cwd,
-			cost: resolveCostConfig(deps.config),
-			...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
-		});
-	});
-
-	// PRD-036's Pi-side trigger: after the run has fully settled. `agent_end` is
-	// taken by the telemetry sink above and fires mid-settle, so the recap waits.
-	pi.on("agent_settled", (_event, ctx) => {
-		const turn = settledTurn;
-		settledTurn = undefined;
-		if (!turn || routePins().model) return;
-		// Fire-and-forget: Pi defers the next prompt until this handler returns,
-		// and `recap.clear()` on the next `input` already invalidates a late result.
-		void deps.recap.recapTurn(ctx, turn).catch(() => {});
+		const reversed = [...messages].reverse();
+		const lastUser = reversed.find((message) => message.role === "user");
+		const lastAssistant = reversed.find((message) => message.role === "assistant");
+		if (!lastUser || !lastAssistant || !isCompletedAssistant(lastAssistant) || routePins().model) return;
+		// Fire-and-forget: the next input invalidates a late recap.
+		void deps.recap.recapTurn(ctx, { ask: messageText(lastUser), did: messageText(lastAssistant) }).catch(() => {});
 	});
 }
 

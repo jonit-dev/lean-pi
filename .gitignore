@@ -8,3 +8,4 @@ dist/
 .worktrees/
 .npmrc
 *.tsbuildinfo
+.claude/worktrees/

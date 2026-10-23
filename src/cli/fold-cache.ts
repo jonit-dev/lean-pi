@@ -22,9 +22,7 @@
  * Ctrl+T test catches that. If the fold ever routes its own updates through the
  * prototype's current method, delete this file.
  *
- * TypeScript for the same reason as `spinner.ts`: Pi routes a `.ts` extension
- * through jiti's virtual-module map, and a `.js` one lands on a second copy of
- * the class that nothing renders with.
+ * The native extension bridge keeps the compiled patch on Pi's own class.
  */
 import { AssistantMessageComponent, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 

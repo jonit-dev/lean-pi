@@ -21,7 +21,7 @@ Also found: a repo `leanpi.config.yaml` replaces the global config wholesale (`s
 
 Decisions from the 2026-10-01 interview, implemented at the shared seams so every caller (session boot, `before_agent_start`, subagent routing, `/route`) inherits them:
 
-- `resolveRole` returns the configured binding when the role (or its fallback chain entry) is bound; the ranking only fills an unbound role.
+- ~~`resolveRole` returns the configured binding when the role (or its fallback chain entry) is bound; the ranking only fills an unbound role.~~ **Reverted 2026-10-02** — see Decisions; the ranking picks a role's model again.
 - A per-session **floor class**: the first compiled turn sets it; a later turn installs `max(routed, floor)` on the executor ladder `quick < balanced < strong`. `/route executor` pins override it; `/new` (session switch) clears it.
 - A classification whose JEV answers were dropped falls back to `heuristicBand` and marks the contract `fallbackUsed`; the Auto footer shows it.
 - Config loading layers: global file as base, the walked-up project file deep-merged over it (project keys win).
@@ -31,7 +31,7 @@ Decisions from the 2026-10-01 interview, implemented at the shared seams so ever
 
 ## Acceptance Criteria
 
-- [x] AC-1 [local]: A role bound in `models:` boots and routes to exactly that model even when the ranking knows a cheaper one that clears the floor. proof: `pnpm vitest run tests/capability` — 39 passed @ edc1a68; red on the old `roles.ts`: the booted session dispatched `local/ranked-quick` instead of the bound `metered/ranked-balanced`. The ranking still fills an unbound role (same spec).
+- [x] AC-1 [local] (**reverted 2026-10-02**, see Decisions; guard: `tests/backends/auto-native-balanced.spec.ts`): A role bound in `models:` boots and routes to exactly that model even when the ranking knows a cheaper one that clears the floor. proof: `pnpm vitest run tests/capability` — 39 passed @ edc1a68; red on the old `roles.ts`: the booted session dispatched `local/ranked-quick` instead of the bound `metered/ranked-balanced`. The ranking still fills an unbound role (same spec).
 - [x] AC-2 [local]: In a real session, a HIGH first message installs `strong`; a following LOW message keeps `strong`; after `/new` a LOW message installs `quick`. proof: `pnpm vitest run tests/backends/auto-ratchet.spec.ts` — 3 passed @ 5c1e0ac; red before: the LOW follow-up dropped to `local/leanpi-test-flash` (spec line 73).
 - [x] AC-3 [local]: `/route executor strong` dispatched as a slash command in a real session makes the next message run on the strong model. proof: `pnpm vitest run tests/backends/auto-ratchet.spec.ts` — passes; one `claude` CLI invocation. Already working since `413402e`; this is its regression guard.
 - [x] AC-4 [local]: When JEV drops a complexity answer, the turn's band comes from the heuristic, the contract records the fallback, and the Auto footer says so. proof: `pnpm vitest run tests/compiler/classify-fallback.spec.ts` — 2 passed @ b970e89; red before: a race-condition task with a dropped `explicit_result` compiled MEDIUM.
@@ -44,7 +44,7 @@ Decisions from the 2026-10-01 interview, implemented at the shared seams so ever
 
 | Capability | Reachable consumer/trigger | Replaces / disposition | Evidence |
 |---|---|---|---|
-| Binding-first role resolution | `resolveRole` (`src/core/roles.ts:39`) → `selectRoleModel` (`src/capability/roles.ts`), used by session boot and `before_agent_start` | ranking-first order, replaced in place | AC-1 |
+| ~~Binding-first role resolution~~ (reverted 2026-10-02) | `resolveRole` (`src/core/roles.ts:39`) → `selectRoleModel` (`src/capability/roles.ts`) | ranking-first order restored | AC-1 |
 | Session floor class | `compilerLane` records it (`src/commands/turn-lanes.ts`), `compileTask` applies it before deviations (`src/compiler/index.ts:190`) | per-turn independent class | AC-2, AC-3 |
 | Visible classifier fallback | `classifyExecution` (`src/compiler/classify.ts`) → compile record → `statusLine` chip | silent MEDIUM | AC-4 |
 | Layered config | `loadConfig` (`src/core/config.ts`) | first-file-wins read; writers still target `configPathFor` | AC-5 |
@@ -56,7 +56,9 @@ Decisions from the 2026-10-01 interview, implemented at the shared seams so ever
 - 2026-10-01 (Joao): an unsure classification uses the heuristic and is shown in the footer.
 - 2026-10-01 (Joao): review/proof gate in Auto on native configs — fix the docs, not the code.
 - 2026-10-01 (Joao): config layers — global base, project overrides the keys it sets.
-- 2026-10-01 (agent, unobjected assumption): unavailable class steps down one rung; `/route reset` keeps a `/model` pin. Subscription availability reading the static binding is moot once bindings win.
+- 2026-10-01 (agent, unobjected assumption): unavailable class steps down one rung; `/route reset` keeps a `/model` pin. Subscription availability reading the static binding was moot while bindings won; since the 2026-10-02 revert it reads the static binding while the ranking may pick another model — an open gap, not addressed here.
+- 2026-10-02 (Joao): **AC-1 reverted.** With bindings final, the operator's global `balanced: claude/opus[1m]` (written 2026-09-22, hidden by the ranking until v0.1.10) sent every normal Auto turn to a headless `claude -p` run that shows nothing until done — live: 35 s of silence, then one blob. The ranking picks a role's model again (v0.1.9 behaviour); `capability.roles.<role>.pin` forces one. Regression guard: `tests/backends/auto-native-balanced.spec.ts` (Auto turn on native deepseek, then a mid-session `/model` pin holds a HIGH task on it). The rest of PRD-053 stands.
+- 2026-10-02 (agent, AFK; operator report from threenative-engine): an unsure-JEV guess is capped at MEDIUM. `native/Android` in a prompt made the keyword band HIGH, which on the operator's config is `claude -p` — silent until done — and the executor floor held the session there. With JEV disabled the heuristic is uncapped (it is the classifier).
 - 2026-10-01 (agent, from review): the `guessed` chip shows only when JEV is enabled — with JEV off every band is the heuristic's by design. Config layers merge per entry, not per field, and `jev:` is replaced whole: a field-level merge let an untrusted repo pair the user's stored `apiKey` with its own endpoint.
 
 ## Execution Phases
@@ -64,7 +66,7 @@ Decisions from the 2026-10-01 interview, implemented at the shared seams so ever
 #### Phase 1: The configured model, decided once
 **Status:** DONE
 **Files:** `src/core/roles.ts`, `src/index.ts`, `src/compiler/route.ts`, `src/compiler/pins.ts` / `src/commands/route.ts`
-**Implementation:** binding-first `resolveRole`; session floor class applied in `before_agent_start`, cleared on session switch; step-down deviation; `/route reset` scope.
+**Implementation:** binding-first `resolveRole` (reverted 2026-10-02); session floor class applied in `before_agent_start`, cleared on session switch; step-down deviation; `/route reset` scope.
 - [x] **Verification:** AC-1, AC-2, AC-3, AC-6, AC-7 red before / green after (evidence on the ACs).
 
 #### Phase 2: Unsure classification is visible

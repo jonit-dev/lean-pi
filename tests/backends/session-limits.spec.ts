@@ -36,9 +36,7 @@ describe("classifyAssistantFailure", () => {
 		expect(classifyAssistantFailure({ stopReason: "error", errorMessage: "opencode API error (403): FreeTierError" })?.kind).toBe("auth");
 	});
 
-	it("refuses to call an operator interrupt a provider failure", () => {
-		// Pi reports Esc as `error` + this exact text; marking a healthy provider
-		// limited on a keypress is the bug this guards.
+	it("keeps explicit cancellation and an unclassified abort error out of provider cooldowns", () => {
 		expect(classifyAssistantFailure({ stopReason: "error", errorMessage: "This operation was aborted" })).toBeNull();
 		expect(classifyAssistantFailure({ stopReason: "aborted", errorMessage: "This operation was aborted" })).toBeNull();
 	});
@@ -51,8 +49,8 @@ describe("classifyAssistantFailure", () => {
 });
 
 describe("assistantOutcome", () => {
-	it("names an operator interrupt aborted, not an error", () => {
-		expect(assistantOutcome({ stopReason: "error", errorMessage: "This operation was aborted" })).toBe("aborted");
+	it("requires cancellation provenance instead of inferring it from error text", () => {
+		expect(assistantOutcome({ stopReason: "error", errorMessage: "This operation was aborted" })).toBe("error");
 		expect(assistantOutcome({ stopReason: "aborted", errorMessage: "This operation was aborted" })).toBe("aborted");
 	});
 

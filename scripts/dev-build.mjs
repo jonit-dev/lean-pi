@@ -10,40 +10,46 @@
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildExtensions } from "./build-extensions.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const srcRoot = join(root, "src");
-const outRoot = join(root, "dist");
-const stale = [];
-for (const rel of readdirSync(srcRoot, { recursive: true })) {
-	if (!rel.endsWith(".ts") || rel.endsWith(".d.ts")) continue;
-	const source = join(srcRoot, rel);
-	const out = join(outRoot, rel.slice(0, -3) + ".js");
-	if (existsSync(out) && statSync(out).mtimeMs >= statSync(source).mtimeMs) continue;
-	stale.push([source, out, rel]);
-}
-// Nothing stale means nothing to build: importing `typescript` costs ~300ms,
-// so it is not imported at all when no file needs it.
-if (stale.length === 0) process.exit(0);
+export async function devBuild() {
+	const srcRoot = join(root, "src");
+	const outRoot = join(root, "dist");
+	const stale = [];
+	for (const rel of readdirSync(srcRoot, { recursive: true })) {
+		if (!rel.endsWith(".ts") || rel.endsWith(".d.ts")) continue;
+		const source = join(srcRoot, rel);
+		const out = join(outRoot, rel.slice(0, -3) + ".js");
+		if (existsSync(out) && statSync(out).mtimeMs >= statSync(source).mtimeMs) continue;
+		stale.push([source, out, rel]);
+	}
+	// Nothing stale means nothing to build: importing `typescript` costs ~300ms,
+	// so it is not imported at all when no file needs it.
+	await buildExtensions();
+	if (stale.length === 0) return;
 
-const { default: ts } = await import("typescript");
-const { config, error } = ts.readConfigFile(join(root, "tsconfig.json"), ts.sys.readFile);
-if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
-const { options } = ts.parseJsonConfigFileContent(config, ts.sys, root);
+	const { default: ts } = await import("typescript");
+	const { config, error } = ts.readConfigFile(join(root, "tsconfig.json"), ts.sys.readFile);
+	if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
+	const { options } = ts.parseJsonConfigFileContent(config, ts.sys, root);
 
-for (const [source, out, rel] of stale) {
-	const { outputText, sourceMapText } = ts.transpileModule(ts.sys.readFile(source), {
-		compilerOptions: { ...options, sourceMap: true },
-		fileName: rel,
-	});
-	mkdirSync(dirname(out), { recursive: true });
-	writeFileSync(out, outputText);
-	if (sourceMapText !== undefined) {
-		// `fileName` is `src`-relative, so `transpileModule` writes `sources`
-		// that resolve against the wrong directory; `tsc` names the source
-		// relative to the map's own directory, and so must this.
-		const map = JSON.parse(sourceMapText);
-		map.sources = [relative(dirname(out), source)];
-		writeFileSync(out + ".map", JSON.stringify(map));
+	for (const [source, out, rel] of stale) {
+		const { outputText, sourceMapText } = ts.transpileModule(ts.sys.readFile(source), {
+			compilerOptions: { ...options, sourceMap: true },
+			fileName: rel,
+		});
+		mkdirSync(dirname(out), { recursive: true });
+		writeFileSync(out, outputText);
+		if (sourceMapText !== undefined) {
+			// `fileName` is `src`-relative, so `transpileModule` writes `sources`
+			// that resolve against the wrong directory; `tsc` names the source
+			// relative to the map's own directory, and so must this.
+			const map = JSON.parse(sourceMapText);
+			map.sources = [relative(dirname(out), source)];
+			writeFileSync(out + ".map", JSON.stringify(map));
+		}
 	}
 }
+
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await devBuild();

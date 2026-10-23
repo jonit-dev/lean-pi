@@ -21,7 +21,7 @@
  * guardedly: every `find` must match once or the build fails, which makes a
  * dependency bump a red build instead of a silent preview.
  */
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,13 +88,17 @@ export function applyThinkingFoldPatches(source) {
 	return patched;
 }
 
-function vendor() {
+export function vendorThinkingFold() {
 	const source = dirname(createRequire(import.meta.url).resolve("@99percentpeople/pi-thinking-fold/index.min.js"));
 	const target = join(root, "vendor", "pi-thinking-fold");
 	mkdirSync(target, { recursive: true });
-	writeFileSync(join(target, "index.min.ts"), applyThinkingFoldPatches(readFileSync(join(source, "index.min.js"), "utf8")));
+	const path = join(target, "index.min.ts");
+	const patched = applyThinkingFoldPatches(readFileSync(join(source, "index.min.js"), "utf8"));
+	if (!existsSync(path) || readFileSync(path, "utf8") !== patched) writeFileSync(path, patched);
 	copyFileSync(join(source, "model-behaviors.json"), join(target, "model-behaviors.json"));
-	process.stderr.write(`vendored pi-thinking-fold (patched) -> ${target}\n`);
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) vendor();
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	vendorThinkingFold();
+	process.stderr.write(`vendored pi-thinking-fold (patched) -> ${join(root, "vendor", "pi-thinking-fold")}\n`);
+}

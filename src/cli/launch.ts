@@ -85,32 +85,16 @@ const COMPACT_UI_EXTENSIONS: readonly string[] = [
  * reasoning live again, so the choice is which of the two is attached, made
  * before the session exists and therefore at launch.
  *
- * Attached from `vendor/`, not from `node_modules/`. The package ships only
- * `index.min.js`, and Pi native-imports a `.js` extension rather than routing it
- * through jiti's virtual-module map — so its
- * `AssistantMessageComponent.prototype.updateContent` patch landed on a second
- * copy of the class and nothing that renders ever saw it, silently: the
- * extension still loaded and still registered `/99settings`. The same bytes
- * under a `.ts` name are transformed by jiti and resolve Pi's own modules.
- * `scripts/vendor-thinking-fold.mjs` makes the copy; `spinnerExtension` below
- * documents the identical trap, found the same way.
+ * Compiled after the vendor patch. The native extension bridge resolves its
+ * Pi imports to the classes embedded in the running CLI.
  */
 export function thinkingFoldExtension(root: string = packageRoot()): string {
-	return join(root, "vendor", "pi-thinking-fold", "index.min.ts");
+	return join(root, "dist", "extensions", "thinking-fold", "index.min.js");
 }
 
-/**
- * LeanPi's own spinner frames, as a path to *source*, not to the build output.
- *
- * Pi loads a `.ts` extension through jiti, which resolves
- * `@earendil-works/pi-tui` through its virtual-module map to the Loader class
- * the interactive mode renders with. A compiled `.js` extension is imported by
- * Node itself, so it gets this package's own pi-tui copy and patches a prototype
- * nothing draws with — which is exactly why the vendor's star set stayed on
- * screen. Keep this one attached as TypeScript.
- */
+/** Compiled spinner frames; the native bridge preserves Pi's Loader identity. */
 export function spinnerExtension(root: string = packageRoot()): string {
-	return join(root, "src", "cli", "spinner.ts");
+	return join(root, "dist", "cli", "spinner.js");
 }
 
 /**
@@ -119,18 +103,17 @@ export function spinnerExtension(root: string = packageRoot()): string {
  * `fold-cache.ts` has the why. Pointless without both, so only when both are on.
  */
 export function foldCacheExtension(root: string = packageRoot()): string {
-	return join(root, "src", "cli", "fold-cache.ts");
+	return join(root, "dist", "cli", "fold-cache.js");
 }
 
 /**
  * The `subagent` card under the compact UI, which renders `Subagent Subagent` for
  * every child (PRD-052). Attached after that package for the same reason the fold
- * cache is, and for the same reason as a source entry: the row it replaces is a
- * prototype patch, and only jiti's module map resolves `@earendil-works/*` to the
- * class the interactive mode renders with. `src/cli/subagent-card.ts` has the why.
+ * cache is. The native bridge resolves its prototype patch to Pi's own class.
+ * `src/cli/subagent-card.ts` has the why.
  */
 export function subagentCardExtension(root: string = packageRoot()): string {
-	return join(root, "extensions", "subagent-card", "index.ts");
+	return join(root, "dist", "extensions", "local", "subagent-card", "index.js");
 }
 
 /**
@@ -151,7 +134,7 @@ export function subagentCardExtension(root: string = packageRoot()): string {
  * installed — absent is skip-not-fatal.
  */
 export function backgroundTasksExtension(root: string = packageRoot()): string | undefined {
-	return dependencyDir(join("pi-patty-bg-tasks", "index.ts"), root) === undefined ? undefined : join(root, "extensions", "background", "index.ts");
+	return dependencyDir(join("pi-patty-bg-tasks", "index.ts"), root) === undefined ? undefined : join(root, "dist", "extensions", "local", "background", "index.js");
 }
 
 /**
@@ -209,7 +192,9 @@ export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "co
 			.filter((path): path is string => path !== undefined)
 			// The package's entry through LeanPi's adapter, which hands its `bash` row
 			// to the backgrounding `bash` (`src/cli/background.ts`).
-			.map((path) => (path.endsWith(join("extensions", "index.ts")) ? join(root, "extensions", "compact-ui", "index.ts") : path)),
+			.map((path) => (path.endsWith(join("extensions", "index.ts"))
+				? join(root, "dist", "extensions", "local", "compact-ui", "index.js")
+				: join(root, "dist", "extensions", "pi-claude-code-ui", "extensions", "spinner.js"))),
 		// Last, so the row it names sits above the compact UI's own row for `subagent`.
 		...(ui === "compact" ? [subagentCardExtension(root)] : []),
 	];
@@ -225,7 +210,7 @@ export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "co
  * registers are in place when the adapter loads.
  */
 export function usageAdapterExtension(root: string = packageRoot()): string {
-	return join(root, "extensions", "usage", "index.ts");
+	return join(root, "dist", "extensions", "local", "usage", "index.js");
 }
 
 /** This package's root, from the module's own location (`dist/cli/launch.js`). */
@@ -457,6 +442,9 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// the vendor's own switch for exactly that, so the library path's
 	// `skillsOverride` and this entry now suppress the same thing the same way.
 	const skills = argv.some((argument) => argument === "--skill" || argument === "--no-skills" || argument === "-ns") ? [] : ["--no-skills"];
+	// LeanPi owns MCP with its own runtime and `/mcp`; Pi's built-in MCP extension
+	// claims the same command, so disable that unused path to avoid a load warning.
+	const builtinMcp = argv.includes("--no-mcp") ? [] : ["--no-mcp"];
 	// LeanPi's own palette, loaded as an ordinary Pi theme file and selected for
 	// this run only (`--use-theme` writes no settings). Anyone who named a theme,
 	// or switched discovery off, keeps their choice.
@@ -498,6 +486,7 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 			...(thinkingFold && ui === "compact" ? ["--extension", foldCacheExtension(root)] : []),
 			...backgroundTools,
 			...skills,
+			...builtinMcp,
 			...theme,
 			...model,
 			...argv,

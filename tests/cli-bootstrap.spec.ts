@@ -292,6 +292,39 @@ describe("what Pi's own loop can run", () => {
 		expect(startupBanner(config, { source: "env" }, sessionModelFor(config))).toContain("deepseek-v4.1-flash");
 	});
 
+	it("registers the OpenCode Go models as image-capable, so screenshots reach the model", async () => {
+		// With no `input` declared, a model is registered `["text"]` and every
+		// screenshot the read tool returns is dropped with "tool image omitted:
+		// model does not support images" — every model on this endpoint takes one.
+		const { cwd, home, env } = machine({ vendors: ["opencode"] });
+		await autoConfigure({
+			cwd,
+			home,
+			env,
+			piReady: (provider) => provider === "opencode-go",
+			client: jevPicking(() => "opencode-go:deepseek-v4.1-flash"),
+		});
+
+		const registered: Record<string, Record<string, unknown>> = {};
+		const pi = {
+			on: () => {},
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerProvider: (name: string, provider: Record<string, unknown>) => {
+				registered[name] = provider;
+			},
+			setModel: async () => {},
+			setThinkingLevel: () => {},
+		};
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+		clearLanes();
+
+		const models = registered["opencode-go"]?.models as Array<{ input: string[] }>;
+		expect(models.length).toBeGreaterThan(0);
+		for (const model of models) expect(model.input).toContain("image");
+	});
+
 	it("passes no model to Pi when the role says `default`, which a native provider cannot mean", () => {
 		// `default` means "let the vendor CLI choose" and a native provider has no
 		// CLI: passed through, Pi registers `default` as a model id and the
@@ -856,7 +889,7 @@ describe("the status line reaches the footer", () => {
 		const handler = handlers.get("before_agent_start");
 		expect(handler).toBeDefined();
 		await handler?.(
-			{ prompt: "rename the helper in src/target.ts", systemPrompt: "you are an assistant" },
+			{ messageType: "user", prompt: "rename the helper in src/target.ts", systemPrompt: "you are an assistant" },
 			{
 				// Pi has no model for the `strong` class here — it is a vendor CLI —
 				// so `setModel` is skipped and Pi keeps running the session model.
@@ -902,7 +935,7 @@ describe("a credential the config names and the shell does not have", () => {
 		expect(missingBackendKeys(piSyntax, {})).toEqual([]);
 	});
 
-	it("warns about a missing key only when Pi cannot cover the provider itself", () => {
+	it("warns about a missing key only when Pi cannot cover the provider itself", async () => {
 		const config = { backends: { "opencode-go": { type: "native", baseUrl: "https://x.test", apiKey: "OPENCODE_API_KEY" } }, models: {} } as never;
 		// The variable is unset either way — that is the question `missingBackendKeys`
 		// answers, and it is not on its own a problem.
@@ -910,10 +943,10 @@ describe("a credential the config names and the shell does not have", () => {
 		// Pi's own credential store already has the provider: the request will
 		// succeed, so saying anything is a false alarm. This one printed on every
 		// single launch above a session that then worked perfectly.
-		expect(unusableBackendKeys(config, {}, () => true)).toEqual([]);
+		await expect(unusableBackendKeys(config, {}, () => true)).resolves.toEqual([]);
 		// Nothing can authenticate it: now the 401 is coming and the name of the
 		// variable is the actionable thing to say.
-		expect(unusableBackendKeys(config, {}, () => false)).toEqual([{ backend: "opencode-go", variable: "OPENCODE_API_KEY" }]);
+		await expect(unusableBackendKeys(config, {}, () => false)).resolves.toEqual([{ backend: "opencode-go", variable: "OPENCODE_API_KEY" }]);
 	});
 
 	it("registers no key at all rather than the variable's name, so Pi can use its own credential", async () => {

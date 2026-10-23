@@ -11,7 +11,7 @@ LeanPi has two modes, and only two.
 | Contract, JEV, PRD gate, exploration | yes | **none** |
 | Review, proof gate | only when every executor role is a vendor CLI (LeanPi owns the loop) | **none** |
 | Output | Pi's reply; the proof verdict when LeanPi owns the loop | the model's reply, nothing else |
-| Footer | the installed model, `Auto`, thinking level, task size, `guessed` when JEV could not decide | the pinned model, `Manual` in red; redrawn the moment `/model` changes — no `LeanPi: …` phase |
+| Footer | the installed model, `Auto`, thinking level, task size, `guessed` when JEV could not decide (a guess never makes a task hard) | the pinned model, `<backend> CLI` when it runs a vendor CLI (silent until done), `Manual` in red; redrawn the moment `/model` changes — no `LeanPi: …` phase |
 | Chat | Pi's messages, or LeanPi's report | a regular Pi turn on the pinned model, native or CLI: prompt, spinner, reply, Esc, usage |
 | Survives `/new`, `/resume` | — (the escalation floor resets) | yes |
 | Survives a restart | — | only with `remember_manual_model: true` |
@@ -26,7 +26,7 @@ reviewer and the proof gate.
 
 ```mermaid
 flowchart TD
-    M[message] --> C["classify: JEV, or the keyword heuristic when JEV is off or unsure (footer: guessed)"]
+    M[message] --> C["classify: JEV, or the keyword heuristic when JEV is off or unsure (footer: guessed; an unsure guess stops at normal)"]
     C --> X["LOW → quick · MEDIUM → balanced · HIGH → strong"]
     X --> F["raise to the session floor (the highest class this session has run)"]
     F --> U{class's vendor CLI usable?}
@@ -35,15 +35,18 @@ flowchart TD
     D --> P{"/route executor pin?"}
     P -- yes --> R[the pinned class]
     P -- no --> R2["the routed class; the floor rises to it (never falls)"]
-    R --> B["the role's model: its models: binding; the capability ranking only fills an unbound role"]
+    R --> B["the role's model: a capability pin, else the cheapest configured model clearing the role's floor (the ranking), else the models: map"]
     R2 --> B
     B --> S["setModel before Pi's loop runs"]
 ```
 
 - **First message decides.** A follow-up like "now run the tests" stays on the model that did
   the work. A later harder message escalates; nothing drops back until `/new` or `/route reset`.
-- **Bindings are final.** `models.balanced: claude/opus` runs Opus even when the ranking knows a
-  cheaper model that clears the floor. `capability.roles.<role>.pin` still wins over a binding.
+- **The ranking picks the role's model.** Among the models the config binds to *any* role, a role
+  runs the cheapest one that clears its floor, so `balanced: claude/opus` beside a native
+  deepseek that clears 70 still runs deepseek — streaming in Pi's loop. To force a model onto a
+  role, set `capability.roles.<role>.pin`. (v0.1.10 briefly made bindings final; every normal turn
+  then ran as a headless vendor-CLI run that shows nothing until done, so v0.1.11 restored this.)
 - **Config layers.** `~/.config/leanpi/leanpi.config.yaml` is the base; a repo's
   `leanpi.config.yaml` overrides only the entries it sets. An entry (`backends.<name>`,
   `models.<role>`) is replaced whole, never field by field, and `jev:` is replaced as one
