@@ -44,19 +44,46 @@ Use the `ux-kpi-loop` skill: one lever per iteration, bench before and after, ke
 | Faster launch | `leanpi` → `scripts/leanpi-local.sh` → `bin/leanpi.js` | current wrapper and spawn path | AC-1 to AC-4 |
 | Turn error handling | a turn in a live session → provider error path | current error stop | AC-5, AC-6 |
 
+## Decisions
+
+- 2026-10-22 (planning scope): Keep one completion box per existing phase plus all seven original ACs: 10 boxes total. `prd-audit` counts both kinds against eight; reducing further would remove phase tracking, combine ACs, or split the selected scope. The size finding remains visible; no acceptance requirement is waived.
+
 ## Execution Phases
 
 #### Phase 1: Startup levers 1–3
 **Status:** NOT STARTED
-**Files:** `scripts/leanpi-local.sh`, `bin/leanpi.js`, `tsconfig.json` or `scripts/dev-build.mjs` (extension build), extension registration
-**Verification:** AC-3, AC-4, bench row per lever in `bench/out/startup-bench.jsonl`
+**Files:** `scripts/leanpi-local.sh`, `bin/leanpi.js`, `src/cli/launch.ts` (extension registration), `tsconfig.json` or `scripts/dev-build.mjs` (extension build), `tests/cli/launch.spec.ts`, new `tests/cli/local-wrapper.spec.ts`
+**Implementation:** Apply levers 1–3 individually through the real wrapper. The wrapper also runs a Node version probe (`node -e`) for each candidate before the three Node processes described above; merely combining vendor/build checks leaves that extra boot. Preserve Node ≥22.19 selection, caller cwd/arguments and failure handling. At `src/cli/launch.ts:125`, compiling or bundling extension `.ts` imports must retain the running Pi's class/prototype identity; avoid private copies of Pi/TUI packages that bypass prototype patches. Cover dependency-provided TypeScript as well as local extensions.
+
+1. Launch the wrapper with one Node invocation. Add `tests/cli/local-wrapper.spec.ts` for actual wrapper-owned invocation count, supported/unsupported runtime candidates, stale vendor/build fixtures (AC-3).
+2. Launch every default extension as built JavaScript with shared Pi prototypes intact. Extend the shipped-entry-point tests for compact UI/prototype behavior; assert that bench `pi_timing` extension paths contain only `.js` (AC-4).
+3. Make optional launcher imports lazy. Extend existing coverage for onboarding/update-check/JEV load paths, informational flags, normal launch behavior.
+
+- [ ] Startup levers 1–3 satisfy the wrapper/extension/import contracts above. proof: `pnpm build && pnpm vitest run tests/cli/local-wrapper.spec.ts tests/cli/launch.spec.ts tests/extension-surface.spec.ts tests/cli/startup-trace.spec.ts`, then `pnpm bench:startup -- --runs 1` (AC-3, AC-4).
+
+**Verification:** Use `ux-kpi-loop` before and after each lever; retain comparable bench rows in `bench/out/startup-bench.jsonl` and record keep/revert decisions in `docs/benchmarks/ux-kpis.md`. The focused tests above require behavior-specific red → green for changed behavior, not manufactured failures for unchanged gates.
 
 #### Phase 2: Run Pi in-process (lever 4)
 **Status:** NOT STARTED
-**Files:** `bin/leanpi.js`, `src/cli/launch.ts`
-**Verification:** AC-1, AC-2
+**Files:** `bin/leanpi.js`, `src/cli/launch.ts`, `tests/cli/launch.spec.ts`, `tests/cli/startup-trace.spec.ts`
+**Implementation:** After Phase 1, establish why the child exists, then import Pi's main if no requirement forces the child. Preserve arguments, environment, cwd, signals, exit status and extension behavior. An identified requirement to retain the child does not waive the startup targets or AC-3.
+
+1. Run Pi in the launcher process with its CLI/session lifecycle preserved. Extend real-entry-point coverage for process count, CLI output, signal handling, exit propagation; run `pnpm vitest run tests/cli/launch.spec.ts tests/cli/startup-trace.spec.ts tests/cli/local-wrapper.spec.ts`.
+2. Meet both startup targets after the retained levers. `node -p 'require("node:os").loadavg()[0]'` must confirm load below 12 before the qualifying run; defer the measurement until the required load is available.
+
+- [ ] The retained startup path meets the time-to-ready targets. proof: `pnpm bench:startup -- --runs 10` — the same comparable run under load below 12 reports p50 ≤2500 ms, p90 ≤5000 ms (AC-1, AC-2).
+
+**Verification:** Compare lever 4 with Phase 1 using the same workload/cache conditions and keep/revert log; use the single qualifying ten-run bench for both AC-1 and AC-2.
 
 #### Phase 3: Failed turns (levers 5–6)
 **Status:** NOT STARTED
-**Files:** to be found from the error path
-**Verification:** AC-5, AC-6, AC-7
+**Files:** `src/backends/session-limits.ts:42` (abort classification), `src/index.ts:787,927` (session error/failover path), `tests/backends/session-limits.spec.ts`, `tests/cli/session-fallback.spec.ts`, `tests/helpers/stub-backend.ts`
+**Implementation:** Phase 3 is independent of the startup changes. Establish abort provenance from raw records and the reachable cancel/timeout paths before choosing a fix: the shared error string alone cannot prove Esc or timeout. Reuse the configured model order for quota fallback; the existing next-turn routing test does not prove that the failed turn resumes and completes. For either `429 GoUsageLimitError` or `402`, attempt the next configured model at most once and print one explanatory line; repeated quota failure or exhaustion terminates without a retry loop.
+
+1. Resolve the evidenced cause of `This operation was aborted`. Use `pnpm vitest run tests/backends/session-limits.spec.ts tests/cli/session-fallback.spec.ts` red → green: distinct cancel/timeout stimuli through the real reporting path assert the timeout fix or the evidenced operator-cancel classification. Record the attributable cause beside AC-5.
+2. Complete the same user turn on the next configured model after a quota error. Extend `tests/cli/session-fallback.spec.ts` with the stub-backed real session path for 429/402 then success; assert a completed response without a second user prompt, plus bounded requests/notices on repeated refusal (AC-6). The focused command above must establish red → green.
+3. Run the final regression gates after the startup/turn-error changes: `pnpm test`, `pnpm typecheck`, `pnpm lint` (AC-7).
+
+- [ ] Failed-turn handling satisfies the abort/quota contracts above. proof: `pnpm vitest run tests/backends/session-limits.spec.ts tests/cli/session-fallback.spec.ts`, `pnpm test`, `pnpm typecheck`, `pnpm lint` (AC-5, AC-6, AC-7).
+
+**Verification:** Store results on the owning boxes/ACs once; all seven ACs remain required, and implementation and acceptance stay pending until their commands establish the claimed results.
