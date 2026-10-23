@@ -16,7 +16,7 @@
  *    session and is told what it is. `--no-jev` and `jev.mode: disabled` are
  *    deliberate opt-outs and earn no warning at all.
  */
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -68,6 +68,28 @@ export function piProviderReady(provider: string, options: { run?: (cli: string,
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * `piProviderReady` without holding the event loop. The warning probe runs after
+ * Pi has painted its editor, and a synchronous child process there would freeze
+ * the session for its duration. Same command, same arguments, same `ready`
+ * answer; only the waiting is asynchronous, and a failure is still "not ready".
+ */
+export function piProviderReadyAsync(provider: string, options: { run?: (cli: string, args: readonly string[]) => Promise<string> } = {}): Promise<boolean> {
+	const run =
+		options.run ??
+		((cli, args) =>
+			new Promise<string>((resolve, reject) => {
+				execFile(process.execPath, [cli, ...args], { encoding: "utf8", timeout: 20_000 }, (error, stdout) => {
+					if (error) reject(error);
+					else resolve(stdout);
+				});
+			}));
+	return Promise.resolve()
+		.then(() => run(resolvePiCli(), ["auth", "check", "--provider", provider, "--json", "--no-refresh"]))
+		.then((output) => /"status"\s*:\s*"ready"/.test(output))
+		.catch(() => false);
 }
 
 /**
@@ -532,12 +554,20 @@ export function startupBanner(config: LeanPiConfig, jev: JevCheck, sessionModel?
  * alarm — which is exactly what it was, printed on every launch, above a
  * session that then worked perfectly.
  */
-export function unusableBackendKeys(
+export async function unusableBackendKeys(
 	config: LeanPiConfig,
 	env: NodeJS.ProcessEnv = process.env,
-	piReady: (provider: string) => boolean = piProviderReady,
-): Array<{ backend: string; variable: string }> {
-	return missingBackendKeys(config, env).filter(({ backend }) => !piReady(backend));
+	piReady: (provider: string) => boolean | Promise<boolean> = piProviderReadyAsync,
+): Promise<Array<{ backend: string; variable: string }>> {
+	const verdicts = await Promise.all(
+		missingBackendKeys(config, env).map(async (entry) => ({ entry, ready: await piReady(entry.backend) })),
+	);
+	return verdicts.filter(({ ready }) => !ready).map(({ entry }) => entry);
+}
+
+/** The line for a backend whose named credential is nowhere Pi can find it. */
+export function backendKeyWarning({ backend, variable }: { backend: string; variable: string }): string {
+	return `leanpi: backend "${backend}" reads its key from $${variable}, which is not set in this shell — export it, or remove the \`apiKey\` line to use pi's own credential for that provider.`;
 }
 
 /**

@@ -90,7 +90,7 @@ import { createRecap, isCompletedAssistant, type RecapController, type RecapRunn
 import { messageText } from "./commands/context.js";
 import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
-import { jevWarning } from "./cli/bootstrap.js";
+import { backendKeyWarning, jevWarning, unusableBackendKeys } from "./cli/bootstrap.js";
 import { resolveCredential } from "./jev/credentials.js";
 import { createJevClient, type JevClient } from "./jev/client.js";
 import { defaultLayaDeps, ensureLayaRuntime, layaProvider, layaStatus } from "./jev/laya.js";
@@ -510,6 +510,24 @@ function installSessionHooks(
 	// previous session's pins: the route overrides and the recorded contract
 	// belonged to the conversation that just went away.
 	pi.on("session_start", async (event, ctx) => {
+		// PRD-056: the launcher used to block on `pi auth check` only to decide
+		// whether to print this warning. Pi fires `session_start` after the editor
+		// is painted, so the probe runs here instead; interactive sessions do not
+		// await it, and a failure is silent because it only suppresses a warning.
+		if (event.reason === "startup") {
+			const keys = unusableBackendKeys(deps.config, deps.env);
+			if (ctx.hasUI) {
+				void keys
+					.then((unusable) => {
+						if (unusable.length > 0) ctx.ui.notify(unusable.map(backendKeyWarning).join("\n"), "warning");
+					})
+					.catch(() => {});
+			} else {
+				// `--print` has no later screen to lose the line on and exits with the
+				// turn, so this surface waits for the probe rather than dropping it.
+				for (const entry of await keys.catch(() => [])) process.stderr.write(`${backendKeyWarning(entry)}\n`);
+			}
+		}
 		if (event.reason !== "startup") {
 			deps.surface.resetSessionState();
 			// A session's call signs and the agent profiles it read belong to the

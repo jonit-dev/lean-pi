@@ -18,7 +18,7 @@ if (major < 22 || (major === 22 && minor < 19)) {
 	process.stderr.write(`leanpi needs Node >= 22.19 (running ${process.version}). With nvm: nvm use 22\n`);
 	process.exit(1);
 }
-import { autoConfigure, jevClientFor, jevWarning, unusableBackendKeys, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
+import { autoConfigure, jevClientFor, jevWarning, requireJev, sessionModelFor, startupBanner } from "../dist/cli/bootstrap.js";
 import { runOnboarding, shouldOnboard } from "../dist/cli/onboarding.js";
 import { loadConfig } from "../dist/core/config.js";
 import { isInformational, launchEnv, launchPlan, parseLeanPiFlags, shouldCheckForUpdate } from "../dist/cli/launch.js";
@@ -112,12 +112,8 @@ try {
 		void refreshLatest({ cachePath: updateCachePath });
 	}
 	// A named credential the shell does not hold *and* Pi cannot cover from its
-	// own store: the provider would answer `401 Invalid API key` and the user
-	// would read it as a verdict on the key they just configured. When `pi auth`
-	// already has the provider, the variable is unused and there is nothing to say.
-	for (const { backend, variable } of unusableBackendKeys(config)) {
-		process.stderr.write(`leanpi: backend "${backend}" reads its key from $${variable}, which is not set in this shell — export it, or remove the \`apiKey\` line to use pi's own credential for that provider.\n`);
-	}
+	// own store is warned about by the child's `session_start` (PRD-056): the `pi
+	// auth check` probe used to block this launcher for ~200 ms before Pi started.
 	// Folded reasoning unless `/thinking-fold off` stored the other answer.
 	// Select upstream's one resource path before spawning: a global-only preflight
 	// (project packages are reported, never trusted or executed) feeds Pi's own

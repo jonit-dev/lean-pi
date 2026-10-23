@@ -8,8 +8,9 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { PACKAGE_ROOT } from "../../src/index.js";
+import { describe, expect, it, vi } from "vitest";
+import attach, { PACKAGE_ROOT } from "../../src/index.js";
+import { loadConfig } from "../../src/core/config.js";
 import { compactUiAttached } from "../../src/core/tools.js";
 import { backgroundTasksAdapter, type BackgroundPi } from "../../src/cli/background.js";
 import { bundledExtensions, backgroundTasksExtension, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension, subagentCardExtension } from "../../src/cli/launch.js";
@@ -297,6 +298,95 @@ describe("the leanpi launcher", () => {
 		// by a second implementation answering to no gate of ours.
 		const owned = ["pi-lsp", "pi-output-limits", "pi-mcp-adapter", "pi-context-view", "rpiv-todo"];
 		for (const name of owned) expect(plan.args.join(" ")).not.toContain(name);
+	});
+});
+
+/**
+ * PRD-056: the auth readiness probe decides only whether to print a warning, so
+ * it must not sit on the launcher's critical path. It runs from the Pi child's
+ * `session_start`, which Pi fires after the editor is painted, and it must still
+ * reach a user in an interactive and a `--print` run.
+ */
+describe("the backend-key warning after the editor paints (PRD-056)", () => {
+	const VARIABLE = "LEANPI_TEST_ABSENT_BACKEND_KEY";
+	const BACKEND = "leanpi-absent";
+	const warning = `leanpi: backend "${BACKEND}" reads its key from $${VARIABLE}`;
+
+	function host(): {
+		pi: Record<string, unknown>;
+		startup: Array<(event: unknown, ctx: unknown) => Promise<unknown>>;
+		notices: string[];
+		ctx: (hasUI: boolean) => Record<string, unknown>;
+	} {
+		const startup: Array<(event: unknown, ctx: unknown) => Promise<unknown>> = [];
+		const notices: string[] = [];
+		return {
+			notices,
+			startup,
+			pi: {
+				on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => {
+					if (event === "session_start") startup.push(handler);
+				},
+				registerTool: () => {},
+				registerCommand: () => {},
+				registerProvider: () => {},
+				setModel: async () => true,
+				setThinkingLevel: () => {},
+				setSessionName: () => {},
+				getSessionName: () => undefined,
+				appendEntry: () => {},
+				getAllTools: () => [],
+			},
+			ctx: (hasUI: boolean) => ({
+				hasUI,
+				cwd: process.cwd(),
+				sessionManager: { getSessionId: () => "pi-session" },
+				getContextUsage: () => ({ tokens: 0, contextWindow: 200_000, percent: 0 }),
+				modelRegistry: { find: () => undefined },
+				ui: {
+					notify: (message: string) => notices.push(message),
+					setStatus: () => {},
+					setWidget: () => {},
+					input: async () => undefined,
+				},
+			}),
+		};
+	}
+
+	function configAndEnv(): { cwd: string; env: NodeJS.ProcessEnv; config: ReturnType<typeof loadConfig> } {
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			backends: { [BACKEND]: { type: "native", baseUrl: "https://example.test", api: "openai-completions", apiKey: VARIABLE } },
+			models: { balanced: { backend: BACKEND, model: "cheap" } },
+			lsp: { mode: "off" },
+			jev: { mode: "disabled" },
+		});
+		const env = { HOME: tempDir("leanpi-home-"), PATH: "", XDG_CONFIG_HOME: join(tempDir("leanpi-xdg-"), ".config"), LEANPI_NO_JEV: "1" };
+		return { cwd, env, config: loadConfig(cwd, {}, env) };
+	}
+
+	it("probes only from session_start, and still warns interactive and --print runs", async () => {
+		const { cwd, env, config } = configAndEnv();
+
+		// Interactive: the probe must not run while the first screen is being built.
+		const interactive = host();
+		attach(interactive.pi as never, { cwd, config, env: env as never });
+		expect(interactive.notices).toEqual([]);
+		await Promise.all(interactive.startup.map((handler) => handler({ reason: "startup" }, interactive.ctx(true))));
+		await expect.poll(() => interactive.notices.join("\n"), { timeout: 10_000, interval: 50 }).toContain(warning);
+
+		// `--print`: no editor and no later screen, so the line goes to stderr and
+		// the handler waits for it rather than ending the session before it lands.
+		const printed = host();
+		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true as never);
+		try {
+			attach(printed.pi as never, { cwd, config, env: env as never });
+			expect(stderr.mock.calls.map((call) => String(call[0])).join("")).not.toContain(warning);
+			await Promise.all(printed.startup.map((handler) => handler({ reason: "startup" }, printed.ctx(false))));
+			expect(stderr.mock.calls.map((call) => String(call[0])).join("")).toContain(warning);
+		} finally {
+			stderr.mockRestore();
+		}
 	});
 });
 

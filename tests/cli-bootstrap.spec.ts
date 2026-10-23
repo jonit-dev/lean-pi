@@ -935,7 +935,7 @@ describe("a credential the config names and the shell does not have", () => {
 		expect(missingBackendKeys(piSyntax, {})).toEqual([]);
 	});
 
-	it("warns about a missing key only when Pi cannot cover the provider itself", () => {
+	it("warns about a missing key only when Pi cannot cover the provider itself", async () => {
 		const config = { backends: { "opencode-go": { type: "native", baseUrl: "https://x.test", apiKey: "OPENCODE_API_KEY" } }, models: {} } as never;
 		// The variable is unset either way — that is the question `missingBackendKeys`
 		// answers, and it is not on its own a problem.
@@ -943,10 +943,10 @@ describe("a credential the config names and the shell does not have", () => {
 		// Pi's own credential store already has the provider: the request will
 		// succeed, so saying anything is a false alarm. This one printed on every
 		// single launch above a session that then worked perfectly.
-		expect(unusableBackendKeys(config, {}, () => true)).toEqual([]);
+		await expect(unusableBackendKeys(config, {}, () => true)).resolves.toEqual([]);
 		// Nothing can authenticate it: now the 401 is coming and the name of the
 		// variable is the actionable thing to say.
-		expect(unusableBackendKeys(config, {}, () => false)).toEqual([{ backend: "opencode-go", variable: "OPENCODE_API_KEY" }]);
+		await expect(unusableBackendKeys(config, {}, () => false)).resolves.toEqual([{ backend: "opencode-go", variable: "OPENCODE_API_KEY" }]);
 	});
 
 	it("registers no key at all rather than the variable's name, so Pi can use its own credential", async () => {
