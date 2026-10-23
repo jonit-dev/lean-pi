@@ -442,6 +442,9 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	// the vendor's own switch for exactly that, so the library path's
 	// `skillsOverride` and this entry now suppress the same thing the same way.
 	const skills = argv.some((argument) => argument === "--skill" || argument === "--no-skills" || argument === "-ns") ? [] : ["--no-skills"];
+	// LeanPi owns MCP with its own runtime and `/mcp`; Pi's built-in MCP extension
+	// claims the same command, so disable that unused path to avoid a load warning.
+	const builtinMcp = argv.includes("--no-mcp") ? [] : ["--no-mcp"];
 	// LeanPi's own palette, loaded as an ordinary Pi theme file and selected for
 	// this run only (`--use-theme` writes no settings). Anyone who named a theme,
 	// or switched discovery off, keeps their choice.
@@ -483,6 +486,7 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 			...(thinkingFold && ui === "compact" ? ["--extension", foldCacheExtension(root)] : []),
 			...backgroundTools,
 			...skills,
+			...builtinMcp,
 			...theme,
 			...model,
 			...argv,

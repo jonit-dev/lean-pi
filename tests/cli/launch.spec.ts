@@ -44,6 +44,7 @@ describe("the leanpi launcher", () => {
 			"--exclude-tools",
 			"agent_bg",
 			"--no-skills",
+			"--no-mcp",
 			...theme,
 			"--print",
 			"do the thing",
@@ -53,6 +54,11 @@ describe("the leanpi launcher", () => {
 		// store link, which is why the path is realpath'd.
 		expect(plan.cli).toBe(realpathSync(join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")));
 		expect(existsSync(plan.cli)).toBe(true);
+	});
+
+	it("does not duplicate the built-in MCP opt-out when the caller already passed it", () => {
+		const args = launchPlan(["--no-mcp"], PACKAGE_ROOT).args;
+		expect(args.filter((argument) => argument === "--no-mcp")).toHaveLength(1);
 	});
 
 	it("finds dependencies hoisted above the package, as npm and npx install them", () => {
