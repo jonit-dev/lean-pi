@@ -28,4 +28,5 @@ KPI definitions and targets: `docs/benchmarks/ux-kpis.md`. Open optimization ide
 - **Marker boundary.** A time-to-ready candidate must execute before the editor-painted marker. Work that begins after that marker cannot improve that KPI and needs a matching metric. If no eligible candidate remains, move to the next measurable KPI instead of editing speculatively.
 - Organic KPIs (`pnpm kpi`) move only after real use. Judge startup changes with the bench, never with organic numbers from the same hour.
 - Error and abort KPIs need a code path, not a bench: find the cause in the session logs (`~/.pi/agent/sessions`), fix it, and add a test that fails before the fix.
+- **Exhausted candidates.** After checking every red KPI, stop and report/re-plan if none has a fresh, code-owned candidate; do not manufacture iterations to satisfy the two-no-win stop rule.
 - Stop the loop when every KPI is green, or after two iterations in a row with no win on the same KPI. Then report and re-plan with the user.
