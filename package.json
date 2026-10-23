@@ -72,18 +72,18 @@
 		"@earendil-works/pi-ai": "^1.4.0",
 		"@earendil-works/pi-coding-agent": "^1.4.0",
 		"@earendil-works/pi-tui": "^1.4.0",
-		"@hk_net/pi-usage-bars": "0.6.0",
+		"@hk_net/pi-usage-bars": "0.7.1",
 		"pi-claude-code-ui": "1.0.90",
 		"pi-patty-bg-tasks": "1.1.6",
-		"pi-subagents": "0.70.1",
+		"pi-subagents": "0.79.2",
 		"typebox": "^1.0.0",
 		"yaml": "^2.8.1"
 	},
 	"devDependencies": {
-		"@types/node": "^22.10.0",
+		"@types/node": "^26.6.5",
 		"oxlint": "^1.30.0",
-		"typescript": "^5.9.3",
-		"vitest": "^3.2.4"
+		"typescript": "^7.0.2",
+		"vitest": "^5.0.5"
 	},
 	"bin": {
 		"leanpi": "bin/leanpi.js"
