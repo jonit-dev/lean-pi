@@ -11,7 +11,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_ROOT, type LeanPiSession } from "../../src/index.js";
@@ -65,7 +65,20 @@ describe("the published package", () => {
 				.launchPlan([], pkg)
 				.args.filter((argument, index, all) => all[index - 1] === "--extension");
 			expect(attached.length).toBeGreaterThan(0);
-			for (const path of attached) expect(existsSync(path), `${path} missing from the published package`).toBe(true);
+			for (const path of attached) {
+				expect(existsSync(path), `${path} missing from the published package`).toBe(true);
+				// Present is not loadable. LeanPi's own `extensions/<name>/` is copied
+				// to `dist/extensions/local/<name>/`, one directory deeper, so a
+				// relative import that climbs to the package root lands in
+				// `dist/extensions` instead: Pi reports "Cannot find module
+				// '../../dist/index.js'" at startup. Vendored packages keep their
+				// published bytes (and their extensionless specifiers), so only the
+				// copied tree is checked.
+				if (!path.includes(join("dist", "extensions", "local"))) continue;
+				for (const [, specifier] of readFileSync(path, "utf8").matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g)) {
+					expect(existsSync(resolve(dirname(path), specifier)), `${path}: ${specifier} does not resolve`).toBe(true);
+				}
+			}
 			// Named so a regression report says which file went missing.
 			expect(existsSync(join(pkg, "src", "cli", "fold-cache.ts"))).toBe(true);
 			expect(existsSync(join(pkg, "scripts", "patch-pi-model-command.mjs"))).toBe(true);

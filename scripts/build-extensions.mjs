@@ -35,7 +35,7 @@ export async function buildExtensions() {
 				if (!entry.isFile()) continue;
 				const path = relative(sourceRoot, source);
 				const out = join(root, "dist/extensions", group.output, path.endsWith(".d.ts") ? path : path.replace(/\.ts$/, ".js"));
-				if (!existsSync(out) || statSync(out).mtimeMs < statSync(source).mtimeMs) stale.push({ source, out, typescript: path.endsWith(".ts") && !path.endsWith(".d.ts") });
+				if (!existsSync(out) || statSync(out).mtimeMs < statSync(source).mtimeMs) stale.push({ source, out, typescript: path.endsWith(".ts") && !path.endsWith(".d.ts"), local: group.output === "local" });
 				if (/\.(?:[cm]?js|ts)$/.test(path) && !path.endsWith(".d.ts")) group.files.push(path);
 			}
 		};
@@ -50,14 +50,18 @@ export async function buildExtensions() {
 		}
 	}
 	const ts = stale.some((file) => file.typescript) ? (await import("typescript")).default : undefined;
-	for (const { source, out, typescript } of stale) {
+	for (const { source, out, typescript, local } of stale) {
 		mkdirSync(dirname(out), { recursive: true });
 		if (typescript) {
 			const result = ts.transpileModule(readFileSync(source, "utf8"), {
 				fileName: source,
 				compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, isolatedModules: true, esModuleInterop: true },
 			});
-			writeFileSync(out, result.outputText);
+			// `extensions/<name>/` is copied to `dist/extensions/local/<name>/`,
+			// one level deeper, so a specifier that climbed to the package root now
+			// lands in `dist/extensions` and Pi reports "Cannot find module".
+			const outputText = local ? result.outputText.replaceAll(/(["'])\.\.\/\.\.\/dist\//g, "$1../../../") : result.outputText;
+			writeFileSync(out, outputText);
 		} else copyFileSync(source, out);
 	}
 	const manifest = join(root, "dist/extensions/manifest.json");
