@@ -46,6 +46,8 @@ describe("the leanpi launcher", () => {
 			"--no-skills",
 			"--no-mcp",
 			...theme,
+			"--tui-mode",
+			"regular",
 			"--print",
 			"do the thing",
 		]);
@@ -109,6 +111,12 @@ describe("the leanpi launcher", () => {
 	it("leaves the palette alone when the caller named a theme", () => {
 		expect(launchPlan(["--use-theme", "dark"], PACKAGE_ROOT).args).not.toContain("--theme");
 		expect(launchPlan(["--no-themes"], PACKAGE_ROOT).args).not.toContain("--use-theme");
+	});
+
+	it("keeps the session in the terminal flow instead of Pi's fullscreen default", () => {
+		const args = launchPlan([], PACKAGE_ROOT).args;
+		expect(args.slice(args.indexOf("--tui-mode"), args.indexOf("--tui-mode") + 2)).toEqual(["--tui-mode", "regular"]);
+		expect(launchPlan(["--tui-mode", "fullscreen"], PACKAGE_ROOT).args.filter((argument) => argument === "--tui-mode")).toHaveLength(1);
 	});
 
 	it("says what to do when the package is not built", () => {

@@ -451,6 +451,10 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 	const theme = argv.some((argument) => argument === "--theme" || argument === "--use-theme" || argument === "--no-themes")
 		? []
 		: ["--theme", join(root, "themes", "leanpi.json"), "--use-theme", "leanpi"];
+	// Pi 1.4 made the alternate screen its default: the banner is wiped and the
+	// session takes the whole terminal. LeanPi stays in the scrollback flow, and
+	// an explicit `--tui-mode` keeps the caller's choice.
+	const tuiMode = argv.includes("--tui-mode") ? [] : ["--tui-mode", "regular"];
 	// LeanPi's own extension first: it registers the baseline tools and the
 	// permission guard, and a bundled extension that replaces a tool name must
 	// take it from a surface that already exists.
@@ -488,6 +492,7 @@ export function launchPlan(argv: readonly string[], root: string = packageRoot()
 			...skills,
 			...builtinMcp,
 			...theme,
+			...tuiMode,
 			...model,
 			...argv,
 		],
