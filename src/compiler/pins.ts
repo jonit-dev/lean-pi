@@ -14,6 +14,7 @@
 import type { ExecutorClass, PlanningDecision, ReviewerClass } from "./contract.js";
 import type { RoutingDefault } from "./route.js";
 import type { BackendRef } from "../core/types.js";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 export interface RoutePins {
 	executor_class?: ExecutorClass;
@@ -45,6 +46,12 @@ export interface RoutePins {
 	 * session switch or `/route reset` clears it with the other pins.
 	 */
 	executor_floor?: ExecutorClass;
+	/**
+	 * A thinking level the operator picked by hand (`/thinking`, `/effort`,
+	 * Shift+Tab). It replaces the compiled effort on every later turn, the way
+	 * `model` replaces the routed model; `/route reset` hands it back to Auto.
+	 */
+	effort?: ThinkingLevel;
 }
 
 let pins: RoutePins = {};

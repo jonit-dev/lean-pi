@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import { autoConfigure, jevWarning, missingBackendKeys, requireJev, sessionModelFor, startupBanner, unusableBackendKeys } from "../src/cli/bootstrap.js";
 import { allocateRoles, candidateKey, detectModels, discoverInventory, ladderAllocation, VENDOR_DEFAULT, type ModelCandidate } from "../src/cli/allocate.js";
 import { MODEL_ROLES, type LeanPiConfig } from "../src/core/types.js";
@@ -848,6 +849,140 @@ describe("a PRD the user has not written yet", () => {
 });
 
 describe("the status line reaches the footer", () => {
+	it("offers every thinking level for an OpenCode Go model, `medium` and `max` included", async () => {
+		// Registering over Pi's own provider replaced its catalog, and a model
+		// without its `thinkingLevelMap` lost `xhigh` and `max` in Pi's selector;
+		// the catalog alone hides `medium` for this model.
+		const { cwd, home, env } = machine({ vendors: ["opencode"] });
+		await autoConfigure({
+			cwd,
+			home,
+			env,
+			piReady: (provider) => provider === "opencode-go",
+			client: jevPicking(() => "opencode-go:deepseek-v4.1-flash"),
+		});
+
+		const registered: Record<string, Record<string, unknown>> = {};
+		const pi = {
+			on: () => {},
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerProvider: (name: string, provider: Record<string, unknown>) => {
+				registered[name] = provider;
+			},
+			setModel: async () => {},
+			setThinkingLevel: () => {},
+		};
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+		clearLanes();
+
+		const models = registered["opencode-go"]?.models as Array<Model<Api>>;
+		const flash = models.find((model) => model.id === "deepseek-v4.1-flash")!;
+		expect(getSupportedThinkingLevels(flash)).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+		// The catalog's own value for a level it knows still wins.
+		expect(flash.thinkingLevelMap?.high).toBe("high");
+	});
+
+	it("sets the thinking level with `/effort`, the same setting as `/thinking`", async () => {
+		const { cwd, home, env } = machine({ vendors: ["opencode"] });
+		await autoConfigure({ cwd, home, env, piReady: (provider) => provider === "opencode-go", client: jevPicking(() => "opencode-go:deepseek-v4.1-flash") });
+		const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+		let level = "medium";
+		const pi = {
+			on: () => {},
+			registerTool: () => {},
+			registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command),
+			registerProvider: () => {},
+			setModel: async () => {},
+			setThinkingLevel: (next: string) => {
+				level = next;
+			},
+			getThinkingLevel: () => level,
+		};
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+		clearLanes();
+
+		const notes: string[] = [];
+		const ctx = { ui: { notify: (text: string) => notes.push(text), select: async () => "low" } };
+		await commands.get("effort")!.handler("max", ctx);
+		expect(level).toBe("max");
+		// No argument opens a picker, as `/thinking` does.
+		await commands.get("effort")!.handler("", ctx);
+		expect(level).toBe("low");
+		await commands.get("effort")!.handler("huge", ctx);
+		expect(level).toBe("low");
+		expect(notes.at(-1)).toMatch(/Unknown effort "huge"/);
+	});
+
+	it("keeps a level the operator picked by hand on the next turns, instead of the routed one", async () => {
+		// Auto set the compiled level again on every turn, so `/effort max`
+		// lasted until the next message and the footer went back to `medium`.
+		const { cwd, home, env } = machine({ vendors: [] });
+		writeFileSync(
+			join(cwd, "leanpi.config.yaml"),
+			[
+				"backends:",
+				"  local: { type: native, baseUrl: https://example.test, apiKey: LOCAL_KEY }",
+				"  claude: { type: external_harness, vendor: claude }",
+				"models:",
+				"  quick:",
+				"    backend: local",
+				"    model: cheap",
+				"  balanced:",
+				"    backend: local",
+				"    model: cheap",
+				"  strong:",
+				"    backend: claude",
+				"    model: opus",
+				"jev:",
+				"  mode: disabled",
+				"",
+			].join("\n"),
+		);
+		const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
+		const statuses: Array<[string, string | undefined]> = [];
+		let level = "medium";
+		const pi = {
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, handler),
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerProvider: () => {},
+			setModel: async () => {},
+			setThinkingLevel: (next: string) => {
+				level = next;
+			},
+			getThinkingLevel: () => level,
+		};
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+
+		const handler = handlers.get("before_agent_start");
+		expect(handler).toBeDefined();
+		const turnCtx = {
+			// Pi has no model for the `strong` class here — it is a vendor CLI —
+			// so `setModel` is skipped and Pi keeps running the session model.
+			modelRegistry: { find: (backend: string) => (backend === "local" ? { id: "cheap" } : undefined) },
+			// Pi's own context reading, which the footer reports rather than
+			// estimating a second time; `percent` is null until Pi knows.
+			getContextUsage: () => ({ tokens: 12_000, contextWindow: 100_000, percent: 12 }),
+			ui: { setStatus: (key: string, text: string | undefined) => statuses.push([key, text]) },
+		};
+		const prompt = { messageType: "user", prompt: "rename the helper in src/target.ts", systemPrompt: "you are an assistant" };
+		// The operator picks `max` in Pi's own selector before the first message.
+		level = "max";
+		await handlers.get("thinking_level_select")!({ level: "max", previousLevel: "medium" }, turnCtx);
+		await handler!(prompt, turnCtx);
+		expect(level).toBe("max");
+		expect(statuses.at(-1)?.[1]).toMatch(/thinking: max/);
+		// And it holds on the turn after, with nothing picked again.
+		await handler!(prompt, turnCtx);
+		expect(level).toBe("max");
+		clearLanes();
+	});
+
+
 	it("is installed by the turn handler, naming the model Pi was actually given", async () => {
 		// The renderer had tests; nothing asserted the extension ever calls
 		// `ctx.ui.setStatus`, so deleting the call would have been invisible.
@@ -882,24 +1017,23 @@ describe("the status line reaches the footer", () => {
 			registerProvider: () => {},
 			setModel: async () => {},
 			setThinkingLevel: () => {},
+			getThinkingLevel: () => "medium",
 		};
 		clearLanes();
 		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
 
 		const handler = handlers.get("before_agent_start");
 		expect(handler).toBeDefined();
-		await handler?.(
-			{ messageType: "user", prompt: "rename the helper in src/target.ts", systemPrompt: "you are an assistant" },
-			{
-				// Pi has no model for the `strong` class here — it is a vendor CLI —
-				// so `setModel` is skipped and Pi keeps running the session model.
-				modelRegistry: { find: (backend: string) => (backend === "local" ? { id: "cheap" } : undefined) },
-				// Pi's own context reading, which the footer reports rather than
-				// estimating a second time; `percent` is null until Pi knows.
-				getContextUsage: () => ({ tokens: 12_000, contextWindow: 100_000, percent: 12 }),
-				ui: { setStatus: (key: string, text: string | undefined) => statuses.push([key, text]) },
-			},
-		);
+		const turnCtx = {
+			// Pi has no model for the `strong` class here — it is a vendor CLI —
+			// so `setModel` is skipped and Pi keeps running the session model.
+			modelRegistry: { find: (backend: string) => (backend === "local" ? { id: "cheap" } : undefined) },
+			// Pi's own context reading, which the footer reports rather than
+			// estimating a second time; `percent` is null until Pi knows.
+			getContextUsage: () => ({ tokens: 12_000, contextWindow: 100_000, percent: 12 }),
+			ui: { setStatus: (key: string, text: string | undefined) => statuses.push([key, text]) },
+		};
+		await handler?.({ messageType: "user", prompt: "rename the helper in src/target.ts", systemPrompt: "you are an assistant" }, turnCtx);
 		clearLanes();
 
 		const [entry] = statuses;
@@ -909,6 +1043,10 @@ describe("the status line reaches the footer", () => {
 		// Never the class's model when Pi was not given it: with JEV disabled the
 		// fallback route is what runs, and the line has to name what Pi will dial.
 		expect(entry?.[1]).not.toContain("opus");
+
+		// A level the operator picks between turns reaches the footer at once.
+		await handlers.get("thinking_level_select")!({ level: "high", previousLevel: "medium" }, turnCtx);
+		expect(statuses.at(-1)?.[1]).toMatch(/thinking: high/);
 	});
 });
 

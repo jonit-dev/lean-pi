@@ -10,6 +10,7 @@
  */
 import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { Type } from "typebox";
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -80,7 +81,7 @@ import { selectSkills } from "./capabilities/skill-select.js";
 import { registerSkillsCommands } from "./commands/skills.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { resolveRole, resolveRoleAvoiding } from "./core/roles.js";
-import { LEANPI_STATUS_KEY, manualStatusLine, statusLine } from "./cli/statusline.js";
+import { LEANPI_STATUS_KEY, manualStatusLine, statusLine, type StatusInput } from "./cli/statusline.js";
 import { piProviderFor, registerCliModel, registerSubscriptionModels, type CliProviderDeps } from "./backends/cli-provider.js";
 import { learnedModels } from "./backends/learned-models.js";
 import { classifyAssistantFailure, assistantOutcome, SessionLimits } from "./backends/session-limits.js";
@@ -180,6 +181,18 @@ export interface LeanPiActivation {
 	noteSubagentCapture?(captured: CapturedLimit): void;
 }
 
+/** Every level Pi knows, in its order: the picker offers all of them. */
+const EFFORT_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * Pi hides a level its map sets to `null`, and `xhigh`/`max` unless mapped. A
+ * level the catalog has no value for is sent by its own name, as Pi does for
+ * an unmapped level, so the operator chooses and the endpoint decides.
+ */
+function allEffortLevels(catalog: Model<Api>["thinkingLevelMap"]): Model<Api>["thinkingLevelMap"] {
+	return Object.fromEntries(EFFORT_LEVELS.map((level) => [level, catalog?.[level] ?? level]));
+}
+
 /** Register one Pi provider per `native` backend; every role on it becomes selectable. */
 function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.ProcessEnv = process.env): void {
 	const modelsByBackend = new Map<string, Set<string>>();
@@ -198,6 +211,9 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.Pr
 		if (typeof backend.baseUrl !== "string" || backend.baseUrl.length === 0) {
 			throw new ConfigError("baseUrl is required for native backends", `backends.${name}`);
 		}
+		// Registering over one of Pi's own providers replaces its catalog, and with
+		// it each model's thinking steps; the catalog's values are kept below.
+		const builtin = builtinProviders().find((provider) => provider.id === name)?.getModels() ?? [];
 		// Providers that require a routing header (OpenCode Go wants
 		// `x-opencode-session`) are reachable without a code change: Pi resolves each
 		// value through the same rule it uses for the key, and
@@ -227,6 +243,7 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.Pr
 				? {}
 				: { headers: Object.fromEntries(Object.entries(declaredHeaders).map(([key, value]) => [key, typeof value === "string" ? toPiConfigValue(value) : value])) }),
 			models: [...declared].map((id) => ({
+				thinkingLevelMap: allEffortLevels(builtin.find((model) => model.id === id)?.thinkingLevelMap),
 				id,
 				name: id,
 				reasoning: backend.reasoning === true,
@@ -487,6 +504,25 @@ function registerClearAlias(pi: ExtensionAPI): void {
 	});
 }
 
+/** `/effort`: the same setting as Pi's `/thinking`, under a second name. */
+function registerEffortAlias(pi: ExtensionAPI): void {
+	pi.registerCommand("effort", {
+		description: "Set the thinking level (same as /thinking)",
+		getArgumentCompletions: (prefix: string) => EFFORT_LEVELS.filter((level) => level.startsWith(prefix)).map((level) => ({ value: level, label: level })),
+		handler: async (args, ctx) => {
+			const asked = args.trim().toLowerCase() || (await ctx.ui.select("Effort", [...EFFORT_LEVELS]));
+			if (asked === undefined) return;
+			if (!EFFORT_LEVELS.includes(asked as ThinkingLevel)) {
+				ctx.ui.notify(`Unknown effort "${asked}". Levels: ${EFFORT_LEVELS.join(", ")}.`, "error");
+				return;
+			}
+			pi.setThinkingLevel(asked as ThinkingLevel);
+			// Pi clamps to the model's own steps: report the level it kept.
+			ctx.ui.notify(`Effort: ${pi.getThinkingLevel()}`, "info");
+		},
+	});
+}
+
 /**
  * Session-lifecycle hooks (F7): `session_start` → `session_shutdown`, in
  * registration order. Extracted from `activate()` with no behavior change;
@@ -641,6 +677,21 @@ function installTurnHooks(
 	// Which backend Pi's own loop just failed on (a 402/429), so the next turn's
 	// role resolution walks the ladder past it instead of failing the same way.
 	const sessionLimits = new SessionLimits();
+	// The footer's last routed line, redrawn when the operator changes the
+	// thinking level between turns: until then it named the routed level.
+	let lastStatus: StatusInput | undefined;
+	// The level LeanPi last left Pi at, and on which model. A different level on
+	// the same model at the next turn is one the operator picked by hand: Pi has
+	// no hook that tells its own selector apart from LeanPi's `setThinkingLevel`.
+	let applied: { model: string | undefined; level: ThinkingLevel } | undefined;
+	const modelKey = (model: { provider: string; id: string } | undefined): string | undefined => (model ? `${model.provider}/${model.id}` : undefined);
+	pi.on("thinking_level_select", (event, ctx) => {
+		// A pick before the first turn: the level it replaced is the baseline.
+		applied ??= { model: modelKey(ctx.model), level: event.previousLevel };
+		if (!lastStatus || (lastStatus.pin ?? null) !== (routePins().model ?? null)) return;
+		lastStatus = { ...lastStatus, effort: event.level };
+		ctx.ui.setStatus(LEANPI_STATUS_KEY, statusLine(lastStatus));
+	});
 
 	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
 	// configuration).
@@ -764,6 +815,8 @@ function installTurnHooks(
 	pi.on("before_agent_start", async (event, ctx) => {
 		// Pi 1.2+ also fires this for extension-triggered runs, which carry no prompt to route.
 		if (event.messageType !== "user" || isTurnInFlight()) return;
+		const held = pi.getThinkingLevel();
+		if (applied !== undefined && applied.model === modelKey(ctx.model) && applied.level !== held) setRoutePins({ effort: held }, deps.sessionId());
 		// PRD-015's accumulator is created before the lanes run, not after: the
 		// executor lane's backend calls are what the record has to carry, and they
 		// are spent while the lane runs.
@@ -817,12 +870,16 @@ function installTurnHooks(
 			// `setModel` answers whether it took the model. Ignoring that answer
 			// let the footer name a model the session had refused.
 			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
-			if (context.contract) {
+			if (routePins().effort !== undefined) {
+				// The operator's level is a pick, not a ceiling, and `setModel` reset it.
+				pi.setThinkingLevel(routePins().effort!);
+			} else if (context.contract) {
 				// Manual has no compiled effort to cap.
 				effort = thinkingLevelFor(deps.config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
 				if (effort !== undefined) pi.setThinkingLevel(effort);
 			}
 		}
+		if (!owns) applied = { model: modelKey(ctx.model), level: pi.getThinkingLevel() };
 		// "Tell me your goal, I figure out the rest" is only trustworthy if the
 		// figuring is visible: the footer carries what this turn routed to, how
 		// hard it was told to think, and what it was classified as.
@@ -837,19 +894,21 @@ function installTurnHooks(
 		// switched models by hand.
 		if (context.contract) {
 			const running = owns || installed !== undefined ? undefined : ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "pi's own model";
-			ctx.ui.setStatus(
-				LEANPI_STATUS_KEY,
-				statusLine({
-					config: deps.config,
-					contract: context.contract,
-					...deps.statusExtras(ctx),
-					pin: manualPin ?? null,
-					color: true,
-					...(running === undefined ? {} : { model: running }),
-					...(effort === undefined ? {} : { effort }),
-				}),
-			);
+			// Pi clamps the level to the model's own steps, so the footer names
+			// the level Pi holds, not the one it was asked for.
+			if (!owns) effort = pi.getThinkingLevel();
+			lastStatus = {
+				config: deps.config,
+				contract: context.contract,
+				...deps.statusExtras(ctx),
+				pin: manualPin ?? null,
+				color: true,
+				...(running === undefined ? {} : { model: running }),
+				...(effort === undefined ? {} : { effort }),
+			};
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, statusLine(lastStatus));
 		} else if (manualPin) {
+			lastStatus = undefined;
 			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true, deps.statusExtras(ctx).goal));
 		}
 		// PRD-044: JEV judged the session's opening task PRD-worthy, so offer one
@@ -1459,6 +1518,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	};
 	bridgeCommands(pi, commands, cwd, afterCommand, { config, cwd, env });
 	registerClearAlias(pi);
+	registerEffortAlias(pi);
 
 	return {
 		name: LEANPI_EXTENSION_NAME,

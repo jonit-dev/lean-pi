@@ -66,6 +66,7 @@ function fakePi(): {
 				return true;
 			},
 			setThinkingLevel: () => {},
+			getThinkingLevel: () => "medium",
 			setSessionName: () => {},
 			appendEntry: () => {},
 		},
