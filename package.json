@@ -74,8 +74,10 @@
 		"@earendil-works/pi-tui": "^1.4.0",
 		"@hk_net/pi-usage-bars": "0.6.0",
 		"pi-claude-code-ui": "1.0.90",
+		"pi-context-view": "0.8.0",
 		"pi-patty-bg-tasks": "1.1.6",
 		"pi-subagents": "0.70.1",
+		"pi-web-search": "1.7.0",
 		"typebox": "^1.0.0",
 		"yaml": "^2.8.1"
 	},

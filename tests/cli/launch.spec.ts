@@ -13,7 +13,8 @@ import attach, { PACKAGE_ROOT } from "../../src/index.js";
 import { loadConfig } from "../../src/core/config.js";
 import { compactUiAttached } from "../../src/core/tools.js";
 import { backgroundTasksAdapter, type BackgroundPi } from "../../src/cli/background.js";
-import { bundledExtensions, backgroundTasksExtension, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension, subagentCardExtension } from "../../src/cli/launch.js";
+import { contextViewAdapter } from "../../src/cli/context-view.js";
+import { bundledExtensions, backgroundTasksExtension, foldCacheExtension, isInformational, launchEnv, launchPlan, packageRoot, parseLeanPiFlags, resolvePiCli, shouldCheckForUpdate, sourceCheckout, spinnerExtension, subagentCardExtension, webSearchEnv } from "../../src/cli/launch.js";
 import { bootSession, fixtureRepo, nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend } from "../helpers/stub-backend.js";
 
@@ -310,8 +311,44 @@ describe("the leanpi launcher", () => {
 		// Nothing LeanPi already owns: PRD-018 (LSP), PRD-019 (output reduction),
 		// PRD-006 (MCP disclosure), `/context` and PRD-025 (todo) are not replaced
 		// by a second implementation answering to no gate of ours.
-		const owned = ["pi-lsp", "pi-output-limits", "pi-mcp-adapter", "pi-context-view", "rpiv-todo"];
+		// `pi-context-view` is attached, but only through the adapter that renames
+		// its command, so `/context` keeps one owner (PRD-059).
+		const owned = ["pi-lsp", "pi-output-limits", "pi-mcp-adapter", "rpiv-todo"];
 		for (const name of owned) expect(plan.args.join(" ")).not.toContain(name);
+		expect(plan.args.join(" ")).not.toContain(join("dist", "extensions", "pi-context-view"));
+	});
+
+	it("attaches web search and the context view, the view as `/context-view` (PRD-059)", () => {
+		const bundled = bundledExtensions(PACKAGE_ROOT, "plain");
+		expect(bundled).toContain(join(PACKAGE_ROOT, "dist", "extensions", "local", "context-view", "index.js"));
+		expect(bundled).toContain(join(PACKAGE_ROOT, "dist", "extensions", "pi-web-search", "src", "index.js"));
+		const commands: string[] = [];
+		const events: string[] = [];
+		const pi = { registerCommand: (name: string) => commands.push(name), on: (event: string) => events.push(event) };
+		contextViewAdapter((proxy: typeof pi) => {
+			proxy.registerCommand("context", {});
+			proxy.registerCommand("context-config", {});
+			proxy.on("session_start");
+		})(pi);
+		expect(commands).toEqual(["context-view", "context-config"]);
+		expect(events).toEqual(["session_start"]);
+	});
+
+	it("points web search at the opencode-go login only when the operator decided nothing (PRD-059)", () => {
+		const bundledConfig = join(PACKAGE_ROOT, "extensions", "web-search", "opencode-go.json");
+		const home = tempDir("leanpi-web-search-");
+		const agentDir = join(home, ".pi", "agent");
+		mkdirSync(agentDir, { recursive: true });
+		// No opencode-go credential: the package keeps "use the current model".
+		expect(webSearchEnv({ HOME: home }, PACKAGE_ROOT)).toEqual({});
+		writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ "opencode-go": { type: "api_key", key: "test" } }));
+		expect(webSearchEnv({ HOME: home }, PACKAGE_ROOT)).toEqual({ PI_WEB_SEARCH_CONFIG: bundledConfig });
+		expect(webSearchEnv({ HOME: tempDir("leanpi-web-search-env-"), OPENCODE_API_KEY: "test" }, PACKAGE_ROOT)).toEqual({ PI_WEB_SEARCH_CONFIG: bundledConfig });
+		// The operator's own choice wins, as a variable or as Pi's config file.
+		expect(webSearchEnv({ HOME: home, PI_WEB_SEARCH_CONFIG: "/x.json" }, PACKAGE_ROOT)).toEqual({});
+		writeFileSync(join(agentDir, "web-search.json"), "{}");
+		expect(webSearchEnv({ HOME: home }, PACKAGE_ROOT)).toEqual({});
+		expect(existsSync(bundledConfig)).toBe(true);
 	});
 });
 

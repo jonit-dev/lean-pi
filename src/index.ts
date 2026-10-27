@@ -76,6 +76,7 @@ import { aggregate } from "./verify/aggregate.js";
 import type { EvidenceRecord } from "./verify/evidence.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { defaultRuntimeSkillRoots, defaultSkillRoots, scanSkills, createSkillControl, withoutSkillCatalog, type SkillRecord } from "./capabilities/skills.js";
 import { bundledRoot } from "./skills/pack.js";
 import { selectSkills } from "./capabilities/skill-select.js";
@@ -196,6 +197,7 @@ function allEffortLevels(catalog: Model<Api>["thinkingLevelMap"]): Model<Api>["t
 
 /** Register one Pi provider per `native` backend; every role on it becomes selectable. */
 function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.ProcessEnv = process.env): void {
+	const searchModel = webSearchModel(env);
 	const modelsByBackend = new Map<string, Set<string>>();
 	for (const [role, entry] of Object.entries(config.models)) {
 		// Only role keys bind a model; `models.specialists` (FR-047) binds a role.
@@ -265,8 +267,31 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.Pr
 				},
 				contextWindow: (backend.contextWindow as number | undefined) ?? 128_000,
 				maxTokens: (backend.maxTokens as number | undefined) ?? 8_192,
-			})),
+			})).concat(
+				searchModel?.provider === name && !declared.has(searchModel.model)
+					? builtin.filter((model) => model.id === searchModel.model).map((model) => ({ ...model, thinkingLevelMap: allEffortLevels(model.thinkingLevelMap) }))
+					: [],
+			),
 		});
+	}
+}
+
+/**
+ * The model `pi-web-search` is configured to search with (PRD-059), read the
+ * way the package reads it: `PI_WEB_SEARCH_CONFIG`, else
+ * `<agentDir>/web-search.json`. Registering a backend over one of Pi's own
+ * providers replaces its catalog, so `registerBackends` keeps this one catalog
+ * entry — with its own `api` and `baseUrl` — or the package reports
+ * "model was not found" on the login it was pointed at.
+ */
+function webSearchModel(env: NodeJS.ProcessEnv): { provider: string; model: string } | undefined {
+	try {
+		const parsed = JSON.parse(readFileSync(env.PI_WEB_SEARCH_CONFIG ?? join(getAgentDir(), "web-search.json"), "utf8")) as { provider?: unknown; model?: unknown; modelId?: unknown };
+		const model = parsed.model ?? parsed.modelId;
+		return typeof parsed.provider === "string" && typeof model === "string" ? { provider: parsed.provider, model } : undefined;
+	} catch {
+		// No config, or one the package itself reports as invalid.
+		return undefined;
 	}
 }
 

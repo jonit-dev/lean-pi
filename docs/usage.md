@@ -49,6 +49,16 @@ LeanPi's commands are ordinary Pi slash commands: `/help` lists them, and
 `/skills`, `/mcp`, `/permissions`, `/jev`, `/todo`, `/goal`, `/review`,
 `/verify` and `/prd` are all typed into the same prompt as a task.
 
+Two bundled Pi packages ride along. `/context-view` (`pi-context-view`) opens a
+viewer of what Pi actually sent: base prompt, tool schemas and extension
+injections. `/context` stays LeanPi's own layer report. `web_search` and
+`url_context` (`pi-web-search`) search the web on a provider you already pay
+for. With an `opencode-go` login and no search config of your own, LeanPi
+points them at `opencode-go/claude-haiku-5-5`, the cheapest model on that login
+that can search. Set `PI_WEB_SEARCH_CONFIG` or write
+`~/.pi/agent/web-search.json` (`{ "provider": "…", "model": "…" }`) to choose
+another one.
+
 **The JEV key is optional, and it pays for itself.** The task compiler, the
 skill disclosure and the proof gate are JEV decisions; with a key they route on
 what a task actually needs. Without one, every site falls back to a

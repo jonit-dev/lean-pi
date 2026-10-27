@@ -1972,6 +1972,8 @@ High-consequence actions require higher confidence thresholds.
 
 **FR-152 — SHOULD:** Launch Pi with long prompt-cache retention (`PI_CACHE_RETENTION=long`) unless the operator sets `PI_CACHE_RETENTION`, when measurement shows it does not raise cost per verified completion.
 
+**FR-154 — SHOULD:** Bundle `pi-web-search` on the cheapest search-capable model of a login the user already holds, and `pi-context-view` as `/context-view` so `/context` keeps one owner. (PRD-059)
+
 ---
 
 # 52. Cost Telemetry

@@ -892,6 +892,32 @@ describe("the status line reaches the footer", () => {
 		expect(flash.thinkingLevelMap?.high).toBe("high");
 	});
 
+	it("keeps the catalog entry `pi-web-search` is pointed at, with its own API (PRD-059)", async () => {
+		// The replaced catalog left `opencode-go/claude-haiku-5-5` unknown, and the
+		// package answered "model was not found" on the login it was pointed at.
+		const { cwd, home, env } = machine({ vendors: ["opencode"] });
+		await autoConfigure({ cwd, home, env, piReady: (provider) => provider === "opencode-go", client: jevPicking(() => "opencode-go:deepseek-v4.1-flash") });
+		const registered: Record<string, Record<string, unknown>> = {};
+		const pi = {
+			on: () => {},
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerProvider: (name: string, provider: Record<string, unknown>) => {
+				registered[name] = provider;
+			},
+			setModel: async () => {},
+			setThinkingLevel: () => {},
+		};
+		const search = { ...env, HOME: home, PI_WEB_SEARCH_CONFIG: join(process.cwd(), "extensions", "web-search", "opencode-go.json") };
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: search });
+		clearLanes();
+
+		const models = registered["opencode-go"]?.models as Array<Model<Api>>;
+		expect(models.find((model) => model.id === "claude-haiku-5-5")?.api).toBe("anthropic-messages");
+		expect(models.find((model) => model.id === "deepseek-v4.1-flash")).toBeDefined();
+	});
+
 	it("sets the thinking level with `/effort`, the same setting as `/thinking`", async () => {
 		const { cwd, home, env } = machine({ vendors: ["opencode"] });
 		await autoConfigure({ cwd, home, env, piReady: (provider) => provider === "opencode-go", client: jevPicking(() => "opencode-go:deepseek-v4.1-flash") });

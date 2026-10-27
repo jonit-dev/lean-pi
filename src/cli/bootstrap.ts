@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { detectVendors, type SubscriptionState } from "../backends/subscriptions.js";
 import { allocateRoles, candidateKey, discoverInventory, ladderAllocation, VENDOR_DEFAULT, type Allocation, type DiscoveredModel, type ModelCandidate } from "./allocate.js";
 import { CONFIG_FILENAME, configPathFor, loadConfig, userConfigPath } from "../core/config.js";
-import { resolvePiCli } from "./launch.js";
+import { piAuthenticatedProviders, resolveAgentDir, resolvePiCli } from "./launch.js";
 import { MODEL_ROLES, type JevProvider, type LeanPiConfig, type ModelRole } from "../core/types.js";
 import { createJevClient, type JevClient } from "../jev/client.js";
 import { LEANPI_VERSION } from "../core/package-info.js";
@@ -207,42 +207,6 @@ function renderConfig(
 
 /** The vendor's own login command, for a readiness row that can be acted on. */
 const LOGIN_COMMAND: Record<string, string> = { claude: "claude /login", codex: "codex login", opencode: "opencode auth login" };
-
-/**
- * Pi's agent dir, resolved the way Pi's own `getAgentDir` does: the
- * `PI_CODING_AGENT_DIR` override (with a leading `~` expanded against `home`),
- * else `<home>/.pi/agent`. Kept local rather than imported from Pi's SDK so
- * bootstrap does not pay the SDK's load cost just to read its auth store.
- */
-function resolveAgentDir(home: string, env: NodeJS.ProcessEnv = process.env): string {
-	const declared = env.PI_CODING_AGENT_DIR;
-	if (declared === undefined || declared.length === 0) return join(home, ".pi", "agent");
-	if (declared === "~") return home;
-	if (declared.startsWith("~/")) return join(home, declared.slice(2));
-	return declared;
-}
-
-/**
- * Providers Pi itself holds a credential for, read from its own auth store.
- *
- * A machine with no vendor CLI can still be perfectly able to run LeanPi: Pi's
- * loop is the executor on a native backend, and `pi auth login` is how that
- * credential gets there. Reporting "nothing on this machine can run a turn"
- * without mentioning it was the cold start telling a configured user they had
- * configured nothing.
- */
-function piAuthenticatedProviders(home: string, env: NodeJS.ProcessEnv = process.env): string[] {
-	const path = join(resolveAgentDir(home, env), "auth.json");
-	if (!existsSync(path)) return [];
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-		return typeof parsed === "object" && parsed !== null ? Object.keys(parsed as Record<string, unknown>) : [];
-	} catch {
-		// An unreadable auth store is Pi's business to report, not a reason to
-		// hide the rest of the readiness block.
-		return [];
-	}
-}
 
 /** One line per thing that could have run this turn, and the command that would fix it. */
 function readinessRows(detected: readonly SubscriptionState[], options: { env: NodeJS.ProcessEnv; home: string }): string[] {

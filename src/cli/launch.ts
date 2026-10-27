@@ -10,7 +10,7 @@
  * package's built extension already attached, so `leanpi` is the command and
  * every Pi flag still works behind it.
  */
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SAFETY_LEVELS, isSafetyLevel, type SafetyLevel } from "../permissions/rules.js";
@@ -138,6 +138,18 @@ export function backgroundTasksExtension(root: string = packageRoot()): string |
 }
 
 /**
+ * PRD-059: `pi-web-search` (`web_search`, `url_context`) and `pi-context-view`
+ * (`/context-view`, through LeanPi's adapter so `/context` keeps one owner).
+ * Precompiled like the other bundled packages; skip-not-fatal when absent.
+ */
+function webExtensions(root: string): string[] {
+	return [
+		...(dependencyDir("pi-context-view", root) === undefined ? [] : [join(root, "dist", "extensions", "local", "context-view", "index.js")]),
+		...(dependencyDir("pi-web-search", root) === undefined ? [] : [join(root, "dist", "extensions", "pi-web-search", "src", "index.js")]),
+	];
+}
+
+/**
  * Where `entry` lives under `node_modules`, searched upward the way Node's own
  * resolver does: this package's `node_modules`, then each ancestor's.
  *
@@ -195,6 +207,7 @@ export function bundledExtensions(root: string = packageRoot(), ui: UiMode = "co
 			.map((path) => (path.endsWith(join("extensions", "index.ts"))
 				? join(root, "dist", "extensions", "local", "compact-ui", "index.js")
 				: join(root, "dist", "extensions", "pi-claude-code-ui", "extensions", "spinner.js"))),
+		...webExtensions(root),
 		// Last, so the row it names sits above the compact UI's own row for `subagent`.
 		...(ui === "compact" ? [subagentCardExtension(root)] : []),
 	];
@@ -355,6 +368,58 @@ export function sourceCheckout(root: string = packageRoot()): boolean {
 }
 
 /**
+ * Pi's agent dir, resolved the way Pi's own `getAgentDir` does: the
+ * `PI_CODING_AGENT_DIR` override (with a leading `~` expanded against `home`),
+ * else `<home>/.pi/agent`. Kept local rather than imported from Pi's SDK so
+ * the launcher does not pay the SDK's load cost just to read its auth store.
+ */
+export function resolveAgentDir(home: string, env: NodeJS.ProcessEnv = process.env): string {
+	const declared = env.PI_CODING_AGENT_DIR;
+	if (declared === undefined || declared.length === 0) return join(home, ".pi", "agent");
+	if (declared === "~") return home;
+	if (declared.startsWith("~/")) return join(home, declared.slice(2));
+	return declared;
+}
+
+/**
+ * Providers Pi itself holds a credential for, read from its own auth store.
+ *
+ * A machine with no vendor CLI can still be perfectly able to run LeanPi: Pi's
+ * loop is the executor on a native backend, and `pi auth login` is how that
+ * credential gets there. Reporting "nothing on this machine can run a turn"
+ * without mentioning it was the cold start telling a configured user they had
+ * configured nothing.
+ */
+export function piAuthenticatedProviders(home: string, env: NodeJS.ProcessEnv = process.env): string[] {
+	const path = join(resolveAgentDir(home, env), "auth.json");
+	if (!existsSync(path)) return [];
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+		return typeof parsed === "object" && parsed !== null ? Object.keys(parsed as Record<string, unknown>) : [];
+	} catch {
+		// An unreadable auth store is Pi's business to report, not a reason to
+		// hide the rest of the readiness block.
+		return [];
+	}
+}
+
+/**
+ * PRD-059: point `pi-web-search` at the cheapest model it can search with on a
+ * subscription the user already holds. It cannot use the shipped `opencode-go`
+ * backend (`openai-completions`), but Pi's own `opencode-go` catalog carries
+ * `anthropic-messages` models on the same login, `claude-haiku-5-5` the
+ * cheapest. Only when nothing else decided: an operator's
+ * `PI_WEB_SEARCH_CONFIG` or `<agentDir>/web-search.json` wins, and without an
+ * `opencode-go` credential the package keeps its own "use the current model".
+ */
+export function webSearchEnv(base: NodeJS.ProcessEnv, root: string): { PI_WEB_SEARCH_CONFIG?: string } {
+	if (base.PI_WEB_SEARCH_CONFIG !== undefined || base.HOME === undefined) return {};
+	if (existsSync(join(resolveAgentDir(base.HOME, base), "web-search.json"))) return {};
+	if (base.OPENCODE_API_KEY === undefined && !piAuthenticatedProviders(base.HOME, base).includes("opencode-go")) return {};
+	return { PI_WEB_SEARCH_CONFIG: join(root, "extensions", "web-search", "opencode-go.json") };
+}
+
+/**
  * The environment Pi is spawned with.
  *
  * `LEANPI_*` carries the session decisions the extension inside the child has to
@@ -379,6 +444,7 @@ export function launchEnv(flags: LeanPiFlags, jevWarned: boolean, base: NodeJS.P
 	return {
 		...base,
 		...(base.PI_CACHE_RETENTION === undefined ? { PI_CACHE_RETENTION: "long" } : {}),
+		...webSearchEnv(base, root),
 		...(flags.allowMissingJev ? { LEANPI_NO_JEV: "1" } : {}),
 		...(flags.provider === undefined ? {} : { LEANPI_LAYAY_PROVIDER: flags.provider }),
 		...(jevWarned ? { LEANPI_JEV_WARNED: "1" } : {}),

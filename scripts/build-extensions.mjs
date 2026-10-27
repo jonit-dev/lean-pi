@@ -18,6 +18,8 @@ const groups = [
 		"pi-claude-code-ui",
 		"pi-patty-bg-tasks",
 		"@hk_net/pi-usage-bars",
+		"pi-context-view",
+		"pi-web-search",
 	].map((name) => ({ package: name, output: name })),
 ];
 
