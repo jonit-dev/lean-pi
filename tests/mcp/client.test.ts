@@ -177,6 +177,28 @@ describe("PRD-006 AC-6 — HTTP servers authenticate, and a missing token degrad
 		expect((await registry3.dispatch("/mcp", { cwd })).text).toContain("health: auth_required");
 		expect(third.pool.isConnected("remote")).toBe(false);
 	});
+	it("initializes a public HTTP server without any token and carries an explicit Authorization header", async () => {
+		const home = tempHome();
+		const cwd = tempDir("leanpi-mcp-public-");
+		const env = mcpEnv(home);
+		writeConfig(cwd, { backends: { local: nativeBackend("http://127.0.0.1:1/v1") }, models: { balanced: { backend: "local", model: "stub" } } });
+
+		// No token, no tokenEnv, no stored credential: a public endpoint.
+		const http = trackHttp(await startHttpFixture(toolsFor("public", ["echo"])));
+		writeUserMcpConfig(home, { public: { transport: "http", url: http.url, tools: ["echo"] } });
+		const runtime = track(registerMcpCommand(createCommandRegistry(), { cwd, config: loadConfig(cwd, {}, env), home, env }));
+		expect(await runtime.pool.refresh("public")).toEqual([{ server: "public", transport: "http", tools: 1 }]);
+		expect(http.requests.filter((request) => request.rpc === "initialize")).toHaveLength(1);
+
+		// The credential lives in the server's own header, not in a token store.
+		const token = "explicit-header-token-7831";
+		http.requireToken(token);
+		writeUserMcpConfig(home, { public: { transport: "http", url: http.url, tools: ["echo"], headers: { Authorization: `Bearer ${token}` } } });
+		const headerRuntime = track(registerMcpCommand(createCommandRegistry(), { cwd, config: loadConfig(cwd, {}, env), home, env }));
+		expect((await headerRuntime.pool.callTool("public", "echo", { q: "x" })).isError).toBe(false);
+		expect(http.calls.at(-1)).toEqual({ tool: "echo", args: { q: "x" } });
+		expect(http.requests.at(-1)).toMatchObject({ authorized: true });
+	});
 });
 
 describe("PRD-006 Phase 2 — health transitions", () => {

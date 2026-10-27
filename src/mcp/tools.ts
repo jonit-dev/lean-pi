@@ -193,10 +193,22 @@ export interface VendorMcpResolution {
 	withheld: Array<{ capability: string; decision: Exclude<PermissionDecision, "allow"> }>;
 }
 
-function serverConfigOf(entry: McpServerEntry): VendorMcpServer {
-	return entry.transport === "stdio"
-		? { name: entry.name, transport: "stdio", command: entry.command ?? "", args: [...entry.args], env: { ...entry.env }, tools: [] }
-		: { name: entry.name, transport: "http", url: entry.url ?? "", tools: [] };
+function serverConfigOf(entry: McpServerEntry, env?: NodeJS.ProcessEnv): VendorMcpServer {
+	if (entry.transport === "stdio") {
+		return { name: entry.name, transport: "stdio", command: entry.command ?? "", args: [...entry.args], env: { ...entry.env }, tools: [] };
+	}
+	const headers = { ...entry.headers };
+	// A `tokenEnv` reference resolves here, at the spawn boundary: the value belongs
+	// in the child's transport, never in a catalog row or a model prompt.
+	const token = entry.tokenEnv ? env?.[entry.tokenEnv] : undefined;
+	if (token && !Object.keys(headers).some((name) => name.toLowerCase() === "authorization")) headers.authorization = `Bearer ${token}`;
+	return {
+		name: entry.name,
+		transport: "http",
+		url: entry.url ?? "",
+		...(Object.keys(headers).length > 0 ? { headers } : {}),
+		tools: [],
+	};
 }
 
 /**
@@ -207,7 +219,13 @@ function serverConfigOf(entry: McpServerEntry): VendorMcpServer {
  * Secrets in a server's `env` travel in the child's argv/env and nowhere else:
  * this returns them, and the caller passes them straight to the spawn.
  */
-export function resolveVendorServers(input: { tools: SelectedMcpTool[]; catalog: McpCatalog; permissions: PermissionsConfig }): VendorMcpResolution {
+export function resolveVendorServers(input: {
+	tools: SelectedMcpTool[];
+	catalog: McpCatalog;
+	permissions: PermissionsConfig;
+	/** The environment a `tokenEnv` reference resolves against. */
+	env?: NodeJS.ProcessEnv;
+}): VendorMcpResolution {
 	const entries = new Map(input.catalog.entries.map((entry) => [entry.name, entry]));
 	const byServer = new Map<string, VendorMcpServer>();
 	const withheld: VendorMcpResolution["withheld"] = [];
@@ -220,7 +238,7 @@ export function resolveVendorServers(input: { tools: SelectedMcpTool[]; catalog:
 		}
 		const entry = entries.get(tool.server);
 		if (!entry) continue;
-		const server = byServer.get(tool.server) ?? serverConfigOf(entry);
+		const server = byServer.get(tool.server) ?? serverConfigOf(entry, input.env);
 		server.tools.push(mcpToolName(tool.server, tool.tool));
 		byServer.set(tool.server, server);
 	}

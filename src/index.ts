@@ -13,6 +13,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { Type } from "typebox";
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	getActivePrefix,
@@ -32,7 +33,7 @@ import { apiKeyFor, ConfigError, loadConfig, toPiConfigValue, writeSkillsState }
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, compileRecordOf, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
-import { clearRoutePins, routePins, setRoutePins } from "./compiler/pins.js";
+import { clearRoutePins, consumeInstalledThinkingLevel, noteInstalledThinkingLevel, routePins, setRoutePins } from "./compiler/pins.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
 import { createToolSurface, mcpRequestDefinition, mcpToolName, registerMcpCommand, registerMcpDisclosure, resolveVendorServers, MCP_REQUEST_TOOL_NAME } from "./mcp/index.js";
@@ -86,10 +87,10 @@ import { piProviderFor, registerCliModel, registerSubscriptionModels, type CliPr
 import { learnedModels } from "./backends/learned-models.js";
 import { classifyAssistantFailure, assistantOutcome, SessionLimits } from "./backends/session-limits.js";
 import { detectSubscriptions } from "./backends/subscriptions.js";
-import { restoreRememberedModel, writeRememberedModel } from "./commands/model.js";
+import { rememberManual, restoreRememberedModel } from "./commands/model.js";
 import { LEANPI_TODO_WIDGET_KEY, todoWidget, type TodoWidgetHost } from "./cli/todo-widget.js";
 import { createRecap, isCompletedAssistant, type RecapController, type RecapRunner } from "./recap/index.js";
-import { messageText } from "./commands/context.js";
+import { answerText, messageText } from "./commands/context.js";
 import { outcomeLevel, renderTurnOutcome, type TurnJev } from "./cli/outcome.js";
 import { BASELINE_TOOL_NAMES, YIELDED_TOOL_NAMES, compactUiAttached, registerBaselineTools } from "./core/tools.js";
 import { backendKeyWarning, jevWarning, unusableBackendKeys } from "./cli/bootstrap.js";
@@ -249,11 +250,18 @@ function registerBackends(pi: ExtensionAPI, config: LeanPiConfig, env: NodeJS.Pr
 				reasoning: backend.reasoning === true,
 				...(compat === undefined ? {} : { compat }),
 				input: (backend.input as ("text" | "image")[] | undefined) ?? ["text"],
-				cost: (backend.cost as { input: number; output: number; cacheRead: number; cacheWrite: number } | undefined) ?? {
+				// Pi prices every part of the card, so a rate the card omits is
+				// multiplied by `undefined`: `NaN` in the sum, `null` on the wire.
+				// That is the state 16,105 mined opencode-go messages were in —
+				// `cost.total: null` with input and output priced (PRD-058) — because
+				// the shipped card declares no cache-write rate. Default the four;
+				// the operator's declared rates win.
+				cost: {
 					input: 0,
 					output: 0,
 					cacheRead: 0,
 					cacheWrite: 0,
+					...(backend.cost as { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined),
 				},
 				contextWindow: (backend.contextWindow as number | undefined) ?? 128_000,
 				maxTokens: (backend.maxTokens as number | undefined) ?? 8_192,
@@ -434,7 +442,7 @@ function installArtifactTool(pi: ExtensionAPI, artifacts: ArtifactStore): void {
  * reported the latter's empty history as the session's was the source of
  * `/context`'s invented totals.
  */
-function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string, after: (ctx: TodoWidgetHost & { ui: { setStatus: (key: string, text: string | undefined) => void } }) => void, cli: CliProviderDeps): void {
+function bridgeCommands(pi: ExtensionAPI, commands: CommandRegistry, cwd: string, after: (ctx: TodoWidgetHost & EffortPickContext) => void, cli: CliProviderDeps): void {
 	for (const command of commands.entries()) {
 		pi.registerCommand(command.name, {
 			description: command.summary.length > 0 ? command.summary : command.usage,
@@ -505,7 +513,7 @@ function registerClearAlias(pi: ExtensionAPI): void {
 }
 
 /** `/effort`: the same setting as Pi's `/thinking`, under a second name. */
-function registerEffortAlias(pi: ExtensionAPI): void {
+function registerEffortAlias(pi: ExtensionAPI, onPick: (level: ThinkingLevel, ctx: ExtensionCommandContext) => void): void {
 	pi.registerCommand("effort", {
 		description: "Set the thinking level (same as /thinking)",
 		getArgumentCompletions: (prefix: string) => EFFORT_LEVELS.filter((level) => level.startsWith(prefix)).map((level) => ({ value: level, label: level })),
@@ -518,7 +526,11 @@ function registerEffortAlias(pi: ExtensionAPI): void {
 			}
 			pi.setThinkingLevel(asked as ThinkingLevel);
 			// Pi clamps to the model's own steps: report the level it kept.
-			ctx.ui.notify(`Effort: ${pi.getThinkingLevel()}`, "info");
+			const kept = pi.getThinkingLevel();
+			// A level that did not change emits no select event, so the pick is
+			// announced here as well; the event handler is idempotent.
+			onPick(kept, ctx);
+			ctx.ui.notify(`Effort: ${kept}`, "info");
 		},
 	});
 }
@@ -572,9 +584,9 @@ function installSessionHooks(
 			resetSubagentCard();
 			resetAgentRunners();
 			// Manual survives a session switch; other route pins still reset.
-			const { model, previousModel } = routePins();
+			const { model, previousModel, effort } = routePins();
 			clearRoutePins();
-			setRoutePins({ model, previousModel });
+			setRoutePins({ model, previousModel, effort });
 			// A switch invalidates the previous session's turn, cache and in-flight
 			// generation *before* the new session's persisted recap is restored: the
 			// old session's input must not answer `/recap` for the new one.
@@ -583,7 +595,6 @@ function installSessionHooks(
 		// A remembered or switched-to Manual pin is visible before the next turn.
 		const manualPin = routePins().model;
 		if (manualPin) {
-			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true));
 			// Pi's footer names Pi's model: switch to the pin now, not on the first turn —
 			// after keeping the model Pi started on, which `/model auto` restores.
 			if (routePins().previousModel === undefined && ctx.model) {
@@ -591,6 +602,20 @@ function installSessionHooks(
 			}
 			const found = ctx.modelRegistry.find(piProviderFor(manualPin), manualPin.model);
 			if (found) await pi.setModel(found);
+		}
+		// The remembered effort, installed after `setModel` — which resets Pi's level
+		// to the model's own default — so the first turn already thinks as the
+		// operator chose. The marker keeps that install from reading as a new pick.
+		const effortPin = routePins().effort;
+		if (effortPin !== undefined) {
+			const before = pi.getThinkingLevel();
+			pi.setThinkingLevel(effortPin);
+			noteInstalledThinkingLevel(before, pi.getThinkingLevel());
+		}
+		// An effort pin alone is Manual too: the model still routes, the level does not.
+		if (manualPin || effortPin !== undefined) {
+			const shown = manualPin ?? (ctx.model ? { backend: ctx.model.provider, model: ctx.model.id, type: "native" as const } : resolveRole(deps.config, "balanced"));
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(shown, true, undefined, effortPin));
 		}
 		// PRD-042: a local control plane has to be provisioned and started, and
 		// doing it here means the first turn is not the thing that waits for a
@@ -640,6 +665,16 @@ function installSessionHooks(
 }
 
 /**
+ * What a footer redraw needs from Pi's context. Both the event and command
+ * contexts carry these, so one helper serves the selector and `/effort`.
+ */
+interface EffortPickContext {
+	model?: { provider: string; id: string } | undefined;
+	getContextUsage?: () => { percent: number | null } | undefined;
+	ui: { setStatus?: (key: string, text: string | undefined) => void };
+}
+
+/**
  * Per-turn hooks (F7): `input` → `before_agent_start` → `agent_start` →
  * `agent_end` → `agent_settled`, in registration order. Extracted from
  * `activate()` with no behavior change. The in-flight holders (`pendingRun`,
@@ -667,7 +702,7 @@ function installTurnHooks(
 		};
 		showTodo: (hookCtx: TodoWidgetHost) => void;
 	},
-): void {
+): (ctx: EffortPickContext) => void {
 	// The run that is still open: a compiled turn's collector and context, held from
 	// `before_agent_start` until `agent_settled` reports the complete turn.
 	let pendingRun: { collector: RunCollector; context: TurnContext; backend?: string; pinned?: boolean; retried?: boolean } | undefined;
@@ -685,12 +720,63 @@ function installTurnHooks(
 	// no hook that tells its own selector apart from LeanPi's `setThinkingLevel`.
 	let applied: { model: string | undefined; level: ThinkingLevel } | undefined;
 	const modelKey = (model: { provider: string; id: string } | undefined): string | undefined => (model ? `${model.provider}/${model.id}` : undefined);
+
+	/**
+	 * Install a level LeanPi decided on. Pi emits `thinking_level_select` for every
+	 * change, its own and the operator's, so the marker is what keeps a compiled
+	 * effort from being pinned as a hand pick on the first turn.
+	 */
+	const installThinkingLevel = (level: ThinkingLevel): void => {
+		const before = pi.getThinkingLevel();
+		pi.setThinkingLevel(level);
+		noteInstalledThinkingLevel(before, pi.getThinkingLevel());
+	};
+
+	/**
+	 * Save the Manual picks the next start comes back to: the `/model` pin and the
+	 * level the operator chose by hand. Called wherever one of them is set.
+	 */
+	const rememberPins = (): void => rememberManual(deps.config, deps.env, { model: routePins().model, effort: routePins().effort });
+
+	/**
+	 * A hand-picked effort: pin it and say `Manual` at once, with no turn in
+	 * between. The pin is what keeps the level through later turns; the line is
+	 * what tells the operator the router is no longer deciding it.
+	 */
+	const pinEffort = (level: ThinkingLevel, ctx: EffortPickContext): void => {
+		setRoutePins({ effort: level }, deps.sessionId());
+		rememberPins();
+		const setStatus = ctx.ui.setStatus;
+		// The pin is the behaviour; the line is the feedback. A context with no UI
+		// (an SDK call, a headless command) still gets the pin.
+		if (!setStatus) return;
+		if (lastStatus) {
+			lastStatus = { ...lastStatus, effort: level, manual: true };
+			setStatus(LEANPI_STATUS_KEY, statusLine(lastStatus));
+			return;
+		}
+		// No turn has drawn a line yet: name the model Pi is on, so the pick is
+		// visible before the first message is sent.
+		const pin =
+			routePins().model ??
+			(ctx.model ? { backend: ctx.model.provider, model: ctx.model.id, type: "native" as const } : resolveRole(deps.config, "balanced"));
+		const goal = ctx.getContextUsage ? deps.statusExtras({ getContextUsage: ctx.getContextUsage }).goal : undefined;
+		setStatus(LEANPI_STATUS_KEY, manualStatusLine(pin, true, goal, level));
+	};
+
 	pi.on("thinking_level_select", (event, ctx) => {
 		// A pick before the first turn: the level it replaced is the baseline.
 		applied ??= { model: modelKey(ctx.model), level: event.previousLevel };
-		if (!lastStatus || (lastStatus.pin ?? null) !== (routePins().model ?? null)) return;
-		lastStatus = { ...lastStatus, effort: event.level };
-		ctx.ui.setStatus(LEANPI_STATUS_KEY, statusLine(lastStatus));
+		// Inside LeanPi's own turn the level is being reconfigured by the harness
+		// (the model's reset or the compiled effort), never picked by the operator.
+		if (isTurnInFlight() || consumeInstalledThinkingLevel(event.level)) return;
+		// Pi resets the level inside `setModel`; a change that arrives with a new
+		// model is that model's default, not a pick.
+		if (applied.model !== modelKey(ctx.model)) {
+			applied = { model: modelKey(ctx.model), level: event.level };
+			return;
+		}
+		pinEffort(event.level, ctx);
 	});
 
 	// The turn, when LeanPi owns the loop (PRD-007 on an external-harness
@@ -762,11 +848,12 @@ function installTurnHooks(
 						contract: context.contract,
 						...deps.statusExtras(ctx),
 						pin: routePins().model ?? null,
+						manual: routePins().effort !== undefined,
 						color: true,
 					}),
 				);
 			} else if (routePins().model) {
-				ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(routePins().model!, true, deps.statusExtras(ctx).goal));
+				ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(routePins().model!, true, deps.statusExtras(ctx).goal, routePins().effort));
 			} else {
 				ctx.ui.setStatus(LEANPI_STATUS_KEY, undefined);
 			}
@@ -816,7 +903,10 @@ function installTurnHooks(
 		// Pi 1.2+ also fires this for extension-triggered runs, which carry no prompt to route.
 		if (event.messageType !== "user" || isTurnInFlight()) return;
 		const held = pi.getThinkingLevel();
-		if (applied !== undefined && applied.model === modelKey(ctx.model) && applied.level !== held) setRoutePins({ effort: held }, deps.sessionId());
+		if (applied !== undefined && applied.model === modelKey(ctx.model) && applied.level !== held) {
+			setRoutePins({ effort: held }, deps.sessionId());
+			rememberPins();
+		}
 		// PRD-015's accumulator is created before the lanes run, not after: the
 		// executor lane's backend calls are what the record has to carry, and they
 		// are spent while the lane runs.
@@ -872,11 +962,11 @@ function installTurnHooks(
 			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
 			if (routePins().effort !== undefined) {
 				// The operator's level is a pick, not a ceiling, and `setModel` reset it.
-				pi.setThinkingLevel(routePins().effort!);
+				installThinkingLevel(routePins().effort!);
 			} else if (context.contract) {
 				// Manual has no compiled effort to cap.
 				effort = thinkingLevelFor(deps.config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
-				if (effort !== undefined) pi.setThinkingLevel(effort);
+				if (effort !== undefined) installThinkingLevel(effort);
 			}
 		}
 		if (!owns) applied = { model: modelKey(ctx.model), level: pi.getThinkingLevel() };
@@ -902,6 +992,7 @@ function installTurnHooks(
 				contract: context.contract,
 				...deps.statusExtras(ctx),
 				pin: manualPin ?? null,
+				manual: routePins().effort !== undefined,
 				color: true,
 				...(running === undefined ? {} : { model: running }),
 				...(effort === undefined ? {} : { effort }),
@@ -909,7 +1000,7 @@ function installTurnHooks(
 			ctx.ui.setStatus(LEANPI_STATUS_KEY, statusLine(lastStatus));
 		} else if (manualPin) {
 			lastStatus = undefined;
-			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true, deps.statusExtras(ctx).goal));
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(manualPin, true, deps.statusExtras(ctx).goal, routePins().effort));
 		}
 		// PRD-044: JEV judged the session's opening task PRD-worthy, so offer one
 		// before the loop runs it as a blind prompt. Only the first prompt of a
@@ -986,26 +1077,24 @@ function installTurnHooks(
 		if (pin && learned && learned.id !== pin.model) {
 			const resolved = { ...pin, model: learned.id };
 			setRoutePins({ model: resolved });
-			writeRememberedModel(deps.config, deps.env, resolved);
+			rememberPins();
 			registerCliModel(pi, deps, resolved);
 			const found = ctx.modelRegistry.find(piProviderFor(resolved), resolved.model);
 			if (found) await pi.setModel(found);
-			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(resolved, true, deps.statusExtras(ctx).goal));
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(resolved, true, deps.statusExtras(ctx).goal, routePins().effort));
 		}
 		settledMessages.push(...event.messages);
-		const run = pendingRun;
-		if (!run) return;
-		if (!run.pinned && run.backend !== undefined) {
-			const last = [...event.messages].reverse().find((message) => message.role === "assistant");
-			if (last && classifyAssistantFailure(last)?.kind === "limit") sessionLimits.mark(run.backend);
-		}
 	});
 
 	pi.on("agent_before_settle", async (event, ctx) => {
 		const run = pendingRun;
-		if (!run || run.pinned || routePins().model || run.retried) return;
+		if (!run) return;
+		// Judged here, after Pi's own auto-retry, not per attempt in `agent_end`: a
+		// transient 429 Pi recovered on the same backend is not a limit to route around.
 		const last = [...settledMessages].reverse().find((message) => message.role === "assistant");
 		if (!last || classifyAssistantFailure(last)?.kind !== "limit") return;
+		if (!run.pinned && run.backend !== undefined) sessionLimits.mark(run.backend);
+		if (run.pinned || routePins().model || run.retried) return;
 		const chosen = resolveRoleAvoiding(deps.config, run.context.contract?.routing.executor_class ?? run.context.role, (backend) => sessionLimits.isLimited(backend));
 		if (chosen.ref.backend === run.backend || sessionLimits.isLimited(chosen.ref.backend)) return;
 		const failed = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && entry.message.role === "assistant");
@@ -1051,13 +1140,45 @@ function installTurnHooks(
 				...(run.context.executor?.route_cost ? { routeCost: run.context.executor.route_cost } : {}),
 			});
 		}
+		// The line was drawn before the turn spent anything: redraw it with the bill
+		// just written and the context the turn filled, or both lag one task behind.
+		if (lastStatus) {
+			lastStatus = { ...lastStatus, goal: undefined, contextPercent: undefined, degraded: undefined, ...deps.statusExtras(ctx) };
+			ctx.ui.setStatus(LEANPI_STATUS_KEY, statusLine(lastStatus));
+		}
 		const reversed = [...messages].reverse();
 		const lastUser = reversed.find((message) => message.role === "user");
 		const lastAssistant = reversed.find((message) => message.role === "assistant");
 		if (!lastUser || !lastAssistant || !isCompletedAssistant(lastAssistant) || routePins().model) return;
-		// Fire-and-forget: the next input invalidates a late recap.
-		void deps.recap.recapTurn(ctx, { ask: messageText(lastUser), did: messageText(lastAssistant) }).catch(() => {});
+		// Fire-and-forget: the next input invalidates a late recap. `did` is the
+		// answer only — `messageText` would persist the model's reasoning (PRD-058).
+		void deps.recap.recapTurn(ctx, { ask: messageText(lastUser), did: answerText(lastAssistant) }).catch(() => {});
 	});
+
+	// `/effort` lives here because a pick must pin and redraw the same line the
+	// selector's event does; both go through `pinEffort`.
+	registerEffortAlias(pi, pinEffort);
+
+	/**
+	 * Redraw the footer after a command: `/route reset` and `/model auto` hand the
+	 * decision back, and `/goal` changes a chip. Returns nothing when no manual
+	 * override is in force and no line needs correcting.
+	 */
+	return (ctx: EffortPickContext): void => {
+		const pins = routePins();
+		if (pins.model) {
+			ctx.ui.setStatus?.(LEANPI_STATUS_KEY, manualStatusLine(pins.model, true, deps.statusExtras({ getContextUsage: ctx.getContextUsage ?? (() => undefined) }).goal, pins.effort));
+			return;
+		}
+		if (pins.effort !== undefined) {
+			pinEffort(pins.effort, ctx);
+			return;
+		}
+		if (lastStatus?.manual === true) {
+			lastStatus = { ...lastStatus, manual: false, effort: undefined };
+			ctx.ui.setStatus?.(LEANPI_STATUS_KEY, statusLine(lastStatus));
+		}
+	};
 }
 
 export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanPiActivation {
@@ -1085,10 +1206,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	}
 	const commands = options.commands ?? commandRegistry;
 	const config = options.config ?? loadConfig(cwd, {}, env);
-	// PRD-048 Phase 2: `remember_manual_model: true` carries a `/model` pin
-	// across a restart; every other config is Auto by default. Restored once,
-	// here, not per session-start reload — a fresh activation is the only
-	// startup this session gets.
+	// PRD-048 Phase 2: a Manual pick carries across a restart with the model pin,
+	// the hand-picked effort or both; `remember_manual_model: false` keeps it
+	// session-only. Restored once, here, not per session-start reload — a fresh
+	// activation is the only startup this session gets.
 	restoreRememberedModel(config, env);
 	// Subscription role models are Pi models too: `strong: claude/opus` is an
 	// `external_harness` the native-only `registerBackends` leaves out, so without
@@ -1151,8 +1272,9 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// Cost telemetry (PRD-015): `/cost` reads the same store `/status` will read,
 	// over the same session id every record this activation writes is stamped
 	// with — without it the command read every run in the store and called the
-	// sum "session total".
-	registerCostCommand(commands, { cwd, sessionId: manager.getSessionId() });
+	// sum "session total". The cost config is the same resolution the writer and
+	// `/status` use, so a `cost.telemetry_path` moves both, not only the writer.
+	registerCostCommand(commands, { cwd, sessionId: manager.getSessionId(), cost: resolveCostConfig(config) });
 	// MCP disclosure (PRD-006): `/mcp` plus the provider that fills
 	// `capabilities.mcps`; registered after the provider reset above. The provider
 	// reads the same runtime the command built, so a mid-session `/mcp disable` is
@@ -1432,7 +1554,8 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		// PRD-045: the compiled MCP selection and LSP mode become this turn's active
 		// tool set, and the selected servers reach a vendor harness `allow`-only.
 		toolSurface,
-		mcpResolver: (tools: SelectedMcpTool[]) => resolveVendorServers({ tools, catalog: mcpRuntime.catalog(), permissions: permissions.permissions }),
+		mcpResolver: (tools: SelectedMcpTool[]) =>
+			resolveVendorServers({ tools, catalog: mcpRuntime.catalog(), permissions: permissions.permissions, env }),
 	});
 
 	registerJevCommands(commands, {
@@ -1482,7 +1605,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 
 	// The per-turn hooks live in `installTurnHooks` (F7), registered after the
 	// session-lifecycle hooks above.
-	installTurnHooks(pi, {
+	const refreshFooter = installTurnHooks(pi, {
 		config,
 		cwd,
 		env,
@@ -1511,14 +1634,12 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// message would enter the LLM context and every later request in the session
 	// would carry the output of every command the user ran.
 	// `/goal` sets or stops a goal between turns; a Manual line shows it at once.
-	const afterCommand = (ctx: TodoWidgetHost & { ui: { setStatus: (key: string, text: string | undefined) => void } }): void => {
+	const afterCommand = (ctx: TodoWidgetHost & EffortPickContext): void => {
 		showTodo(ctx);
-		const pin = routePins().model;
-		if (pin) ctx.ui.setStatus(LEANPI_STATUS_KEY, manualStatusLine(pin, true, runningGoal()));
+		refreshFooter(ctx);
 	};
 	bridgeCommands(pi, commands, cwd, afterCommand, { config, cwd, env });
 	registerClearAlias(pi);
-	registerEffortAlias(pi);
 
 	return {
 		name: LEANPI_EXTENSION_NAME,

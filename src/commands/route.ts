@@ -11,6 +11,7 @@
  */
 import { compileRecordOf } from "../compiler/index.js";
 import { clearRoutePins, routePins, setRoutePins, type RoutePins } from "../compiler/pins.js";
+import { rememberManual } from "./model.js";
 import type { ExecutorClass, ReviewerClass } from "../compiler/contract.js";
 import { listSites } from "../jev/registry.js";
 import type { CommandRegistry, CommandResult } from "./registry.js";
@@ -115,6 +116,9 @@ export function registerRouteCommand(registry: CommandRegistry, surface: Command
 				const { model, previousModel, manualSessionId } = routePins();
 				clearRoutePins();
 				setRoutePins({ model, previousModel, manualSessionId });
+				// The hand-picked effort was just handed back to the router, so a restart
+				// must not restore it as Manual.
+				rememberManual(surface.config, surface.env, { model, effort: routePins().effort });
 				return { ok: true, text: "route pins cleared — the classifier decides again" };
 			}
 

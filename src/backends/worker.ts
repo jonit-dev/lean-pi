@@ -28,6 +28,11 @@ export interface WorkerMcpServer {
 	args?: string[];
 	env?: Record<string, string>;
 	url?: string;
+	/**
+	 * HTTP request headers the server needs (its own `Authorization`, say); a
+	 * secret carrier like `env`, so it reaches the child's transport only.
+	 */
+	headers?: Record<string, string>;
 	/** `mcp__<server>__<tool>` names the vendor may call. */
 	tools: string[];
 }

@@ -639,7 +639,7 @@ export function loadConfig(cwd: string, overrides: Partial<LeanPiConfig> = {}, e
 		thresholds: parseThresholds(record.thresholds),
 		limits: parseLimits(record.limits),
 		workspace: parseWorkspace(record.workspace),
-		remember_manual_model: (record.remember_manual_model as boolean | undefined) ?? false,
+		remember_manual_model: (record.remember_manual_model as boolean | undefined) ?? true,
 		...overrides,
 	};
 

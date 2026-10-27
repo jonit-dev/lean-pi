@@ -50,9 +50,14 @@ function unquote(value: string): string {
 	return (match ? match[2]! : trimmed).trim();
 }
 
-/** `git mv` when the repository can do it, a plain rename otherwise. */
-function moveToDone(cwd: string, prdPath: string): string {
+/**
+ * `git mv` when the repository can do it, a plain rename otherwise. `null` when
+ * the archive destination is occupied: `rename(2)` replaces an existing file, so
+ * a collision would silently destroy the already-archived plan.
+ */
+function moveToDone(cwd: string, prdPath: string): string | null {
 	const target = join(dirname(prdPath), "done", basename(prdPath));
+	if (existsSync(target)) return null;
 	mkdirSync(dirname(target), { recursive: true });
 	try {
 		execFileSync("git", ["mv", prdPath, target], { cwd, stdio: "pipe" });
@@ -151,6 +156,12 @@ export function createPrdHandler(deps: PrdCommandDeps): CommandHandler {
 		}
 
 		const moved = existsSync(state.prdPath) ? moveToDone(deps.cwd, state.prdPath) : state.prdPath;
+		if (moved === null) {
+			return {
+				ok: false,
+				text: `cannot close ${state.prdId}: ${join(dirname(state.prdPath), "done", basename(state.prdPath))} already exists; the archived plan and ${state.prdPath} are both left in place`,
+			};
+		}
 		state.closure = {
 			source: "builtin-fallback",
 			detail: `prd-manager helper not found under the configured skill roots; internal status write + move to ${moved}`,

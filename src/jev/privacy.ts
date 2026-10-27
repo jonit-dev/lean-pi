@@ -7,6 +7,7 @@
  */
 import type { JevMode } from "../core/types.js";
 import { pathHash } from "./registry.js";
+import type { JevQuestion, QuestionKind } from "./types.js";
 
 /**
  * Secret-shaped tokens. Deliberately shape-based: LeanPi redacts by what a
@@ -98,4 +99,93 @@ export function applyPrivacy(mode: JevMode, body: OutboundBody, salt: string): O
 
 export function serializeBody(body: OutboundBody): string {
 	return JSON.stringify(body);
+}
+
+/** A static instruction for a kind whose site declared no template to borrow one from. */
+const GENERIC_QUESTION_TEXT: Record<QuestionKind, string> = {
+	Choice: "Choose the option the state supports.",
+	Score: "Score the state against the levels.",
+	Noul: "Does the state satisfy the condition?",
+};
+
+export interface QuestionProjection {
+	/** The questions as they go on the wire: opaque ids and choice keys, template wording. */
+	questions: JevQuestion[];
+	/** Answers keyed by opaque id, back under the caller's ids and choice keys. */
+	restore(answers: Record<string, unknown>): Record<string, unknown>;
+}
+
+/** The site's declared question of the same kind; it is the only static surface available. */
+function templateFor(question: JevQuestion, templates: readonly JevQuestion[]): JevQuestion | undefined {
+	return templates.find((template) => template.kind === question.kind);
+}
+
+/**
+ * `metadata-only`'s question projection. The state is summarised, but a question
+ * carries the same user content in its text, its option keys and even its id (an
+ * exploration id names a path). So the request keeps each question's *kind* and
+ * answer cardinality, borrows the site's static template for the wording, and
+ * maps every identifier to an opaque index. `restore` puts the answer back where
+ * the caller expects it, which is why an opaque request can still be answered.
+ */
+export function staticQuestionProjection(questions: readonly JevQuestion[], templates: readonly JevQuestion[] = []): QuestionProjection {
+	const projectedById = new Map<string, { question: JevQuestion; choices: string[] }>();
+	const projected = questions.map((question, index): JevQuestion => {
+		const id = `q${index}`;
+		const template = templateFor(question, templates);
+		const text = template?.text ?? GENERIC_QUESTION_TEXT[question.kind];
+		switch (question.kind) {
+			case "Choice": {
+				const choices = Object.keys(question.options);
+				const descriptions = template?.kind === "Choice" ? Object.values(template.options) : [];
+				projectedById.set(id, { question, choices });
+				return {
+					id,
+					kind: "Choice",
+					text,
+					options: Object.fromEntries(choices.map((_, choice) => [`o${choice}`, descriptions[choice] ?? null])),
+				};
+			}
+			case "Score": {
+				projectedById.set(id, { question, choices: [] });
+				return {
+					id,
+					kind: "Score",
+					text,
+					levels: question.levels.map((_, level) => (template?.kind === "Score" ? (template.levels[level] ?? `level ${level}`) : `level ${level}`)),
+				};
+			}
+			case "Noul": {
+				projectedById.set(id, { question, choices: [] });
+				return { id, kind: "Noul", text, ...(template?.kind === "Noul" && template.criteria ? { criteria: template.criteria } : {}) };
+			}
+		}
+	});
+
+	return {
+		questions: projected,
+		restore(answers) {
+			const restored: Record<string, unknown> = {};
+			for (const [id, raw] of Object.entries(answers)) {
+				const entry = projectedById.get(id);
+				if (!entry || raw === null || typeof raw !== "object") {
+					restored[id] = raw;
+					continue;
+				}
+				const answer = { ...(raw as Record<string, unknown>) };
+				const choiceOf = (key: unknown): unknown =>
+					typeof key === "string" && /^o\d+$/.test(key) ? (entry.choices[Number.parseInt(key.slice(1), 10)] ?? key) : key;
+				if (answer.choice !== undefined) answer.choice = choiceOf(answer.choice);
+				// `probabilities` is keyed by the same choice keys; leave any other shape alone.
+				const probabilities = answer.probabilities;
+				if (entry.question.kind === "Choice" && probabilities !== null && typeof probabilities === "object") {
+					answer.probabilities = Object.fromEntries(
+						Object.entries(probabilities as Record<string, unknown>).map(([key, value]) => [String(choiceOf(key)), value]),
+					);
+				}
+				restored[entry.question.id] = answer;
+			}
+			return restored;
+		},
+	};
 }

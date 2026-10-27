@@ -10,8 +10,10 @@ import type { WorkerTaskPacket } from "../../src/backends/worker.js";
 import { clearCapabilityProviders, registerCapabilityProvider } from "../../src/compiler/index.js";
 import { builtinPermissions, type PermissionsConfig } from "../../src/permissions/index.js";
 import { resolveVendorServers } from "../../src/mcp/index.js";
+import type { McpCatalog } from "../../src/mcp/index.js";
 import type { SelectedMcpTool } from "../../src/mcp/select.js";
 import { runExecutor } from "../../src/executor/index.js";
+import { claudeMcpConfig, codexMcpArgs, opencodeMcpConfig } from "../../src/backends/harness.js";
 import { fakeExec, harness, quickContract, VERIFY_COMMANDS } from "../executor/helpers.js";
 
 const open: Array<{ close(): Promise<void> }> = [];
@@ -57,6 +59,66 @@ function permissionsWithAllow(): PermissionsConfig {
 	return { ...base, rules: [...base.rules, { capability: "mcp:stub/echo", decision: "allow", source: "user" }] };
 }
 
+const VENDOR_TOKEN = "synthetic-vendor-mcp-token-7831";
+const ENV_TOKEN = "synthetic-env-mcp-token-42";
+
+/** The same catalog with two authenticated HTTP servers: one header, one tokenEnv reference. */
+const AUTH_CATALOG: McpCatalog = {
+	servers: [],
+	tools: [],
+	entries: [
+		{
+			name: "remote",
+			transport: "http",
+			scope: "user",
+			configPath: "fixture",
+			command: null,
+			args: [],
+			env: {},
+			url: "https://mcp.example.com/api",
+			headers: { Authorization: `Bearer ${VENDOR_TOKEN}` },
+			tokenEnv: null,
+			oauthClientId: null,
+			tools: [],
+			enabled: true,
+			pinned: false,
+			projectDefault: false,
+		},
+		{
+			name: "remote-env",
+			transport: "http",
+			scope: "user",
+			configPath: "fixture",
+			command: null,
+			args: [],
+			env: {},
+			url: "https://mcp.example.com/env",
+			headers: {},
+			tokenEnv: "AUDIT_MCP_TOKEN",
+			oauthClientId: null,
+			tools: [],
+			enabled: true,
+			pinned: false,
+			projectDefault: false,
+		},
+	],
+	maxTools: 6,
+	pinnedServers: [],
+	projectDefaults: [],
+};
+
+function permissionsWithHttpAllow(): PermissionsConfig {
+	const base = builtinPermissions();
+	return {
+		...base,
+		rules: [
+			...base.rules,
+			{ capability: "mcp:remote/echo", decision: "allow", source: "user" },
+			{ capability: "mcp:remote-env/echo", decision: "allow", source: "user" },
+		],
+	};
+}
+
 describe("PRD-045 Phase 3 — only `allow` reaches a vendor (AC-8)", () => {
 	it("keeps the allowed tool, withholds the asked one, and names it in the resolution", () => {
 		const resolved = resolveVendorServers({ tools: [tool("stub", "echo"), tool("stub", "other")], catalog: CATALOG, permissions: permissionsWithAllow() });
@@ -64,6 +126,24 @@ describe("PRD-045 Phase 3 — only `allow` reaches a vendor (AC-8)", () => {
 			{ name: "stub", transport: "stdio", command: "/usr/bin/node", args: ["/tmp/stub.mjs"], env: { STUB_TOKEN: "s3cret" }, tools: ["mcp__stub__echo"] },
 		]);
 		expect(resolved.withheld).toEqual([{ capability: "mcp:stub/other", decision: "ask" }]);
+	});
+
+	it("carries an HTTP server's configured authentication into every vendor form", () => {
+		const tools = [tool("remote", "echo"), tool("remote-env", "echo")];
+		const resolved = resolveVendorServers({ tools, catalog: AUTH_CATALOG, permissions: permissionsWithHttpAllow(), env: { AUDIT_MCP_TOKEN: ENV_TOKEN } });
+
+		expect(resolved.servers).toEqual([
+			{ name: "remote", transport: "http", url: "https://mcp.example.com/api", headers: { Authorization: `Bearer ${VENDOR_TOKEN}` }, tools: ["mcp__remote__echo"] },
+			// A `tokenEnv` reference is resolved at the spawn boundary, not emitted as config.
+			{ name: "remote-env", transport: "http", url: "https://mcp.example.com/env", headers: { authorization: `Bearer ${ENV_TOKEN}` }, tools: ["mcp__remote-env__echo"] },
+		]);
+
+		const forms = [claudeMcpConfig(resolved.servers), codexMcpArgs(resolved.servers).join(" "), opencodeMcpConfig(resolved.servers)];
+		for (const form of forms) {
+			expect(form).toContain(VENDOR_TOKEN);
+			expect(form).toContain(ENV_TOKEN);
+			expect(form).not.toContain(`Bearer $`);
+		}
 	});
 
 	it("hands the worker only the allowed server and records the withheld tool as a site row", async () => {

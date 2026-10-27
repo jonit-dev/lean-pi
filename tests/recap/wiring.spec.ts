@@ -292,7 +292,9 @@ describe("recap wiring (PRD-036 Phase 2)", () => {
 		const before = recapWidgets(widgets).length;
 		const noticesBefore = notices.length;
 		stub.script.text = "I could not produce a recap.";
-		await handlers.get("agent_end")?.({ messages }, ctx);
+		// A second turn, not a repeat of the same one: PRD-058 makes an identical
+		// ask/did a duplicate, so the failing turn has to be a turn of its own.
+		await handlers.get("agent_end")?.({ messages: [message("user", "do the next thing"), message("assistant", "did that too")] }, ctx);
 		await handlers.get("agent_settled")?.({}, ctx);
 
 		expect(stub.calls).toHaveLength(2);
@@ -317,9 +319,10 @@ describe("recap wiring (PRD-036 Phase 2)", () => {
 		const noticesBefore = notices.length;
 
 		// A backend that throws rather than answering is a different failure from a
-		// malformed answer, and it must land the same way: nothing changes.
+		// malformed answer, and it must land the same way: nothing changes. A
+		// second turn, because an identical ask/did is deduped (PRD-058).
 		stub.script.throws = true;
-		await handlers.get("agent_end")?.({ messages }, ctx);
+		await handlers.get("agent_end")?.({ messages: [message("user", "ask again"), message("assistant", "answer again")] }, ctx);
 		await handlers.get("agent_settled")?.({}, ctx);
 
 		expect(stub.calls).toHaveLength(2);
@@ -899,4 +902,66 @@ describe("recap wiring (PRD-036 Phase 2)", () => {
 		expect(notices.join("\n")).toContain("Retained across the switch.");
 		clearLanes();
 	}, 30_000);
+});
+
+/**
+ * PRD-058 (session mining): the persisted `did` was the model's reasoning, not
+ * its answer — `messageText` renders thinking parts too — and the same turn was
+ * written twice because two callers fire it. Both are fixed where every caller
+ * routes through: the extractor and `recapTurn` itself.
+ */
+describe("PRD-058 — the recap stores the answer, once", () => {
+	/** An assistant message that thought first, then answered. */
+	function thinkingThenAnswer(thinking: string, answer: string): unknown {
+		return { role: "assistant", content: [{ type: "thinking", thinking }, { type: "text", text: answer }], timestamp: Date.now() };
+	}
+
+	it("AC-1: records the answer text as `did`, never the reasoning", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, entries, ctx } = fakePi();
+		const stub = stubRunner();
+		stub.script.text = "RECAP: The watcher is fixed.";
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env, recapRunner: stub.run });
+
+		await handlers.get("agent_end")?.(
+			{ messages: [message("user", "fix the merge watcher"), thinkingThenAnswer("Hmm, the merge watcher only breaks on a rebase.", "the watcher is fixed")] },
+			ctx,
+		);
+		await handlers.get("agent_settled")?.({}, ctx);
+
+		// The recap ran — the negative control for the two assertions below.
+		expect(stub.calls).toHaveLength(1);
+		const data = entries[0]?.data as { ask?: string; did?: string } | undefined;
+		expect(data?.did).toBe("the watcher is fixed");
+		expect(stub.calls[0]?.brief).toContain("WHAT THE TURN DID: the watcher is fixed");
+		expect(stub.calls[0]?.brief).not.toContain("Hmm");
+		clearLanes();
+	});
+
+	it("AC-2: two calls for the same turn append one entry and buy one sentence", async () => {
+		// Both turn paths fire `recapTurn` for one turn; the second is the repeat
+		// the mined sessions recorded verbatim. The controller is the shared gate.
+		const stub = await startStubBackend([{ text: "RECAP: One entry for the turn.\nTITLE: Recap Dedupe" }]);
+		const cwd = recapProject(stub.baseUrl);
+		const harness = controllerHarness(cwd, "dedupe");
+		const input = { ask: "wire the recap", did: "added src/recap" };
+
+		expect(await harness.recap.recapTurn(harness.ctx, input)).toBe("One entry for the turn.");
+		expect(await harness.recap.recapTurn(harness.ctx, input)).toBeUndefined();
+		await stub.close();
+
+		// The durable input, then the sentence it produced — and only those two.
+		expect(harness.entries).toHaveLength(2);
+		expect(stub.requests).toHaveLength(1);
+
+		// A different turn is still recorded: the gate is the identical turn, not dedupe-by-count.
+		const next = await startStubBackend([{ text: "RECAP: Second turn." }]);
+		const cwdNext = recapProject(next.baseUrl);
+		const other = controllerHarness(cwdNext, "dedupe-2");
+		await other.recap.recapTurn(other.ctx, input);
+		await other.recap.recapTurn(other.ctx, { ask: "wire the recap", did: "added tests/recap" });
+		await next.close();
+		expect(other.entries).toHaveLength(4);
+	});
 });

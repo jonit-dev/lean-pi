@@ -45,6 +45,11 @@ function tomlString(value: string): string {
 	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
+/** A TOML inline table of string pairs, for Codex's `http_headers` map. */
+function tomlTable(values: Record<string, string>): string {
+	return `{ ${Object.entries(values).map(([key, value]) => `${tomlString(key)}=${tomlString(value)}`).join(", ")} }`;
+}
+
 /** Claude's `.mcp.json` shape, inline: `{ mcpServers: { <name>: {...} } }`. */
 export function claudeMcpConfig(servers: WorkerMcpServer[]): string {
 	const mcpServers: Record<string, unknown> = {};
@@ -56,7 +61,7 @@ export function claudeMcpConfig(servers: WorkerMcpServer[]): string {
 						args: server.args ?? [],
 						...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
 					}
-				: { type: "http", url: server.url ?? "" };
+				: { type: "http", url: server.url ?? "", ...(server.headers && Object.keys(server.headers).length > 0 ? { headers: server.headers } : {}) };
 	}
 	return JSON.stringify({ mcpServers });
 }
@@ -68,6 +73,7 @@ export function codexMcpArgs(servers: WorkerMcpServer[]): string[] {
 		const prefix = `mcp_servers.${server.name}`;
 		if (server.transport === "http") {
 			args.push("-c", `${prefix}.url=${tomlString(server.url ?? "")}`);
+			if (server.headers && Object.keys(server.headers).length > 0) args.push("-c", `${prefix}.http_headers=${tomlTable(server.headers)}`);
 			continue;
 		}
 		args.push("-c", `${prefix}.command=${tomlString(server.command ?? "")}`);
@@ -91,7 +97,7 @@ export function opencodeMcpConfig(servers: WorkerMcpServer[]): string {
 						...(server.env && Object.keys(server.env).length > 0 ? { environment: server.env } : {}),
 						enabled: true,
 					}
-				: { type: "remote", url: server.url ?? "", enabled: true };
+				: { type: "remote", url: server.url ?? "", ...(server.headers && Object.keys(server.headers).length > 0 ? { headers: server.headers } : {}), enabled: true };
 	}
 	return JSON.stringify({ mcp });
 }

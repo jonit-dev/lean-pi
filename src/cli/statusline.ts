@@ -68,12 +68,13 @@ function effortLabel(level: ThinkingLevel): string {
 }
 
 /**
- * The compiler's LOW/MEDIUM/HIGH, said the way an operator would say it. The
- * raw enum told the user the harness had an enum, not what it decided.
+ * The compiler's LOW/HIGH, said the way an operator would say it. The raw enum
+ * told the user the harness had an enum, not what it decided. MEDIUM is the
+ * default band: "normal task" said nothing, so it has no chip.
  */
-const COMPLEXITY_LABEL: Record<ExecutionComplexity, string> = {
+const COMPLEXITY_LABEL: Record<ExecutionComplexity, string | undefined> = {
 	LOW: "simple task",
-	MEDIUM: "normal task",
+	MEDIUM: undefined,
 	HIGH: "hard task",
 };
 
@@ -91,11 +92,20 @@ export function prettyModel(backend: string, model: string): string {
  * (PRD-048 Phase 2): just the pinned model and the mode, colour-matched to
  * `statusLine`'s own — no class, effort or cost to report, because none ran.
  */
-export function manualStatusLine(pin: BackendRef, color = false, goal?: string): string {
+export function manualStatusLine(pin: BackendRef, color = false, goal?: string, effort?: ThinkingLevel): string {
 	const model = prettyModel(pin.backend, pin.model);
 	const chip = goalChip(goal);
 	const cli = pin.type === "external_harness" ? `${pin.backend} CLI` : undefined;
-	return [color === true ? `${BOLD}${model}${RESET}` : model, ...(cli ? [cli] : []), color === true ? `${MANUAL}Manual${RESET}` : "Manual", ...(chip ? [chip] : [])].join(SEP);
+	// A hand-picked level is part of the same manual line: the operator chose how
+	// hard to think even when the model is still the router's.
+	const thinking = effort === undefined ? undefined : `thinking: ${effortLabel(effort)}`;
+	return [
+		color === true ? `${BOLD}${model}${RESET}` : model,
+		...(cli ? [cli] : []),
+		color === true ? `${MANUAL}Manual${RESET}` : "Manual",
+		...(thinking === undefined ? [] : [color === true ? `${EFFORT_COLOR[effort!]}${thinking}${RESET}` : thinking]),
+		...(chip ? [chip] : []),
+	].join(SEP);
 }
 
 /** A running goal, under either mode: nothing else on screen says one is live. */
@@ -125,6 +135,12 @@ export interface StatusInput {
 	 * runs, and the footer named the pre-ceiling number.
 	 */
 	effort?: ThinkingLevel;
+	/**
+	 * Any operator override is in force this session: a `/model` pin, or a level
+	 * picked by hand in Pi's selector. Either one stops the router deciding, so
+	 * both read `Manual` — the chip is about who chose, not which knob.
+	 */
+	manual?: boolean;
 	/** Accumulated session spend in USD. Omitted when nothing has been priced yet. */
 	cost?: number;
 	/**
@@ -149,7 +165,7 @@ export interface StatusInput {
 }
 
 /** `deepseek-v4.1-flash  ·  opencode-go  ·  auto  ·  thinking: medium  ·  hard task  ·  $0.42` */
-export function statusLine({ config, contract, role, model: running, effort: applied, cost, goal, contextPercent, degraded, color, pin: manualPin }: StatusInput): string {
+export function statusLine({ config, contract, role, model: running, effort: applied, cost, goal, contextPercent, degraded, color, pin: manualPin, manual }: StatusInput): string {
 	const resolvedRole = role ?? contract.routing.executor_class;
 	let model: string;
 	// The same model id is served by several providers at different prices and
@@ -197,12 +213,13 @@ export function statusLine({ config, contract, role, model: running, effort: app
 		color === true ? `${BOLD}${model}${RESET}` : model,
 		// `default` renders as the backend name already; a second copy of it is noise.
 		...(provider !== undefined && provider !== model ? [color === true ? `${DIM}${provider}${RESET}` : provider] : []),
-		...(pinned
+		...(pinned || manual === true
 			? [color === true ? `${MANUAL}Manual${RESET}` : "Manual"]
 			: [color === true ? `${DIM}Auto${RESET}` : "Auto"]),
 		color === true ? `${EFFORT_COLOR[level]}${effort}${RESET}` : effort,
-		COMPLEXITY_LABEL[contract.task.execution_complexity],
 	];
+	const band = COMPLEXITY_LABEL[contract.task.execution_complexity];
+	if (band !== undefined) parts.push(band);
 	// PRD-053: JEV was asked and could not decide, so the keyword heuristic did.
 	// With JEV off every band is the heuristic's, and the chip would only be noise.
 	const complexityRow = compileRecordOf(contract)?.telemetry.find((row) => row.site_id === COMPLEXITY_SITE_ID);

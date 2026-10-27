@@ -132,7 +132,7 @@ function fallbackConfig(): LeanPiConfig {
 		permissions: resolvedDefaults(),
 		limits: { isolation: "none" },
 		thresholds: DEFAULT_THRESHOLDS,
-		remember_manual_model: false,
+		remember_manual_model: true,
 	};
 }
 

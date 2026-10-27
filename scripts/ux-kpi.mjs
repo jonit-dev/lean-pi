@@ -28,6 +28,8 @@ export const KPIS = [
 	{ id: "first_reply_p50", label: "First reply p50", unit: "ms", target: 10_000 },
 	{ id: "error_rate", label: "Turns ending in error", unit: "%", target: 2 },
 	{ id: "abort_rate", label: "Turns aborted", unit: "%", target: 5 },
+	{ id: "single_read_only", label: "Single read-only calls", unit: "%", target: 60 },
+	{ id: "redundant_cd", label: "Redundant cd in bash", unit: "%", target: 20 },
 	{ id: "crashes", label: "Crashes", unit: "count", target: 0 },
 ];
 
@@ -111,7 +113,46 @@ export function sessionTurns(rows) {
 	return turns;
 }
 
-function kpiValue(id, launches, turns, crashes) {
+/**
+ * What a tool-call message asked for, as PRD-058 mines it: a read-only call is
+ * the `read`/`search` family, or a shell command from the discovery list with
+ * any `cd … &&` prefix stripped; a redundant `cd` is one that re-enters the
+ * session's own cwd, which the shell tool already runs in.
+ */
+const SHELL_TOOLS = new Set(["bash", "execute"]);
+const READ_ONLY_TOOLS = new Set(["read", "search", "grep", "find", "ls", "glob"]);
+const READ_ONLY_COMMANDS = /^(grep|rg|sed|cat|ls|head|tail|find|wc|git\s+(log|status|diff|show))(\s|$)/;
+const CD_PREFIX = /^\s*cd\s+\S+\s*&&\s*/;
+const CD_TARGET = /^\s*cd\s+(\S+)\s*&&/;
+
+/** `cd <the session's own cwd> && …`: the move 50% of mined bash calls opened with. */
+function cdsInto(command, cwd) {
+	const target = CD_TARGET.exec(command)?.[1];
+	return cwd !== undefined && target !== undefined && target.replace(/^['"]|['"]$/g, "") === cwd;
+}
+
+/** One entry per assistant message that asked for tools: when, and what it asked for. */
+export function sessionCalls(rows, cwd) {
+	const calls = [];
+	for (const row of rows) {
+		const content = row.type === "message" && row.message?.role === "assistant" ? row.message.content : undefined;
+		if (!Array.isArray(content)) continue;
+		const tools = [];
+		for (const part of content) {
+			if (part?.type !== "toolCall") continue;
+			const command = SHELL_TOOLS.has(part.name) && typeof part.arguments?.command === "string" ? part.arguments.command : undefined;
+			tools.push({
+				readOnly: READ_ONLY_TOOLS.has(part.name) || (command !== undefined && READ_ONLY_COMMANDS.test(command.replace(CD_PREFIX, ""))),
+				shell: SHELL_TOOLS.has(part.name),
+				redundantCd: command !== undefined && cdsInto(command, cwd),
+			});
+		}
+		if (tools.length > 0) calls.push({ t: Date.parse(row.timestamp), tools });
+	}
+	return calls;
+}
+
+function kpiValue(id, launches, turns, calls, crashes) {
 	const answered = turns.filter((t) => t.end !== undefined);
 	const rate = (end) => (answered.length === 0 ? undefined : (100 * answered.filter((t) => t.end === end).length) / answered.length);
 	switch (id) {
@@ -125,15 +166,34 @@ function kpiValue(id, launches, turns, crashes) {
 			return rate("error");
 		case "abort_rate":
 			return rate("aborted");
+		case "single_read_only":
+			return share(
+				calls,
+				(m) => m.tools.length === 1 && m.tools[0].readOnly,
+				(m) => m.tools.length > 0,
+			);
+		case "redundant_cd":
+			return share(
+				calls.flatMap((m) => m.tools),
+				(tool) => tool.redundantCd,
+				(tool) => tool.shell,
+			);
 		case "crashes":
 			return crashes.length;
 	}
 }
 
+/** `100 * matching / total`, or `undefined` when the window has no such sample. */
+function share(items, matches, counts) {
+	const population = items.filter(counts);
+	if (population.length === 0) return undefined;
+	return (100 * population.filter(matches).length) / population.length;
+}
+
 /** The KPI table for the `days` before `now`, the window before it, and a 30-day daily series. */
-export function computeReport({ launches, turns, crashTimes, now = Date.now(), days = 30 }) {
+export function computeReport({ launches, turns, calls = [], crashTimes, now = Date.now(), days = 30 }) {
 	const within = (items, from, to) => items.filter((x) => (x.t ?? x) >= from && (x.t ?? x) < to);
-	const slice = (from, to) => [within(launches, from, to), within(turns, from, to), within(crashTimes, from, to)];
+	const slice = (from, to) => [within(launches, from, to), within(turns, from, to), within(calls, from, to), within(crashTimes, from, to)];
 	const cur = slice(now - days * DAY, now);
 	const prev = slice(now - 2 * days * DAY, now - days * DAY);
 	const kpis = KPIS.map((k) => {
@@ -192,12 +252,17 @@ export function loadSources(home = homedir(), now = Date.now(), days = 30) {
 	const benchT0 = new Set(bench.flatMap((b) => b.t0s ?? []));
 	const launches = startupLaunches(parseJsonl(readText(join(home, ".leanpi", "startup.jsonl"))), benchT0);
 	const turns = [];
+	const calls = [];
 	const sessions = join(home, ".pi", "agent", "sessions");
 	for (const dir of existsSync(sessions) ? readdirSync(sessions) : []) {
 		for (const file of readdirSync(join(sessions, dir))) {
 			const path = join(sessions, dir, file);
 			if (!file.endsWith(".jsonl") || statSync(path).mtimeMs < now - Math.max(2 * days, 30) * DAY) continue;
-			turns.push(...sessionTurns(parseJsonl(readText(path))));
+			const rows = parseJsonl(readText(path));
+			turns.push(...sessionTurns(rows));
+			// The session's own cwd is what makes a `cd` into it redundant, so it comes
+			// from the session header, never from the directory's encoded name.
+			calls.push(...sessionCalls(rows, rows.find((row) => row.type === "session")?.cwd));
 		}
 	}
 	let crashes = [];
@@ -206,7 +271,7 @@ export function loadSources(home = homedir(), now = Date.now(), days = 30) {
 	} catch {
 		// Unreadable crash log: report zero rather than fail the report.
 	}
-	return { launches, turns, crashTimes: crashes.map((c) => Date.parse(c.timestamp)), bench };
+	return { launches, turns, calls, crashTimes: crashes.map((c) => Date.parse(c.timestamp)), bench };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

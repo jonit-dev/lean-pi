@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error -- plain ESM maintainer script, no declaration file
-import { computeReport, percentile, renderHtml, sessionTurns, startupLaunches } from "../scripts/ux-kpi.mjs";
+import { computeReport, percentile, renderHtml, sessionCalls, sessionTurns, startupLaunches } from "../scripts/ux-kpi.mjs";
 
 const now = Date.parse("2026-10-20T00:00:00Z");
 const at = (daysAgo: number, ms = 0) => new Date(now - daysAgo * 86_400_000 + ms).toISOString();
@@ -108,6 +108,32 @@ describe("ux-kpi", () => {
 		expect(html).not.toContain("/*DATA*/null");
 		expect(html).toContain('"sha":"abc"');
 		expect(html).not.toContain('"note":"</script>"');
+	});
+
+
+	it("rates single read-only calls and the redundant `cd` into the session cwd (PRD-058 AC-5)", () => {
+		// The two ratios the prompt change is measured by: how many round trips
+		// carried one read-only call, and how many bash calls re-`cd`ed into the
+		// session's own cwd, which the tool already does.
+		const tool = (t: string, name: string, args: Record<string, unknown>) => ({ type: "message", timestamp: t, message: { role: "assistant", content: [{ type: "toolCall", name, arguments: args }] } });
+		const calls = [
+			...sessionCalls([tool(at(1), "bash", { command: "cd /repo && grep -rn foo src" })], "/repo"),
+			...sessionCalls([tool(at(1, 1000), "bash", { command: "sed -n 1,20p src/x.ts" })], "/repo"),
+			...sessionCalls([tool(at(1, 2000), "read", { path: "x" })], "/repo"),
+			// Two calls in one message: the batch this KPI is pushing for.
+			...sessionCalls([{ type: "message", timestamp: at(1, 3000), message: { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: {} }, { type: "toolCall", name: "read", arguments: {} }] } }], "/repo"),
+			...sessionCalls([tool(at(1, 4000), "bash", { command: "npm test" })], "/repo"),
+			...sessionCalls([tool(at(1, 5000), "bash", { command: "cd /elsewhere && npm test" })], "/repo"),
+		];
+		const report = computeReport({ launches: [], turns: [], calls, crashTimes: [], now, days: 7 });
+		const kpi = (id: string) => report.kpis.find((k: { id: string }) => k.id === id);
+		// 6 messages: three single read-only calls (the cd+grep, the sed, the read);
+		// the two-call message and `npm test` are not single read-only round trips.
+		expect(kpi("single_read_only")!.value).toBeCloseTo(50);
+		// 4 bash calls, one of them cd'ing into the session's own cwd (/elsewhere is not).
+		expect(kpi("redundant_cd")!.value).toBeCloseTo(25);
+		// The declared target is what makes the row a pass or a fail.
+		expect(kpi("redundant_cd")).toMatchObject({ target: 20, pass: false });
 	});
 
 	it("benches a warm-up plus one measurement and records both t0s for exclusion", () => {

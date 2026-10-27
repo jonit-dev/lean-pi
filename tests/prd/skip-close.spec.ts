@@ -2,7 +2,7 @@
  * PRD-012 Phase 4 / AC-7, AC-8 — the quick-path skip and closure through the
  * installed prd-manager helper.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/commands/registry.js";
@@ -115,6 +115,28 @@ describe("PRD-012 Phase 4 — quick path and closure", () => {
 		const closure = readPrdState(cwd)!.closure!;
 		expect(closure.source).toBe("builtin-fallback");
 		expect(closure.detail).toContain(moved);
+	});
+
+	it("AC-8: the builtin fallback refuses an occupied archive destination instead of overwriting it", async () => {
+		const { cwd, agentDir } = fixtureRepo();
+		const artifactStore = artifactStoreFor(agentDir);
+		const { state, prdPath } = stagedPrd(cwd, { artifactStore });
+		verifyAll(cwd, state);
+		const archived = join(dirname(prdPath), "done", basename(prdPath));
+		mkdirSync(dirname(archived), { recursive: true });
+		writeFileSync(archived, "ORIGINAL ARCHIVE\n");
+		const emptyRoot = tempDir("leanpi-empty-skills-");
+
+		const registry = createCommandRegistry();
+		registerPrdCommands(registry, { cwd, config: prdConfig(cwd, { skillRoots: [emptyRoot] }), artifactStore });
+		const result = await registry.dispatch("/prd close", { cwd });
+
+		expect(result.ok).toBe(false);
+		expect(result.text).toContain("already exists");
+		// Both files survive: the archived plan is untouched and the active plan stays put.
+		expect(readFileSync(archived, "utf8")).toBe("ORIGINAL ARCHIVE\n");
+		expect(existsSync(prdPath)).toBe(true);
+		expect(readPrdState(cwd)!.closure).toBeUndefined();
 	});
 
 	it("AC-8: a rejecting helper is reported as a failure and leaves the PRD in place", async () => {

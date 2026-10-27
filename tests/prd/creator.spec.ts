@@ -1,12 +1,13 @@
 /**
  * PRD-012 Phase 1 / AC-1 — `/prd create` over the installed authoring contract.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../../src/commands/registry.js";
 import { registerPrdCommands } from "../../src/prd/commands.js";
 import {
+	allocatePrdId,
 	loadAuthoringContract,
 	resolveInstalledSkill,
 	resolveSkillScript,
@@ -155,6 +156,14 @@ describe("PRD-012 Phase 1 — PRD creation", () => {
 		expect(result.text).toContain("gap: AC-1");
 		expect(readPrdState(cwd)).toBeNull();
 		expect(existsSync(join(cwd, "docs", "PRDs", "v1"))).toBe(false);
+	});
+
+	it("AC-1: allocation counts completed plans in done/ instead of reusing their ids", () => {
+		const { cwd } = fixtureRepo();
+		const archived = join(cwd, "docs", "PRDs", "v1", "done");
+		mkdirSync(archived, { recursive: true });
+		writeFileSync(join(archived, "PRD-001-example.md"), "# archived\n");
+		expect(allocatePrdId(cwd)).toBe("PRD-002");
 	});
 
 	it("AC-1: a second create for the same objective takes the next id instead of overwriting the first", async () => {

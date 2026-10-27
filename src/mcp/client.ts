@@ -295,7 +295,6 @@ async function connectStdio(entry: McpServerEntry, cwd: string, timeoutMs: numbe
 /** The streamable-HTTP transport: one POST per message, session id echoed back. */
 async function connectHttp(entry: McpServerEntry, cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<McpClientHandle> {
 	const token = resolveToken(entry, cwd, env);
-	if (token === null) throw new McpAuthRequiredError(`MCP server "${entry.name}" requires authorization`, await authorizationUrlFor(entry, timeoutMs));
 	const session = { id: null as string | null };
 	let nextId = 1;
 
@@ -305,7 +304,9 @@ async function connectHttp(entry: McpServerEntry, cwd: string, env: NodeJS.Proce
 			headers: {
 				"content-type": "application/json",
 				accept: "application/json, text/event-stream",
-				authorization: `Bearer ${token}`,
+				// A public server needs no bearer; a refused credential is what enters
+				// the authorization path below (401/403), not the absence of one.
+				...(token === null ? {} : { authorization: `Bearer ${token}` }),
 				...entry.headers,
 				...(session.id ? { "mcp-session-id": session.id } : {}),
 			},
@@ -320,7 +321,10 @@ async function connectHttp(entry: McpServerEntry, cwd: string, env: NodeJS.Proce
 	const request = async (method: string, params: unknown): Promise<unknown> => {
 		const response = await post({ jsonrpc: "2.0", id: nextId++, method, params });
 		if (response.status === 401 || response.status === 403) {
-			throw new McpAuthRequiredError(`MCP server "${entry.name}" rejected the stored token (HTTP ${response.status})`, await authorizationUrlFor(entry, timeoutMs));
+			// The server refused. Whether it was a missing credential or a stale one
+			// is a different message, and the user's next step depends on which.
+			const refusal = token === null ? "requires authorization" : "rejected the stored token";
+			throw new McpAuthRequiredError(`MCP server "${entry.name}" ${refusal} (HTTP ${response.status})`, await authorizationUrlFor(entry, timeoutMs));
 		}
 		if (!response.ok) throw new Error(`MCP server "${entry.name}" answered HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
 		const text = await response.text();

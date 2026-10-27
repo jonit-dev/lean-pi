@@ -6,7 +6,7 @@ LeanPi has two modes, and only two.
 
 | | **Auto** (default) | **Manual** |
 |---|---|---|
-| Entered by | starting LeanPi; `/model` → auto | `/model` → pick a model |
+| Entered by | starting LeanPi; `/model` → auto; `/route reset` | `/model` → pick a model (a hand-picked thinking level pins the effort and reads `Manual` too, while the model still routes — see below) |
 | Who picks the model | the router: the first message decides, later messages may only escalate | the operator, once |
 | Contract, JEV, PRD gate, exploration | yes | **none** |
 | Review, proof gate | only when every executor role is a vendor CLI (LeanPi owns the loop) | **none** |
@@ -14,13 +14,18 @@ LeanPi has two modes, and only two.
 | Footer | the installed model, `Auto`, thinking level, task size, `guessed` when JEV could not decide (a guess never makes a task hard) | the pinned model, `<backend> CLI` when it runs a vendor CLI (silent until done), `Manual` in red; redrawn the moment `/model` changes — no `LeanPi: …` phase |
 | Chat | Pi's messages, or LeanPi's report | a regular Pi turn on the pinned model, native or CLI: prompt, spinner, reply, Esc, usage |
 | Survives `/new`, `/resume` | — (the escalation floor resets) | yes |
-| Survives a restart | — | only with `remember_manual_model: true` |
+| Survives a restart | — | yes: the pin and the hand-picked effort (`remember_manual_model: false` opts out) |
 
 **Auto** is LeanPi: the harness classifies the turn and routes it to a model.
 On a config whose roles include a native backend (the usual case), Pi's own loop
 runs the turn on that model and nothing reviews it afterwards. Only an
 all-vendor-CLI config hands the turn to LeanPi's executor lane, which adds the
 reviewer and the proof gate.
+
+A hand-picked thinking level is the same kind of override for one knob: it
+pins the effort (`routePins().effort`), survives later turns, and the status line
+says `Manual` at once. The model still routes and the contract still runs — only
+who chose the effort changed. `/route reset` hands it back to the router.
 
 ## How Auto picks the model
 
@@ -77,14 +82,16 @@ stateDiagram-v2
     [*] --> Auto: start
     Auto --> Manual: /model &lt;pick&gt;
     Manual --> Manual: /model &lt;other pick&gt;, /new, /resume
+    Manual --> Manual: restart (remembered)
     Manual --> Auto: /model auto
-    Manual --> Auto: restart (default)
-    Manual --> Manual: restart with remember_manual_model
+    Manual --> Auto: restart with remember_manual_model: false
 ```
 
 - The pin is session-process state, never a config write.
-- `remember_manual_model: true` in `leanpi.config.yaml` (default `false`) also saves the pick
-  to `~/.leanpi/model.json`; startup reads it and comes back in Manual. `/model auto` deletes it.
+- A restart comes back in Manual: the pick and the hand-picked effort are saved to
+  `~/.leanpi/model.json` as they change, and startup reads the file. `remember_manual_model: false`
+  in `leanpi.config.yaml` keeps Manual session-only. `/model auto` deletes the model pin from the
+  file but keeps a hand-picked effort; `/route reset` hands the effort back and forgets it.
 - A CLI pin keeps its conversation through the vendor's session id (`claude --resume` and
   equivalents); `/new`, `/resume`, `/model auto` or a repin start a fresh one.
 - A CLI pin is a Pi model (PRD-051, `src/backends/cli-provider.ts`): `/model` registers a

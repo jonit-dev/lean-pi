@@ -7,6 +7,8 @@
  * sites registered but unreachable, which is the case §58 requires to keep
  * working.
  */
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { clearRoutePins, routePins, setRoutePins } from "../../src/compiler/pins.js";
 import { clearSites, compileRecordOf, compileTask } from "../../src/index.js";
@@ -120,6 +122,23 @@ describe("/route (PRD-016 Phase 3)", () => {
 			expect(routePins().model).toEqual(pick);
 			expect(routePins().executor_class).toBeUndefined();
 			expect(routePins().executor_floor).toBeUndefined();
+		} finally {
+			await h.close();
+		}
+	});
+
+	it("reset hands the hand-picked effort back to the router, so a restart does not restore it", async () => {
+		const { h, fixture } = await routedFixture();
+		const memory = join(fixture.env.HOME as string, ".leanpi", "model.json");
+		try {
+			setRoutePins({ effort: "high" });
+			mkdirSync(dirname(memory), { recursive: true });
+			writeFileSync(memory, JSON.stringify({ effort: "high" }));
+
+			const reset = await fixture.dispatch("/route reset");
+			expect(reset.ok).toBe(true);
+			expect(routePins().effort).toBeUndefined();
+			expect(existsSync(memory), "/route reset must forget the remembered effort").toBe(false);
 		} finally {
 			await h.close();
 		}

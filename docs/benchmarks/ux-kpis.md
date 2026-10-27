@@ -17,6 +17,8 @@ flowchart LR
 | First reply p50 | User message to the first finished assistant message | ≤ 10 s |
 | Turns ending in error | Share of answered turns whose last assistant `stopReason` is `error` | ≤ 2% |
 | Turns aborted | Same, `aborted` | ≤ 5% |
+| Single read-only calls | Share of tool-call messages carrying exactly one read-only call (`read`/`search`, or bash `grep`/`rg`/`sed`/`cat`/`ls`/`head`/`tail`/`find`/`wc`/`git log\|status\|diff\|show`, `cd … &&` stripped) | ≤ 60% |
+| Redundant cd in bash | Share of bash calls opening with `cd <session cwd> &&`, which the tool already runs in | ≤ 20% |
 | Crashes | Entries in `~/.pi/agent/crashes.json` | 0 |
 
 Targets live in `KPIS` in `scripts/ux-kpi.mjs`. Change both places together.

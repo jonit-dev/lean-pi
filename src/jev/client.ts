@@ -15,7 +15,7 @@ import type { LeanPiConfig, JevMode } from "../core/types.js";
 import { accept } from "./confidence.js";
 import { resolveCredential, type CredentialEnv, type CredentialSource } from "./credentials.js";
 import { createDecisionLog, type DecisionLog, type DecisionRow } from "./log.js";
-import { applyPrivacy, redactSecrets, serializeBody } from "./privacy.js";
+import { applyPrivacy, redactSecrets, serializeBody, staticQuestionProjection } from "./privacy.js";
 import type { ControlPlaneProvider, ControlPlaneTarget } from "./provider.js";
 import { emptyUsage, getSite, listSites, type DecisionSite } from "./registry.js";
 import { answerValue, decisiveness, type JevQuestion, type JevResult, type JevUsage, type QuestionKind } from "./types.js";
@@ -301,13 +301,20 @@ export function createJevClient(options: JevClientOptions): JevClient {
 		return { endpoint, key: keyOverride ?? credential.key, source: credential.source, model };
 	}
 
-	async function send(target: ControlPlaneTarget, questions: JevQuestion[], state: unknown): Promise<{ answers: Record<string, WireAnswer>; usage: JevUsage; model: string }> {
+	async function send(target: ControlPlaneTarget, questions: JevQuestion[], state: unknown, site?: DecisionSite): Promise<{ answers: Record<string, WireAnswer>; usage: JevUsage; model: string }> {
+		// `metadata-only` summarises the state but must not carry the concrete
+		// question text or its identifiers: those name the clause, the path, the
+		// hit. The site's declared template is the static wording; the answer is
+		// mapped back to the caller's ids before anyone reads it. A site that
+		// declares its questions static (a machine inventory) is sent verbatim.
+		const projection = mode === "metadata-only" && site?.staticQuestions !== true ? staticQuestionProjection(questions, site?.questions ?? []) : null;
+		const asked = projection?.questions ?? questions;
 		const body = applyPrivacy(
 			mode,
 			{
 				state,
 				model: target.model,
-				questions: Object.fromEntries(questions.map((question) => [question.id, wireQuestion(question)])),
+				questions: Object.fromEntries(asked.map((question) => [question.id, wireQuestion(question)])),
 			},
 			salt,
 		);
@@ -330,7 +337,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 			usage?: { input_tokens?: number; output_tokens?: number };
 		};
 		return {
-			answers: parsed.answers ?? {},
+			answers: projection ? (projection.restore(parsed.answers ?? {}) as Record<string, WireAnswer>) : (parsed.answers ?? {}),
 			usage: { inputTokens: parsed.usage?.input_tokens ?? 0, outputTokens: parsed.usage?.output_tokens ?? 0 },
 			model: parsed.model ?? target.model,
 		};
@@ -363,7 +370,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 
 			let response: { answers: Record<string, WireAnswer>; usage: JevUsage; model: string };
 			try {
-				response = await send(target, questions, state);
+				response = await send(target, questions, state, site);
 			} catch (error) {
 				return resolveByFallback(site, questions, state, error instanceof Error ? error.message : "transport-error");
 			}

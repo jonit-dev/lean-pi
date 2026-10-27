@@ -21,7 +21,7 @@ import { runtimePlanOf, type RuntimePlan } from "../runtime/plan.js";
 import { aggregate, type VerificationStatus } from "./aggregate.js";
 import { captureArtifact, DEFAULT_SCOPES, verifierFor, verifierOutcome, type VerifierContext, type VerifierDescriptor } from "./descriptors.js";
 import { EvidenceStore, type EvidenceRecord, type EvidenceView, type VerifierResult } from "./evidence.js";
-import { workspaceHash } from "./hash.js";
+import { workspaceHash, workspaceScope } from "./hash.js";
 import { selectVerifiers, type DiffSummary, type RegressionScope } from "./select.js";
 import type { ShellExec } from "./run.js";
 
@@ -133,6 +133,10 @@ export async function verifyTask(contract: ExecutionContract, workspaceRoot: str
 	};
 
 	// One hash for the whole run: it is the workspace state the results describe.
+	// The scope is sampled once too — a file the run itself creates (an artifact
+	// under the workspace) is not a source change, and a fallback scan that grows
+	// between the two calls would mark every record stale.
+	let scope: string[] = [];
 	let hash = "";
 	let hashFailure: string | null = null;
 	const recordHashFailure = (message: string, workspaceState: string): void => {
@@ -151,7 +155,8 @@ export async function verifyTask(contract: ExecutionContract, workspaceRoot: str
 		);
 	};
 	try {
-		hash = workspaceHash(workspaceRoot, touchedPaths);
+		scope = workspaceScope(workspaceRoot, touchedPaths);
+		hash = workspaceHash(workspaceRoot, touchedPaths, scope);
 	} catch (error) {
 		hashFailure = error instanceof Error ? error.message : String(error);
 		recordHashFailure(hashFailure, hash);
@@ -194,7 +199,7 @@ export async function verifyTask(contract: ExecutionContract, workspaceRoot: str
 	let finalHash = hash;
 	if (hashFailure === null) {
 		try {
-			finalHash = workspaceHash(workspaceRoot, touchedPaths);
+			finalHash = workspaceHash(workspaceRoot, touchedPaths, scope);
 		} catch (error) {
 			recordHashFailure(error instanceof Error ? error.message : String(error), hash);
 		}

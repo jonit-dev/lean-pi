@@ -3,8 +3,9 @@
  *
  * On a native config LeanPi's executor lane never runs, so a 402/429 from the
  * session model ends the turn with nothing to fall back to — the operator types
- * "hi" again and pays the same refusal. `agent_end` must remember which backend
- * refused, and the next `before_agent_start` must resolve the role past it.
+ * "hi" again and pays the same refusal. LeanPi must remember which backend
+ * refused once Pi's own retry gave up (`agent_before_settle`), and the next
+ * `before_agent_start` must resolve the role past it.
  *
  * Drives the real `activate()` hooks, so a registration that only works when
  * called by hand cannot pass. Red on `main`: the next turn installs the same
@@ -14,6 +15,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { activate, readRuns } from "../../src/index.js";
 import { clearLanes, registerLane } from "../../src/commands/session.js";
 import { loadConfig } from "../../src/core/config.js";
@@ -119,6 +121,8 @@ describe("session-model fallback after a provider limit", () => {
 
 		// The turn runs, and Pi's loop reports the 429 the provider sent.
 		await handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "error", errorMessage: '429: {"type":"GoUsageLimitError"}' }] }, ctx);
+		// Pi emits this once its own auto-retry is done; the limit is judged here.
+		await handlers.get("agent_before_settle")?.({ entries: [] }, ctx);
 
 		await handlers.get("agent_settled")?.({ aborted: false }, ctx);
 		await handlers.get("before_agent_start")?.({ messageType: "user", prompt: "second", systemPrompt: "sys" }, ctx);
@@ -251,6 +255,36 @@ describe("PRD-055 AC-6 — same-turn quota fallback", () => {
 			if (compiled) expect(runs[0]?.calls.map((call) => call.backend)).toEqual(["first", "second"]);
 		} finally {
 			await fixture.close();
+		}
+	});
+
+	// A capacity 429 is transient: Pi's own auto-retry recovers it on the same
+	// backend, so the next turn must not be routed away for the 5-minute cooldown.
+	it("keeps a backend whose transient 429 Pi's own retry recovered", async () => {
+		const capacity = '{"type":"server_error","message":"Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 10 s)"}';
+		const primary = await startStubBackend([{ status: 429, body: capacity }, { text: "recovered" }, { text: "second turn" }]);
+		const fallback = await startStubBackend([{ text: "must not reach the fallback" }]);
+		const cwd = tempDir("leanpi-capacity-");
+		writeConfig(cwd, {
+			backends: { first: nativeBackend(primary.baseUrl), second: nativeBackend(fallback.baseUrl) },
+			models: { balanced: { backend: "first", model: "leanpi-first" }, quick: { backend: "second", model: "leanpi-second" }, strong: { backend: "second", model: "leanpi-second" } },
+			lsp: { mode: "off" }, jev: { mode: "disabled" },
+		});
+		const app = await bootSession({ cwd, settingsManager: SettingsManager.inMemory({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } }) });
+		await app.session.bindExtensions({ uiContext: headlessUIContext() });
+		registerLane({ name: "test.capacity-contract", run(_turn, context) {
+			context.contract = fixtureContract({ complexity: "MEDIUM", executor_class: "balanced" });
+		} });
+		try {
+			await app.session.prompt("first");
+			expect(app.session.state.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" });
+			await app.session.prompt("second");
+			expect(primary.requests).toHaveLength(3);
+			expect(fallback.requests).toHaveLength(0);
+		} finally {
+			app.session.dispose();
+			clearLanes();
+			await Promise.all([primary.close(), fallback.close()]);
 		}
 	});
 

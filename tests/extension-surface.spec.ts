@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { activate, grantTrust, readRuns } from "../src/index.js";
+import { activate, appendRun, clearRoutePins, grantTrust, readRuns, routePins, type RunTelemetry } from "../src/index.js";
 import { clearLanes, registerLane } from "../src/commands/session.js";
 import { loadConfig } from "../src/core/config.js";
 import { LEANPI_RECAP_WIDGET_KEY } from "../src/cli/recap-widget.js";
@@ -121,6 +121,21 @@ const NATIVE = [
 	"",
 ].join("\n");
 
+const CUSTOM_TELEMETRY_PATH = ".leanpi/custom-cost.jsonl";
+const NATIVE_WITH_CUSTOM_COST = [
+	"backends:",
+	"  local: { type: native, baseUrl: https://example.test }",
+	"models:",
+	"  quick: { backend: local, model: cheap }",
+	"  balanced: { backend: local, model: cheap }",
+	"  strong: { backend: local, model: cheap }",
+	"cost:",
+	`  telemetry_path: ${CUSTOM_TELEMETRY_PATH}`,
+	"jev:",
+	"  mode: disabled",
+	"",
+].join("\n");
+
 describe("LeanPi's commands reach Pi", () => {
 	it("registers every command in its registry with Pi, and dispatches through the same handlers", async () => {
 		const { cwd, env } = project(NATIVE);
@@ -136,6 +151,50 @@ describe("LeanPi's commands reach Pi", () => {
 		}
 		await commands.get("help")?.handler("", ctx);
 		expect(notices.join("\n")).toContain("/doctor");
+		clearLanes();
+	});
+
+	it("reads cost.telemetry_path: /status and /cost total the same session store in a real activation", async () => {
+		const { cwd, env } = project(NATIVE_WITH_CUSTOM_COST);
+		const { pi, commands, notices, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+
+		await commands.get("status")?.handler("", ctx);
+		const sessionId = /id ([^)\s]+)/.exec(notices.at(-1) ?? "")?.[1];
+		expect(sessionId).toBeTruthy();
+		appendRun(cwd, { task_id: "audit-cost", session_id: sessionId!, usage: {}, cost: { effective_cost: 1 } } as unknown as RunTelemetry, {
+			telemetry_path: CUSTOM_TELEMETRY_PATH,
+		});
+
+		await commands.get("status")?.handler("", ctx);
+		expect(notices.at(-1)).toContain("session cost: $1.000000 over 1 run");
+
+		await commands.get("cost")?.handler("", ctx);
+		expect(notices.at(-1)).toContain("session total: $1.000000");
+		expect(notices.at(-1)).not.toContain("no telemetry recorded yet");
+		clearLanes();
+	});
+
+	it("pins a hand-picked effort and says Manual at once, with no turn in between", async () => {
+		const { cwd, env } = project(NATIVE);
+		const { pi, handlers, statuses, ctx } = fakePi();
+		clearLanes();
+		clearRoutePins();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+
+		const select = handlers.get("thinking_level_select");
+		expect(select, "thinking_level_select is not hooked").toBeDefined();
+		// The operator picks a level in Pi's own selector. No turn has run yet, so
+		// until now there was no line and no pin: the next turn would route it away.
+		await select!({ level: "high", previousLevel: "medium" }, ctx);
+
+		expect(routePins().effort).toBe("high");
+		const line = statuses.at(-1) ?? "";
+		expect(line).toContain("Manual");
+		expect(line).toContain("thinking: high");
+		expect(line).not.toContain("Auto");
+		clearRoutePins();
 		clearLanes();
 	});
 

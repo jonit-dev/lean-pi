@@ -59,6 +59,26 @@ export function porcelainPaths(porcelain: string): string[] {
 /** The dirty set keyed by path with its content hash; `null` when git is unavailable. */
 export type ChangeSnapshot = Map<string, string>;
 
+/**
+ * The identity of the tracked tree at HEAD. Two commits with the same source
+ * bytes share it, and a commit that changes source presents a different one —
+ * which is what a clean-before/clean-after verification has to notice. `null`
+ * when git cannot answer (no repository, or no commit yet).
+ */
+export function readTreeHash(root: string): string | null {
+	try {
+		const tree = execFileSync("git", ["rev-parse", "HEAD^{tree}"], {
+			cwd: root,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 5_000,
+		}).trim();
+		return tree.length > 0 ? tree : null;
+	} catch {
+		return null;
+	}
+}
+
 export function changeSnapshot(root: string): ChangeSnapshot | null {
 	const porcelain = readPorcelain(root);
 	if (porcelain === null) return null;

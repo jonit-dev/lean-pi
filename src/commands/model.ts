@@ -17,7 +17,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { MODEL_ROLES, type BackendRef, type LeanPiConfig } from "../core/types.js";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { MODEL_ROLES, THINKING_LEVELS, type BackendRef, type LeanPiConfig } from "../core/types.js";
 import { routePins, setRoutePins } from "../compiler/pins.js";
 import { discoverInventory, modelFactsLine, type DiscoveredModel } from "../cli/allocate.js";
 import { modelPicker } from "../cli/model-picker.js";
@@ -82,34 +83,56 @@ function renderPinInventory(surface: CommandSurface): string {
 	return lines.join("\n");
 }
 
-/** `<home>/.leanpi/model.json` — where `remember_manual_model: true` saves the pin (PRD-048 Phase 2). */
+/**
+ * `<home>/.leanpi/model.json` — the Manual picks a restart comes back to
+ * (PRD-048 Phase 2). The name predates the effort pin; renaming it would strand
+ * the pins existing installs already saved.
+ */
 function rememberedModelPath(env: NodeJS.ProcessEnv): string {
 	return join(env.HOME ?? homedir(), ".leanpi", "model.json");
 }
 
-export function writeRememberedModel(config: LeanPiConfig, env: NodeJS.ProcessEnv, pin: BackendRef): void {
-	if (config.remember_manual_model !== true) return;
-	const path = rememberedModelPath(env);
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, JSON.stringify(pin));
-}
-
-function deleteRememberedModel(env: NodeJS.ProcessEnv): void {
-	const path = rememberedModelPath(env);
-	if (existsSync(path)) rmSync(path);
+/** What a restart carries forward: the `/model` pin and the hand-picked effort. */
+export interface RememberedManual {
+	model?: BackendRef;
+	effort?: ThinkingLevel;
 }
 
 /**
- * Startup only (PRD-048 Phase 2): restores the pin a previous session saved
- * with `remember_manual_model: true`. A corrupt or unreadable file must not
- * stop the session from starting — it just leaves the session in Auto.
+ * Save the Manual picks for the next start, or delete the file when none is
+ * left. `remember_manual_model: false` opts out and keeps Manual session-only;
+ * the default carries it forward, because a pick the operator made by hand is
+ * the one setting a restart must not silently undo.
+ */
+export function rememberManual(config: LeanPiConfig, env: NodeJS.ProcessEnv, state: RememberedManual): void {
+	const path = rememberedModelPath(env);
+	if (state.model === undefined && state.effort === undefined) {
+		// Emptying the file is a delete, not a write: the opt-out must not strand
+		// picks an earlier session saved.
+		if (existsSync(path)) rmSync(path);
+		return;
+	}
+	if (config.remember_manual_model === false) return;
+	mkdirSync(dirname(path), { recursive: true });
+	// Flat, not nested: a file an earlier LeanPi wrote has the model at the top
+	// level, and an effort-only pin is just `{ effort }`.
+	writeFileSync(path, JSON.stringify({ ...state.model, ...(state.effort === undefined ? {} : { effort: state.effort }) }));
+}
+
+/**
+ * Startup only (PRD-048 Phase 2): restores the picks a previous session saved.
+ * A corrupt or unreadable file must not stop the session from starting — it
+ * just leaves the session in Auto.
  */
 export function restoreRememberedModel(config: LeanPiConfig, env: NodeJS.ProcessEnv): void {
-	if (config.remember_manual_model !== true) return;
+	if (config.remember_manual_model === false) return;
 	const path = rememberedModelPath(env);
 	if (!existsSync(path)) return;
 	try {
-		const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Record<keyof BackendRef, unknown>>;
+		const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Record<keyof BackendRef, unknown>> & { effort?: unknown };
+		// The effort pin stands on its own: the model can be back in Auto and the
+		// level the operator chose by hand is still theirs.
+		if ((THINKING_LEVELS as readonly unknown[]).includes(parsed.effort)) setRoutePins({ effort: parsed.effort as ThinkingLevel });
 		// The file is on disk, not something this session wrote just now: a
 		// corrupt or hand-edited one must not become a pin the compiler trusts.
 		if (typeof parsed.backend !== "string" || parsed.backend.length === 0) return;
@@ -149,7 +172,7 @@ async function pinModel(surface: CommandSurface, chosen: DiscoveredModel, contex
 	// A repin — even to the same model — starts a fresh conversation: the
 	// vendor session a previous CLI pin remembered belonged to that pin.
 	setRoutePins({ model: pin, manualSessionId: undefined }, surface.host.current().getSessionId());
-	writeRememberedModel(surface.config, surface.env, pin);
+	rememberManual(surface.config, surface.env, { model: pin, effort: routePins().effort });
 	context.footer?.setStatus(manualStatusLine(pin, true));
 	return {
 		ok: true,
@@ -164,7 +187,8 @@ async function clearPin(surface: CommandSurface, context: CommandContext): Promi
 	const previous = routePins().previousModel;
 	setRoutePins({ model: undefined, previousModel: undefined, manualSessionId: undefined }, surface.host.current().getSessionId());
 	if (previous) await context.footer?.setModel(previous);
-	deleteRememberedModel(surface.env);
+	// Only the model pin left Manual; a hand-picked effort is still the operator's.
+	rememberManual(surface.config, surface.env, { effort: routePins().effort });
 	context.footer?.setStatus(undefined);
 	return { ok: true, text: "model: Auto — the router decides the model again" };
 }

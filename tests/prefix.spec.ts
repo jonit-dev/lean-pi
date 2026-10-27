@@ -17,6 +17,7 @@ import {
 	setActivePrefix,
 } from "../src/index.js";
 import { OUTPUT_STYLE, WORKING_RULES } from "../src/core/instructions/prefix.js";
+import { assemble } from "../src/context/prompt.js";
 import { bootSession, fixtureRepo, nativeBackend, systemText, tempDir, toolNamesOf, writeConfig } from "./helpers/fixtures.js";
 import { startStubBackend } from "./helpers/stub-backend.js";
 
@@ -152,10 +153,27 @@ describe("PRD-001 Phase 3 — static Ponytail prefix", () => {
 		}
 	});
 
-	it("the working rules ask for independent tool calls in one turn, with or without Ponytail", () => {
+	it("the working rules ask for independent read-only tool calls in one message, with or without Ponytail", () => {
+		// PRD-058 AC-4: 80% of mined assistant messages carried one tool call, and
+		// 498 read-only runs held 2,371 round trips. The rule names the shape, the
+		// count and what serializing costs, because the plain "batch independent
+		// calls" wording was already here and the sessions showed one call a message.
 		for (const ponytail of [true, false]) {
-			expect(buildStaticPrefix({ instructions: { ponytail } })).toContain("issue them as parallel tool calls in the same turn");
+			const prefix = buildStaticPrefix({ instructions: { ponytail } });
+			expect(prefix).toContain("goes out as ONE message with three to six independent read-only calls");
+			expect(prefix).toContain("An empty search costs nothing next to a round trip");
+			expect(prefix).toContain("serialize only when the next command needs the previous output");
 		}
+	});
+
+	it("the tool protocol says bash already runs in the project cwd, in every variant", () => {
+		// PRD-058 AC-4: 50% of mined bash calls opened with `cd <cwd> &&`, which the
+		// tool already did. `minimal` carries only the protocol, so the fact lives there.
+		for (const instructions of [{ ponytail: true }, { ponytail: false }]) {
+			// The STATIC layer as a provider request sees it, which appends the protocol.
+			expect(assemble({ config: { instructions } }).prefix).toContain("Bash already runs in the project cwd — no `cd` into it.");
+		}
+		expect(buildStaticPrefix({ instructions: { ponytail: true, variant: "minimal" } })).toContain("Bash already runs in the project cwd — no `cd` into it.");
 	});
 
 	it("AC-8: --check passes on the pristine tree, fails on a mutated copy, and degrades without upstream", () => {

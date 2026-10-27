@@ -56,6 +56,25 @@ export interface RoutePins {
 
 let pins: RoutePins = {};
 let owner: string | undefined;
+/** The level LeanPi itself last installed; a select event naming it is not a pick. */
+let installedLevel: ThinkingLevel | undefined;
+
+/**
+ * Record a level LeanPi just installed on the session. Pi emits
+ * `thinking_level_select` for every change, its own and the operator's alike, so
+ * without this the compiled effort would be pinned as a hand pick on the first
+ * turn. A set that changed nothing emits no event, and leaves no marker behind.
+ */
+export function noteInstalledThinkingLevel(before: ThinkingLevel | undefined, after: ThinkingLevel | undefined): void {
+	installedLevel = before !== undefined && after !== undefined && before !== after ? after : undefined;
+}
+
+/** Whether a select event names the level LeanPi installed; consumes the marker either way. */
+export function consumeInstalledThinkingLevel(level: ThinkingLevel): boolean {
+	const own = installedLevel !== undefined && installedLevel === level;
+	installedLevel = undefined;
+	return own;
+}
 
 /** Merge a pin into the session's set; `sessionId` records which session asked. */
 export function setRoutePins(next: RoutePins, sessionId?: string): RoutePins {
@@ -80,6 +99,7 @@ export function pinOwner(): string | undefined {
 export function clearRoutePins(): void {
 	pins = {};
 	owner = undefined;
+	installedLevel = undefined;
 }
 
 /** `prd force`/`prd skip` pin the gate outcome; without one the classifier decides. */

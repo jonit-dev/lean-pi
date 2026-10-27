@@ -274,3 +274,45 @@ describe("PRD-028 follow-up — the wiring the cost audit found open", () => {
 		expect(withoutSkillCatalog("no catalog here")).toBe("no catalog here");
 	});
 });
+
+/**
+ * PRD-058 AC-3 (session mining): 16,105 of 16,105 opencode-go assistant
+ * messages recorded `usage.cost.total = null` with `cost.cacheWrite = null`.
+ * Pi prices every part of the card, so a backend whose card omits one rate
+ * multiplies by `undefined`: `NaN` in the sum, `null` on the wire, and $0 spend
+ * for the whole endpoint. The fix belongs at the registration every native
+ * backend routes through, not in a consumer that re-derives the total.
+ */
+describe("PRD-058 — a partial rate card cannot make the bill null", () => {
+	it("AC-3: an assistant turn records a numeric cost.total > 0", async () => {
+		const backend = await startStubBackend([
+			// `cached_tokens` only: exactly the shape opencode-go reports, and the
+			// one that produced `null` — no cache write is declared, so Pi
+			// multiplies an undefined cache-write rate into the total.
+			{ text: "ok", usage: { prompt_tokens: 1000, completion_tokens: 20, cached_tokens: 800 } },
+		]);
+		const { cwd } = fixtureRepo();
+		writeConfig(cwd, {
+			// The shipped opencode-go card: input, output and cacheRead, no cacheWrite.
+			backends: { local: nativeBackend(backend.baseUrl, { cost: { input: 0.15, output: 0.6, cacheRead: 0.003 } }) },
+			models: { balanced: { backend: "local", model: "cheap-fast" } },
+		});
+		const session = await bootSession({ cwd });
+		try {
+			await session.runTurn("rename a helper");
+			const branch = session.session.sessionManager.getBranch();
+			const assistant = [...branch].reverse().find((entry) => entry.type === "message" && entry.message.role === "assistant");
+			const usage = (assistant as { message?: { usage?: { cost?: Record<string, unknown> } } } | undefined)?.message?.usage;
+			const cost = usage?.cost;
+
+			expect(typeof cost?.total).toBe("number");
+			expect(cost?.total as number).toBeGreaterThan(0);
+			// Every part is priced: one `null` here is what serialized as `null`
+			// in the session file and hid the whole endpoint's spend.
+			expect(JSON.stringify(cost)).not.toContain("null");
+		} finally {
+			session.session.dispose();
+			await backend.close();
+		}
+	});
+});

@@ -208,8 +208,12 @@ export function prdDirectory(cwd: string): string {
 export function allocatePrdId(cwd: string): string {
 	const directory = prdDirectory(cwd);
 	let highest = 0;
-	if (existsSync(directory)) {
-		for (const entry of readdirSync(directory)) {
+	// Completed plans keep their identifier: scanning only the active directory
+	// hands the highest closed id out again, and a reused id also collides with
+	// the file `/prd close` would move into `done/`.
+	for (const scanned of [directory, join(directory, "done")]) {
+		if (!existsSync(scanned)) continue;
+		for (const entry of readdirSync(scanned)) {
 			const match = /^PRD-(\d+)/.exec(entry);
 			if (match) highest = Math.max(highest, Number.parseInt(match[1]!, 10));
 		}

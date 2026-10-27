@@ -26,6 +26,13 @@ export interface DecisionSite {
 	consequence: Consequence;
 	fallback: SiteFallback;
 	telemetryTag: string;
+	/**
+	 * The questions are declared content — a machine's model inventory, say — and
+	 * not derived from the user's workspace. `metadata-only` sends them verbatim
+	 * (the state is still summarised); without this it treats a question as user
+	 * content and replaces its wording and identifiers with the site template.
+	 */
+	staticQuestions?: boolean;
 }
 
 export class DuplicateSiteError extends Error {

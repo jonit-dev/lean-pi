@@ -234,23 +234,32 @@ const NETWORK_COMMAND: RegExp[] = [
 /** git global options that eat the next token; the `=x` spellings eat nothing. */
 const GIT_GLOBAL_VALUE: Record<string, true> = { "-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--exec-path": true };
 
+/** What a `$(...)`/`${...}` in the subcommand position becomes: scope unknown, refuse. */
+const GIT_DYNAMIC = "(dynamic)";
+
 /**
- * The `git` subcommand and its arguments with git's own global options
- * consumed, so `git -C . push --force` reads as a push. A token table, not a
- * shell parser: an option table we cannot step over yields `null` (no claim).
+ * Every `git` invocation in a command line, with git's own global options
+ * consumed so `git -C . push --force` reads as a push. A token table, not a
+ * shell parser: an option table we cannot step over yields no claim. A compound
+ * command carries more than one, and a harmless first `git status` must not hide
+ * the `git reset --hard` after the separator.
  */
-function gitInvocation(command: string): { subcommand: string; args: string[] } | null {
+function gitInvocations(command: string): Array<{ subcommand: string; args: string[] }> {
 	const tokens = command
 		.split(/[\s|&;()<>`]+/)
 		.map((token) => token.replace(/^['"]+|['"]+$/g, ""))
 		.filter((token) => token.length > 0);
-	const start = tokens.indexOf("git");
-	if (start === -1) return null;
-	let index = start + 1;
-	while (tokens[index]?.startsWith("-")) index += GIT_GLOBAL_VALUE[tokens[index]!] ? 2 : 1;
-	const subcommand = tokens[index];
-	if (subcommand === undefined) return null;
-	return { subcommand, args: tokens.slice(index + 1) };
+	const found: Array<{ subcommand: string; args: string[] }> = [];
+	for (let start = tokens.indexOf("git"); start !== -1; start = tokens.indexOf("git", start + 1)) {
+		let index = start + 1;
+		while (tokens[index]?.startsWith("-")) index += GIT_GLOBAL_VALUE[tokens[index]!] ? 2 : 1;
+		const subcommand = tokens[index];
+		if (subcommand === undefined) continue;
+		// A substitution is a subcommand the text cannot resolve. Claim both
+		// destructive and network reach so a deny default still refuses it.
+		found.push({ subcommand: /^[$`]/.test(subcommand) ? GIT_DYNAMIC : subcommand, args: tokens.slice(index + 1) });
+	}
+	return found;
 }
 
 /** `-fd` carries both `f` and `d`, and `-f -d` carries them apart. */
@@ -261,6 +270,8 @@ function hasShortFlag(args: string[], letter: string): boolean {
 /** `+refspec` and `--force-with-lease` force a push just as `--force` does. */
 function gitIsDestructive({ subcommand, args }: { subcommand: string; args: string[] }): boolean {
 	switch (subcommand) {
+		case GIT_DYNAMIC:
+			return true;
 		case "push":
 			return args.some((arg) => arg.startsWith("+") || arg === "--force" || arg === "-f" || arg === "--delete" || arg.startsWith("--force-"));
 		case "reset":
@@ -279,6 +290,7 @@ function gitIsDestructive({ subcommand, args }: { subcommand: string; args: stri
 }
 
 function gitIsNetwork({ subcommand, args }: { subcommand: string; args: string[] }): boolean {
+	if (subcommand === GIT_DYNAMIC) return true;
 	if (subcommand === "fetch" || subcommand === "pull" || subcommand === "push" || subcommand === "clone" || subcommand === "ls-remote") return true;
 	return subcommand === "remote" && ["update", "show", "set-url"].includes(args[0] ?? "");
 }
@@ -286,6 +298,19 @@ function gitIsNetwork({ subcommand, args }: { subcommand: string; args: string[]
 /** Static tool-name tables: which scope a tool name belongs to. */
 const READ_TOOLS: Record<string, true> = { read: true, search: true, grep: true, find: true, ls: true };
 const EDIT_TOOLS: Record<string, true> = { edit: true, write: true, multiedit: true, multi_edit: true };
+// PRD-018's seven navigation/diagnostics tools open a file for the language
+// server. The name table keeps this module free of the LSP module's Pi tool
+// dependencies; a tool missing here would fall through as `shell:<name>` and
+// lose its read and out-of-root reach.
+const LSP_READ_TOOLS: Record<string, true> = {
+	lsp_definition: true,
+	lsp_references: true,
+	lsp_hover: true,
+	lsp_document_symbols: true,
+	lsp_workspace_symbols: true,
+	lsp_call_hierarchy: true,
+	lsp_diagnostics: true,
+};
 // `bash` is Pi's built-in shell, overridden by `pi-patty-bg-tasks`; `bash_bg` is
 // that package's fire-and-forget form. Both run a `command` and share the
 // classification below — an unclassified tool would reach the catch-all as
@@ -430,10 +455,10 @@ export function pathTokens(command: string): string[] {
  */
 function classifyCommand(command: string, root: string, add: (scope: Scope, target: string) => void): void {
 	add("shell", command);
-	const git = command.includes("git") ? gitInvocation(command) : null;
-	if (git !== null && gitIsDestructive(git)) add("git_destructive", command);
+	const git = command.includes("git") ? gitInvocations(command) : [];
+	if (git.some(gitIsDestructive)) add("git_destructive", command);
 	if (PACKAGE_INSTALL.some((pattern) => pattern.test(command))) add("package_install", command);
-	if (NETWORK_COMMAND.some((pattern) => pattern.test(command)) || (git !== null && gitIsNetwork(git))) add("network", command);
+	if (NETWORK_COMMAND.some((pattern) => pattern.test(command)) || git.some(gitIsNetwork)) add("network", command);
 	for (const token of pathTokens(command)) {
 		if (isDeviceTarget(token)) continue;
 		if (escapesRoot(root, token)) add("external_dir", token);
@@ -458,7 +483,7 @@ export function classifyScopes(call: CallShape, root: string): ClassifiedScope[]
 	const toolName = call.toolName;
 	const input = call.input ?? {};
 
-	if (READ_TOOLS[toolName] || EDIT_TOOLS[toolName]) {
+	if (READ_TOOLS[toolName] || LSP_READ_TOOLS[toolName] || EDIT_TOOLS[toolName]) {
 		const scope: Scope = EDIT_TOOLS[toolName] ? "edit" : "read";
 		const path = pathArg(input);
 		add(scope, path ?? toolName);

@@ -56,6 +56,25 @@ export function messageText(message: AgentMessage): string {
 		.join("\n");
 }
 
+/**
+ * The answer one message gave: its `text` parts, nothing else (PRD-058).
+ * `messageText` is the full record of a message — it renders thinking and tool
+ * calls too — so it is the wrong source where the *answer* is the subject: a
+ * recap persisted with it stored the model's reasoning instead of its reply.
+ */
+export function answerText(message: AgentMessage): string {
+	const content = (message as { content?: unknown }).content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((part) => {
+			const value = part as { type?: string; text?: string };
+			return value.type === "text" && typeof value.text === "string" ? value.text : "";
+		})
+		.filter((text) => text.length > 0)
+		.join("\n");
+}
+
 /** Read-only accounting: no section here recomputes a value another module owns. */
 export function contextReport(surface: CommandSurface, session?: CommandContext["session"]): ContextReport {
 	const messages = surface.host.current().buildSessionContext().messages;

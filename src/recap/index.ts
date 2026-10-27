@@ -26,7 +26,7 @@ import {
 	type RunTelemetry,
 } from "../telemetry/index.js";
 import type { ExecutorClass } from "../compiler/contract.js";
-import { messageText } from "../commands/context.js";
+import { answerText, messageText } from "../commands/context.js";
 import { LEANPI_RECAP_WIDGET_KEY, recapWidget, type RecapWidgetHost } from "../cli/recap-widget.js";
 import { buildRecapBrief } from "./brief.js";
 import { parseRecapResponse } from "./parse.js";
@@ -258,7 +258,9 @@ function latestCompletedTurn(entries: readonly unknown[]): { input: RecapTurnInp
 		const message = entry.message as { role?: unknown } | undefined;
 		if (did === undefined) {
 			if (message?.role !== "assistant" || !isCompletedAssistant(message)) continue;
-			const text = messageText(message as never).trim();
+			// The answer, not the message: `messageText` would make the model's
+			// thinking the `did` (PRD-058).
+			const text = answerText(message as never).trim();
 			if (text.length > 0) {
 				did = text;
 				answeredAt = index;
@@ -266,7 +268,7 @@ function latestCompletedTurn(entries: readonly unknown[]): { input: RecapTurnInp
 			continue;
 		}
 		if (message?.role !== "user") continue;
-		const ask = messageText(message as never).trim();
+		const ask = answerText(message as never).trim();
 		if (ask.length > 0) return { input: { ask, did }, index: answeredAt };
 	}
 	return undefined;
@@ -360,6 +362,11 @@ export function createRecap(deps: RecapDeps): RecapController {
 		},
 
 		async recapTurn(ctx, input) {
+			// One turn, one entry. Both turn paths call this for the same turn, and
+			// the repeat was 56 of 290 persisted entries in the mined sessions
+			// (PRD-058); the identical ask and did are that turn's identity, so the
+			// second call records nothing and buys no second sentence.
+			if (lastTurn !== undefined && lastTurn.ask === input.ask && lastTurn.did === input.did) return undefined;
 			// Persist the turn's ask/did before any generation attempt: a recap
 			// that is off, unavailable or failed must still leave the turn
 			// recoverable on resume or by a later manual `/recap`. External

@@ -107,18 +107,24 @@ function fakePi() {
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
 	const notices: string[] = [];
 	const statuses: Array<string | undefined> = [];
+	// Pi's own level, so `/effort` and a restored pin can be read back.
+	const levels: string[] = [];
 	return {
 		commands,
 		handlers,
 		notices,
 		statuses,
+		levels,
 		pi: {
 			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, handler),
 			registerTool: () => {},
 			registerCommand: (name: string, options: { description?: string; handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, options),
 			registerProvider: () => {},
 			setModel: async () => true,
-			setThinkingLevel: () => {},
+			setThinkingLevel: (level: string) => {
+				levels.push(level);
+			},
+			getThinkingLevel: () => levels.at(-1) ?? "medium",
 			setSessionName: () => {},
 			getSessionName: () => undefined,
 			appendEntry: () => {},
@@ -440,8 +446,25 @@ describe("Manual mode: survives /new and /resume (docs/systems/model-modes.md)",
 });
 
 describe("Manual mode: restart and remember_manual_model (docs/systems/model-modes.md)", () => {
-	it("default false: a pin writes no file, and a fresh activation starts Auto", async () => {
+	it("by default a pin persists to <home>/.leanpi/model.json, and a fresh activation restores Manual", async () => {
 		const { cwd, env } = nativeProject();
+		const { pi, commands, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+		await commands.get("model")?.handler("local:cheap", ctx);
+
+		const pinFile = join(env.HOME as string, ".leanpi", "model.json");
+		expect(existsSync(pinFile), "a hand pick must survive the restart it did not ask for").toBe(true);
+
+		clearLanes();
+		clearRoutePins();
+		const fresh = fakePi();
+		activate(fresh.pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+		expect(routePins().model, "startup must restore the remembered pin").toMatchObject({ backend: "local", model: "cheap" });
+	});
+
+	it("`remember_manual_model: false` keeps a pin session-only: no file, and a fresh activation starts Auto", async () => {
+		const { cwd, env } = nativeProject("remember_manual_model: false\n");
 		const { pi, commands, ctx } = fakePi();
 		clearLanes();
 		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
@@ -454,6 +477,38 @@ describe("Manual mode: restart and remember_manual_model (docs/systems/model-mod
 		const fresh = fakePi();
 		activate(fresh.pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
 		expect(routePins().model).toBeUndefined();
+	});
+
+	it("a hand-picked effort is remembered on its own, and the next start installs it on Pi before the first turn", async () => {
+		const { cwd, env } = nativeProject();
+		const first = fakePi();
+		clearLanes();
+		activate(first.pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+		await first.commands.get("effort")?.handler("high", first.ctx);
+
+		const pinFile = join(env.HOME as string, ".leanpi", "model.json");
+		expect(JSON.parse(readFileSync(pinFile, "utf8"))).toEqual({ effort: "high" });
+
+		clearLanes();
+		clearRoutePins();
+		const fresh = fakePi();
+		activate(fresh.pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+		expect(routePins().effort, "startup must restore the remembered effort").toBe("high");
+		await fresh.handlers.get("session_start")?.({ reason: "startup" }, fresh.ctx);
+		expect(fresh.levels.at(-1), "Pi must hold the restored level, not the model's default").toBe("high");
+	});
+
+	it("`/model auto` returns the model to Auto and leaves the hand-picked effort remembered", async () => {
+		const { cwd, env } = nativeProject();
+		const { pi, commands, ctx } = fakePi();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env });
+		await commands.get("effort")?.handler("high", ctx);
+		await commands.get("model")?.handler("local:cheap", ctx);
+		await commands.get("model")?.handler("auto", ctx);
+
+		expect(routePins().model).toBeUndefined();
+		expect(JSON.parse(readFileSync(join(env.HOME as string, ".leanpi", "model.json"), "utf8"))).toEqual({ effort: "high" });
 	});
 
 	it("true: a pin persists to <home>/.leanpi/model.json, a fresh activation restores Manual, and `/model auto` deletes it", async () => {

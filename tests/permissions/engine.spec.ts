@@ -171,6 +171,49 @@ describe("PRD-017 Phase 1 — classification returns the whole scope set", () =>
 		}
 	});
 
+	it("S3: a later git invocation in a compound command keeps its destructive and network reach", () => {
+		const destructive = "git status; git reset --hard";
+		expect(scopesOf("execute", { command: destructive }, root).sort()).toEqual([`git_destructive:${destructive}`, `shell:${destructive}`]);
+		const network = "git status && git fetch origin";
+		expect(scopesOf("execute", { command: network }, root).sort()).toEqual([`network:${network}`, `shell:${network}`]);
+
+		// The decision, not only the scope set: shell allow does not buy either one.
+		const config = builtinPermissions();
+		config.defaults.shell = "allow";
+		config.defaults.network = "deny";
+		for (const command of [destructive, network]) {
+			const capabilities = classifyScopes({ toolName: "execute", input: { command } }, root).map((entry) => entry.capability);
+			expect(resolveAll(capabilities, config).decision).toBe("deny");
+		}
+
+		// A subcommand the text cannot resolve is refused, not assumed harmless.
+		const dynamic = "git $(printf reset) --hard";
+		expect(scopesOf("execute", { command: dynamic }, root)).toContain(`git_destructive:${dynamic}`);
+
+		// Non-vacuous control: two harmless invocations stay shell alone.
+		expect(scopesOf("execute", { command: "git status && git log --oneline" }, root)).toEqual(["shell:git status && git log --oneline"]);
+	});
+
+	it("classifies LSP file reads as read reach and their out-of-root files as external_dir", () => {
+		const cwd = tempDir("leanpi-perm-lsp-");
+		const outside = tempDir("leanpi-perm-lsp-outside-");
+		const external = join(outside, "external.ts");
+		writeFileSync(external, "export const outsideAudit = 7831;\n");
+
+		const config = builtinPermissions();
+		config.defaults.shell = "allow";
+		config.defaults.read = "deny";
+		config.defaults.external_dir = "deny";
+
+		const hover = classifyScopes({ toolName: "lsp_hover", input: { file: external, line: 1, column: 1 } }, cwd).map((entry) => entry.capability);
+		expect(hover.sort()).toEqual([`external_dir:${external}`, `read:${external}`]);
+		expect(resolveAll(hover, config).decision).toBe("deny");
+
+		// In-root navigation is a plain read; a workspace query reads without a path.
+		expect(scopesOf("lsp_definition", { path: "src/a.ts", line: 1, column: 1 }, cwd)).toEqual(["read:src/a.ts"]);
+		expect(scopesOf("lsp_workspace_symbols", { query: "audit" }, cwd)).toEqual(["read:lsp_workspace_symbols"]);
+	});
+
 	it("AC-4: an MCP tool call is one capability id per server/tool", () => {
 		expect(scopesOf("mcp__fs__write_file", { path: "a.txt" }, root)).toEqual(["mcp:fs/write_file"]);
 		expect(scopesOf("mcp:fs/read_file", { path: "a.txt" }, root)).toEqual(["mcp:fs/read_file"]);

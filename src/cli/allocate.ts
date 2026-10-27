@@ -348,6 +348,9 @@ export async function allocateRoles(
 	ensureSite({
 		id: ALLOCATE_SITE_ID,
 		questions,
+		// The ballot names this machine's discovered models, not user workspace
+		// content: `metadata-only` may send it, or onboarding could not allocate.
+		staticQuestions: true,
 		returnType: questions.map(() => "Choice" as const),
 		// Low, deliberately (§50's table): the answer lands in a config file the
 		// user can read and edit, is printed at every startup, and its fallback is

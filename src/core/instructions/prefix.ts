@@ -63,7 +63,7 @@ export const WORKING_RULES = [
 	"- Surgical. Every changed line traces to the request. Do not improve, reformat or refactor code you were not asked about; match the style already there. Pre-existing dead code: mention it, leave it. Delete only what your own change orphaned.",
 	"- SRP, KISS, DRY, YAGNI. One reason to change per unit; the plain solution over the clever one; one source of truth for a rule; and nothing built for a need the request does not state.",
 	"- Verify. Bug → failing test first. Done only when tests covering your change pass. Changing untested code → write tests first. No check possible → say unverified.",
-	"- Go wide, not long. Every turn re-sends the whole conversation, so when the next commands do not depend on each other's output (reading several files, running the build and the tests, probing two hypotheses), issue them as parallel tool calls in the same turn instead of one per turn.",
+	"- Go wide, not long. Every turn re-sends the whole conversation, so gather first: a question that needs several lookups (where N symbols live, which files mention X, build and tests) goes out as ONE message with three to six independent read-only calls. An empty search costs nothing next to a round trip; serialize only when the next command needs the previous output.",
 ].join("\n");
 
 export const OUTPUT_STYLE = [
@@ -76,9 +76,10 @@ export const OUTPUT_STYLE = [
 /**
  * The one instruction the `minimal` variant keeps: what the tools are, and how
  * to finish. Also the tool protocol every variant carries, so it is rendered
- * from one place.
+ * from one place. The bash cwd is stated here because 50% of mined bash calls
+ * opened with `cd <cwd> &&`, a move the tool already made (PRD-058).
  */
-export const TOOL_PROTOCOL = `Tool protocol: ${BASELINE_TOOL_NAMES.join(", ")}. Read before editing; verify with the project's own runner.`;
+export const TOOL_PROTOCOL = `Tool protocol: ${BASELINE_TOOL_NAMES.join(", ")}. Bash already runs in the project cwd — no \`cd\` into it. Read before editing; verify with the project's own runner.`;
 
 /**
  * The STATIC prefix for the configured variant (PRD-037): `full` is the marker

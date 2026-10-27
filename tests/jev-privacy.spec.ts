@@ -12,6 +12,8 @@ import {
 	readDecisions,
 	redactSecrets,
 	registerSite,
+	semanticQuestion,
+	type GoalClause,
 	type JevQuestion,
 	type JevResult,
 } from "../src/index.js";
@@ -107,6 +109,35 @@ describe("PRD-002 Phase 4 — privacy modes", () => {
 		expect(sent.files[0]!.content).toMatchObject({ kind: "text", chars: FILE_BODY.length });
 		expect(sent.command).toMatchObject({ kind: "text", chars: expect.any(Number) });
 		expect(raw).not.toContain("src/select.ts");
+	});
+
+	it("AC-8: metadata-only keeps dynamic question text and identifiers out of the request", async () => {
+		const clause: GoalClause = { id: "semantic:0", text: "CONFIDENTIAL-AUDIT-GOAL-7831", kind: "semantic", kinds: [], criterion: null };
+		registerSite({
+			id: "fixture.semantic",
+			// The site's declared template is the static question surface.
+			questions: [semanticQuestion({ ...clause, text: "<clause>" })],
+			returnType: ["Choice"],
+			consequence: "normal",
+			telemetryTag: "fixture.semantic",
+			fallback: ({ questions }) =>
+				questions.map(
+					(question): JevResult => ({ kind: "Choice", questionId: question.id, choice: "no", probabilities: {}, confidence: 1 }),
+				),
+		});
+
+		const client = createJevClient({ config: configFor(cwd, stub.url, "metadata-only"), cwd, salt: "fixed-salt" });
+		const question = semanticQuestion(clause);
+		const results = await client.ask("fixture.semantic", [question], state());
+
+		const raw = stub.raw[0]!;
+		expect(raw).not.toContain("CONFIDENTIAL-AUDIT-GOAL-7831");
+		// Question ids can name paths (`test:<path>` in exploration), so they are opaque too.
+		expect(Object.keys(stub.requests[0]!.body.questions as Record<string, unknown>)).not.toContain(question.id);
+		// The static template still says what the service is answering.
+		expect(raw).toContain("Given this evidence, is the goal clause");
+		// The answer still maps back to the caller's question and choice.
+		expect(results[0]).toMatchObject({ questionId: question.id, choice: "yes" });
 	});
 
 	it("AC-9: redacted keeps prose, removes secret shapes, and /jev mode switches without a restart", async () => {

@@ -21,7 +21,7 @@ import { launchPlan, parseLeanPiFlags } from "../src/cli/launch.js";
 import { statusLine } from "../src/cli/statusline.js";
 import { detectVendors, probeVendor } from "../src/backends/subscriptions.js";
 import { openPrdLane } from "../src/prd/dispatch.js";
-import { activate, clearLanes } from "../src/index.js";
+import { activate, clearLanes, clearRoutePins, routePins } from "../src/index.js";
 import { loadConfig } from "../src/core/config.js";
 import { startStubJev } from "./helpers/stub-jev.js";
 
@@ -647,7 +647,9 @@ describe("the status line", () => {
 		// line names no internal lane: "Executor lane" is a word the operator
 		// cannot act on. The provider follows the model because one model id is
 		// served by several of them at different prices.
-		expect(line).toBe("opus (1m)  ·  claude  ·  Auto  ·  thinking: medium  ·  normal task");
+		// The default band says nothing an operator can act on, so it has no chip;
+		// only `simple task` and `hard task` explain an unusual model or effort.
+		expect(line).toBe("opus (1m)  ·  claude  ·  Auto  ·  thinking: medium");
 	});
 
 	it("colours the model and the effort only when asked, so the plain line stays plain", () => {
@@ -698,6 +700,12 @@ describe("the status line", () => {
 		expect(manual).toContain("Manual");
 		expect(manual).toContain("\u001b[38;5;196mManual\u001b[0m");
 		expect(manual).not.toContain("Auto");
+		// A level the operator picked by hand is the same kind of override: the
+		// router no longer decides how hard to think, so the chip cannot say Auto.
+		const effortPicked = statusLine({ config: { backends, models } as never, contract, effort: "high", manual: true });
+		expect(effortPicked).toContain("Manual");
+		expect(effortPicked).toContain("thinking: high");
+		expect(effortPicked).not.toContain("Auto");
 		expect(manual).toContain("sonnet");
 	});
 
@@ -982,6 +990,58 @@ describe("the status line reaches the footer", () => {
 		clearLanes();
 	});
 
+
+	it("does not pin the level LeanPi installs for the turn", async () => {
+		// Pi emits `thinking_level_select` for its own configured sets as well as
+		// the operator's. Pinning the compiled effort would freeze thinking at
+		// whichever level the first turn happened to classify, and say `Manual`
+		// for a choice nobody made.
+		const { cwd, home, env } = machine({ vendors: [] });
+		writeFileSync(
+			join(cwd, "leanpi.config.yaml"),
+			[
+				"backends:",
+				"  local: { type: native, baseUrl: https://example.test, apiKey: LOCAL_KEY }",
+				"models:",
+				"  quick: { backend: local, model: cheap }",
+				"  balanced: { backend: local, model: cheap }",
+				"  strong: { backend: local, model: cheap }",
+				"jev:",
+				"  mode: disabled",
+				"",
+			].join("\n"),
+		);
+		const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
+		let level = "medium";
+		const pi = {
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, handler),
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerProvider: () => {},
+			setModel: async () => true,
+			setThinkingLevel: (next: string) => {
+				level = next;
+			},
+			getThinkingLevel: () => level,
+		};
+		clearLanes();
+		// A previous test's pick is session state; this turn starts from Auto.
+		clearRoutePins();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+		const turnCtx = {
+			model: { provider: "local", id: "cheap" },
+			modelRegistry: { find: () => ({ provider: "local", id: "cheap" }) },
+			getContextUsage: () => ({ tokens: 10, contextWindow: 100, percent: 10 }),
+			ui: { setStatus: () => {} },
+		};
+		await handlers.get("before_agent_start")!({ messageType: "user", prompt: "rename the helper", systemPrompt: "you are an assistant" }, turnCtx);
+
+		// The event Pi would emit for the level LeanPi just installed.
+		await handlers.get("thinking_level_select")!({ level, previousLevel: "medium" }, turnCtx);
+		expect(routePins().effort).toBeUndefined();
+		clearRoutePins();
+		clearLanes();
+	});
 
 	it("is installed by the turn handler, naming the model Pi was actually given", async () => {
 		// The renderer had tests; nothing asserted the extension ever calls

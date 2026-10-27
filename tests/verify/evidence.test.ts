@@ -5,6 +5,7 @@
  * or the post-edit stale assertion would pass vacuously; and a claim must be
  * absent from every record field, not merely present under `assertions`.
  */
+import { execFileSync } from "node:child_process";
 import { utimesSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,7 +14,7 @@ import { aggregate } from "../../src/verify/aggregate.js";
 import { EvidenceStore } from "../../src/verify/evidence.js";
 import { workspaceHash } from "../../src/verify/hash.js";
 import { verifyTask } from "../../src/verify/index.js";
-import { contractOf, recordingExec, tempWorkspace, writeFiles } from "./support.js";
+import { contractOf, gitInit, recordingExec, tempWorkspace, writeFiles } from "./support.js";
 
 describe("workspaceHash", () => {
 	it("is deterministic and content-based, not mtime-based", () => {
@@ -33,6 +34,41 @@ describe("workspaceHash", () => {
 
 		// A missing path is part of the hashed state, never a thrown error.
 		expect(workspaceHash(root, ["src/absent.ts"])).toMatch(/^[0-9a-f]{64}$/);
+	});
+
+	it("changes when a clean tracked tree changes, even with no touched paths", () => {
+		const root = tempWorkspace();
+		gitInit(root);
+		const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
+		git("config", "user.email", "audit@example.com");
+		git("config", "user.name", "Audit");
+		writeFiles(root, { "app.js": "export const audit = () => true;\n" });
+		git("add", "-A");
+		git("commit", "-q", "-m", "source");
+		const before = workspaceHash(root);
+		expect(workspaceHash(root)).toBe(before);
+
+		// Clean before and after: no dirty paths and no touched paths, only the
+		// tracked tree moved to different source bytes.
+		writeFiles(root, { "app.js": "export const audit = () => { throw new Error('broken'); };\n" });
+		git("add", "-A");
+		git("commit", "-q", "-m", "change");
+		const after = workspaceHash(root);
+		expect(after).not.toBe(before);
+
+		// The old measurement is not fresh against the new source.
+		const store = new EvidenceStore();
+		const recorded = store.record({ kind: "typecheck", status: "pass", exitCode: 0, artifactRef: null, criterion: [], scope: "" }, before);
+		expect(store.view(after).records).toHaveLength(0);
+		expect(store.view(after).staleRecords).toEqual([recorded]);
+	});
+
+	it("changes when git cannot see the workspace and no path was named", () => {
+		const root = tempWorkspace();
+		writeFiles(root, { "app.js": "one\n" });
+		const before = workspaceHash(root);
+		writeFiles(root, { "app.js": "two\n" });
+		expect(workspaceHash(root)).not.toBe(before);
 	});
 });
 
