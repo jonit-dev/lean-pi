@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { activate } from "../../src/index.js";
 import { clearLanes } from "../../src/commands/session.js";
 import { loadConfig } from "../../src/core/config.js";
-import { createGoalStore, GOAL_CONTINUE_PREFIX, goalContinuation, newGoalState, type SettledTurn } from "../../src/goal/index.js";
+import { createGoalStore, GOAL_CONTINUE_PREFIX, GOAL_VERIFY_PREFIX, goalContinuation, newGoalState, type SettledTurn } from "../../src/goal/index.js";
 import { fixtureCwd } from "./helpers.js";
 
 const SESSION = "s1";
@@ -40,10 +40,20 @@ describe("goal continuation on a settled turn", () => {
 		expect(goalContinuation(store, SESSION, turn(), () => 0)).toBeUndefined();
 	});
 
-	it("stops on a GOAL_MET or BLOCKED last line", () => {
+	it("challenges a first GOAL_MET and stops only when the verification turn repeats it", () => {
 		const met = setup();
-		expect(goalContinuation(met, SESSION, turn({ answer: "All phases merged.\n\n**GOAL_MET**" }), () => 0)).toMatchObject({ stopped: expect.stringMatching(/^GOAL_MET/) });
+		const claim = goalContinuation(met, SESSION, turn({ answer: "Remaining items are your laptop runs and your deploy.\n\nGOAL_MET" }), () => 0);
+		expect(claim && "continue" in claim && claim.continue.startsWith(GOAL_VERIFY_PREFIX)).toBe(true);
+		expect(met.load()?.active).toBe(true);
+		const reopened = goalContinuation(met, SESSION, turn({ ask: (claim as { continue: string }).continue, answer: "PRD 06 is still open. Starting it." }), () => 0);
+		expect(reopened && "continue" in reopened).toBe(true);
+		expect(met.load()?.active).toBe(true);
+		const verify = goalContinuation(met, SESSION, turn({ answer: "done\nGOAL_MET" }), () => 0) as { continue: string };
+		expect(goalContinuation(met, SESSION, turn({ ask: verify.continue, usedTools: false, answer: "Every part checked.\n\n**GOAL_MET**" }), () => 0)).toMatchObject({ stopped: expect.stringMatching(/^GOAL_MET/) });
 		expect(met.load()?.active).toBe(false);
+	});
+
+	it("stops on a BLOCKED last line", () => {
 		const blocked = setup();
 		expect(goalContinuation(blocked, SESSION, turn({ answer: "x\nBLOCKED: needs the npm token" }), () => 0)).toEqual({ stopped: "BLOCKED: needs the npm token" });
 		expect(blocked.load()?.active).toBe(false);

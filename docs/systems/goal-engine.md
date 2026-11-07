@@ -28,6 +28,15 @@ from an executor's self-report. The site's declared fallback is
 `insufficient_evidence` — a disabled or unreachable JEV can never fabricate
 completion.
 
+## Session continuation
+
+In a live session, `goalContinuation()` in `src/goal/continue.ts` runs on each
+`agent_settled` event. It sends the next turn while the goal is active. A first
+`GOAL_MET` line is only a claim: it starts a verify turn (`GOAL_VERIFY_PREFIX`)
+that makes the model list each part of the goal with its evidence. The goal stops
+on a `GOAL_MET` that answers the verify turn, a `BLOCKED: <reason>` line, a cap,
+`/goal stop`, or a continuation turn with no tool call.
+
 ## Stop precedence
 
 `STOP_PRECEDENCE` in `src/goal/limits.ts` orders the stops (user stop, budget,
