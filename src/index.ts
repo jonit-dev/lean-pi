@@ -65,7 +65,7 @@ import {
 	type TodoCarrier,
 	type TodoGate,
 } from "./todo/index.js";
-import { createGoalStore, goalTextSource, isRunningHere, registerGoalCommands, sessionCost } from "./goal/index.js";
+import { createGoalStore, goalContinuation, goalTextSource, isRunningHere, registerGoalCommands, sessionCost } from "./goal/index.js";
 import { registerReviewCommand, type ReviewCommandDeps } from "./review/index.js";
 import { createLspProvider } from "./lsp/index.js";
 import { LSP_TOOL_NAMES, registerLspTools } from "./lsp/tools.js";
@@ -1133,7 +1133,7 @@ function installTurnHooks(
 	});
 
 	// A fallback may emit two agent_end events; bill and classify the settled turn once.
-	pi.on("agent_settled", (_event, ctx) => {
+	pi.on("agent_settled", (event, ctx) => {
 		const messages = settledMessages;
 		settledMessages = [];
 		fallbackNotice = undefined;
@@ -1174,6 +1174,21 @@ function installTurnHooks(
 		const reversed = [...messages].reverse();
 		const lastUser = reversed.find((message) => message.role === "user");
 		const lastAssistant = reversed.find((message) => message.role === "assistant");
+		// A running `/goal` does not end because the model stopped: the next turn
+		// starts here, after Pi's retries and queued follow-ups have all run.
+		const goalNext = goalContinuation(
+			createGoalStore(deps.cwd),
+			deps.sessionId(),
+			{
+				completed: !event.aborted && lastAssistant !== undefined && isCompletedAssistant(lastAssistant),
+				usedTools: messages.some((message) => message.role === "assistant" && Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall")),
+				ask: lastUser ? messageText(lastUser) : undefined,
+				answer: lastAssistant ? answerText(lastAssistant) : "",
+			},
+			() => sessionCost(deps.cwd, deps.sessionId(), resolveCostConfig(deps.config)),
+		);
+		if (goalNext && "stopped" in goalNext) ctx.ui.notify(`goal stopped — ${goalNext.stopped}`, "info");
+		if (goalNext && "continue" in goalNext) pi.sendUserMessage(goalNext.continue);
 		if (!lastUser || !lastAssistant || !isCompletedAssistant(lastAssistant) || routePins().model) return;
 		// Fire-and-forget: the next input invalidates a late recap. `did` is the
 		// answer only — `messageText` would persist the model's reasoning (PRD-058).
@@ -1569,7 +1584,6 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		config,
 		jev,
 		artifacts,
-		todos: todoCarrier,
 		sessionId: manager.getSessionId(),
 		skills: { records: scan, control: skillControl },
 		env,

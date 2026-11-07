@@ -19,13 +19,12 @@ import type { WorktreePermissionRequest } from "../runtime/index.js";
 import type { SkillControl, SkillRecord } from "../capabilities/skills.js";
 import { createFileSearch } from "../exploration/gather.js";
 import { explore, type ContextSelection } from "../exploration/governor.js";
-import { createGoalStore, evaluateGoal, isRunningHere, prdGoalSource } from "../goal/index.js";
+import { createGoalStore, isRunningHere } from "../goal/index.js";
 import { openPrdLane } from "../prd/dispatch.js";
 import { readPrdState } from "../prd/state.js";
 import { evaluateProofGate } from "../proof/gate.js";
 import { criteriaOf } from "../proof/packet.js";
 import { scoutTask } from "../scout/index.js";
-import { itemsOf, remainingWork, type TodoCarrier } from "../todo/index.js";
 import { EvidenceStore } from "../verify/evidence.js";
 import { workspaceHash } from "../verify/hash.js";
 import { registerOwnedLanes, type Lane, type TurnContext, type TurnInput } from "./session.js";
@@ -61,9 +60,7 @@ export interface TurnLaneDeps {
 	artifacts?: ExecutorDeps["artifacts"];
 	/** PRD-005's registry and enable/pin state, for the disclosure a native turn runs itself. */
 	skills?: { records: () => SkillRecord[]; control: SkillControl };
-	/** PRD-025's list, the "useful work remains" input PRD-013's boundary reads. */
-	todos?: TodoCarrier;
-	/** PRD-015's run identity, for the goal boundary's cost read. */
+	/** PRD-015's run identity, for whether a goal runs in this session. */
 	sessionId?: string;
 	/** Test seam: replaces the PRD-008 backend invocation. */
 	worker?: ExecutorDeps["worker"];
@@ -131,7 +128,7 @@ export function compilerLane(deps: TurnLaneDeps): Lane {
 			// PRD-048 Phase 2: a `/model` pin is Manual — plain chat with the pinned
 			// model, not LeanPi's pipeline. No contract is compiled, so every lane
 			// that gates on `context.contract` (JEV, tool surface, verify, review,
-			// the proof gate, the goal boundary) does nothing this turn.
+			// the proof gate) does nothing this turn.
 			if (routePins().model) return;
 			const packet = scoutTask(deps.cwd, turn.text);
 			// PRD-023's seed: the executor lane's pre-generation hook explores from
@@ -278,7 +275,7 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 		},
 	};
 
-	/** The executor, the proof gate and the goal boundary, all in `workCwd`. */
+	/** The executor and the proof gate, both in `workCwd`. */
 	async function executeAndGate(context: TurnContext, turn: TurnInput, workCwd: string): Promise<void> {
 			const contract = context.contract;
 			if (!contract || deps.execute === false) return;
@@ -380,24 +377,6 @@ export function executorLane(deps: TurnLaneDeps): Lane {
 						}
 					: {}),
 			});
-			// PRD-013's boundary, after the executor's work: a session with no active
-			// goal pays nothing, and one with a goal gets the stop condition decided
-			// from the evidence this turn actually produced.
-			const goals = createGoalStore(deps.cwd);
-			const goal = goals.load();
-			if (goal?.active && context.executor) {
-				context.goal = await evaluateGoal(goal, {
-					workspaceHash: context.executor.workspaceHash ?? workspaceHash(workCwd, context.executor.changedFiles),
-					records: context.executor.evidence,
-					config: deps.config,
-					cwd: deps.cwd,
-					...(deps.jev ? { jev: deps.jev } : {}),
-					...(deps.sessionId ? { sessionId: deps.sessionId } : {}),
-					...(deps.todos ? { todos: { remainingWork: () => remainingWork(itemsOf(deps.todos!)) } } : {}),
-					prd: prdGoalSource(() => readPrdState(deps.cwd)),
-					goals,
-				});
-			}
 	}
 }
 

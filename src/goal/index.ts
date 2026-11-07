@@ -60,3 +60,4 @@ export {
 	type RemainingWorkSource,
 } from "./boundary.js";
 export { createGoalHandler, registerGoalCommands, type GoalCommandDeps } from "./command.js";
+export { GOAL_CONTINUE_PREFIX, goalContinuation, type GoalNext, type SettledTurn } from "./continue.js";
