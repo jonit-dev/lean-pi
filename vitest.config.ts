@@ -7,10 +7,14 @@ import { defineConfig } from "vitest/config";
  * `tsc`'s output runs under Node ESM (`pi --extension ./dist/index.js`). Vitest
  * resolves the same specifier against the `.ts` source here.
  */
+const PI_AI_HOST = resolve(import.meta.dirname, "tests/setup/pi-ai-host.ts");
+
 const tsSpecifierPlugin = {
 	name: "leanpi-ts-specifier",
 	enforce: "pre" as const,
 	resolveId(source: string, importer?: string) {
+		// A bundled extension package gets pi-ai the way Pi hands it to extensions.
+		if (source === "@earendil-works/pi-ai" && importer?.includes("node_modules") && !importer.includes("/node_modules/@earendil-works/")) return PI_AI_HOST;
 		if (!importer || !source.startsWith(".") || !source.endsWith(".js")) return null;
 		if (importer.includes("node_modules")) return null;
 		const candidate = resolve(dirname(importer), `${source.slice(0, -3)}.ts`);

@@ -69,11 +69,51 @@ function reportEmptyOutput(tool: BackgroundTool): BackgroundTool {
 	};
 }
 
+type InputHandler = (event: unknown, ctx: object) => Promise<{ action?: string } | undefined>;
+
+/**
+ * Typing while a foreground `bash` runs backgrounds it — the package keeps that.
+ * It then aborts the turn and re-sends the text as a follow-up. When the re-send
+ * reaches Pi before the aborted run settles, Pi queues it behind an abort it never
+ * drains: the next request fails at once ("This operation was aborted") and the
+ * agent sits idle with the message lost. The package's own Ctrl+B path refuses to
+ * abort for this reason. Backgrounding already makes `bash` return, so the abort
+ * and the re-send are dropped and the input goes back to Pi unchanged, which
+ * delivers it as the steer the user typed. The handler is synchronous up to the
+ * re-send, so `steering` covers exactly that call.
+ */
+function steerWithoutAbort(handler: InputHandler, steering: { on: boolean }): InputHandler {
+	return async (event, ctx) => {
+		const noAbort = new Proxy(ctx, {
+			get: (target, property) => {
+				if (property === "abort") return () => undefined;
+				const value = Reflect.get(target, property, target);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		});
+		steering.on = true;
+		let pending: ReturnType<InputHandler>;
+		try {
+			pending = handler(event, noAbort);
+		} finally {
+			steering.on = false;
+		}
+		const result = await pending;
+		return result?.action === "handled" ? { action: "continue" } : result;
+	};
+}
+
 export function backgroundTasksAdapter(bundled: (pi: BackgroundPi) => void): (pi: BackgroundPi) => void {
 	return (pi: BackgroundPi) => {
 		let bash: BackgroundTool | undefined;
+		const steering = { on: false };
 		const proxy = new Proxy(pi, {
 			get(target, property) {
+				if (property === "on") {
+					return (event: string, handler: InputHandler) =>
+						(target.on as (event: string, handler: InputHandler) => void)(event, event === "input" ? steerWithoutAbort(handler, steering) : handler);
+				}
+				if (property === "sendUserMessage" && steering.on) return () => undefined;
 				if (property === "registerTool") {
 					return (tool: BackgroundTool) => {
 						if (tool.name === "bash") {

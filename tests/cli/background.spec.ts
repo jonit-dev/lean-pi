@@ -91,3 +91,47 @@ describe("the backgrounding bash under the compact UI", () => {
 		expect(text.split("\n").filter((line) => line.trim() !== "")).toHaveLength(1);
 	}, 30_000);
 });
+
+/**
+ * Typing while a foreground `bash` runs moves it to the background. The package
+ * then aborted the turn and re-sent the text as a follow-up; when that follow-up
+ * reached Pi before the aborted run settled, Pi queued it behind an abort it never
+ * drains, and the agent sat idle with the message lost (46 mined sessions: the
+ * next request failed in 0 ms with "This operation was aborted"). The adapter
+ * keeps the backgrounding and hands the typed text back to Pi as-is, so Pi
+ * delivers it as the steer the user sent, after the "backgrounded" result.
+ */
+describe("typing while a foreground bash runs", () => {
+	it("backgrounds the command without aborting the turn or re-sending the text", async () => {
+		const bundled = (await import("pi-patty-bg-tasks/index.ts")).default as unknown as (pi: BackgroundPi) => void;
+		const tools: BundledTool[] = [];
+		const handlers: Record<string, Array<(event: unknown, ctx: unknown) => Promise<unknown>>> = {};
+		const resent: unknown[] = [];
+		const raw: Record<string, unknown> = {
+			registerTool: (tool: BundledTool) => void tools.push(tool),
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => void (handlers[event] ??= []).push(handler),
+			sendUserMessage: (...args: unknown[]) => void resent.push(args),
+		};
+		const pi = new Proxy(raw, { get: (target, key: string) => target[key] ?? (() => undefined) });
+		backgroundTasksAdapter(bundled)(pi as unknown as BackgroundPi);
+		for (const start of handlers.session_start ?? []) await start({}, { sessionManager: { getEntries: () => [] } });
+		const bash = tools.filter((tool) => tool.name === "bash").at(-1)!;
+
+		let aborted = false;
+		const theme = { fg: (_key: string, text: string) => text, bold: (text: string) => text };
+		const ui = new Proxy({ theme } as Record<string, unknown>, { get: (target, key: string) => target[key] ?? (() => undefined) });
+		const ctx = { cwd: process.cwd(), hasUI: true, ui, abort: () => void (aborted = true), isIdle: () => false, hasPendingMessages: () => false };
+		const running = bash.execute!("call-1", { command: "node -e \"setTimeout(() => {}, 30000)\"" }, undefined, undefined, ctx);
+		await new Promise((resolve) => setTimeout(resolve, 2_500));
+
+		const results = await Promise.all((handlers.input ?? []).map((handler) => handler({ text: "ETA?", source: "interactive" }, ctx)));
+		const result = await running;
+
+		expect(result.content?.[0]?.text).toMatch(/^Process backgrounded as /);
+		expect(aborted).toBe(false);
+		expect(resent).toEqual([]);
+		expect(results).toEqual([{ action: "continue" }]);
+		const pid = /PID: (\d+)/.exec(result.content?.[0]?.text ?? "")?.[1];
+		if (pid) process.kill(-Number(pid), "SIGTERM");
+	}, 30_000);
+});
