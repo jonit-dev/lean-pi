@@ -55,6 +55,7 @@ import {
 	type RunVerdict,
 } from "./telemetry/index.js";
 import { createArtifactStore, type ArtifactStore } from "./context/artifacts.js";
+import { dropRefusedImages } from "./context/image-refusal.js";
 import type { WorkingStateSources } from "./context/working-state.js";
 import { reduceToolOutput } from "./rtk/index.js";
 import {
@@ -1112,6 +1113,8 @@ function installTurnHooks(
 	});
 
 	pi.on("agent_before_settle", async (event, ctx) => {
+		const unblocked = dropRefusedImages(event, ctx);
+		if (unblocked) return unblocked;
 		const run = pendingRun;
 		if (!run) return;
 		// Judged here, after Pi's own auto-retry, not per attempt in `agent_end`: a
