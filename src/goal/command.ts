@@ -47,10 +47,10 @@ export function createGoalHandler(deps: GoalCommandDeps): CommandHandler {
 
 		if (parsed.stop) {
 			const goal = store.load();
-			if (!goal || !goal.active) return { ok: false, text: "no active goal to stop" };
+			if (!goal || (!goal.active && !goal.blocked)) return { ok: false, text: "no active goal to stop" };
 			// A goal left active by an earlier session is still stoppable — clearing
 			// the record is exactly how a user gets rid of one they no longer want.
-			store.save({ ...goal, active: false });
+			store.save({ ...goal, active: false, blocked: false });
 			return { ok: true, text: `USER_STOPPED: ${formatGoal({ ...goal, active: false }, costSoFar())}` };
 		}
 

@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { activate } from "../../src/index.js";
 import { clearLanes } from "../../src/commands/session.js";
 import { loadConfig } from "../../src/core/config.js";
-import { createGoalStore, GOAL_CONTINUE_PREFIX, GOAL_VERIFY_PREFIX, goalContinuation, newGoalState, type SettledTurn } from "../../src/goal/index.js";
+import { createGoalHandler, createGoalStore, GOAL_BLOCKED_PREFIX, GOAL_CONTINUE_PREFIX, GOAL_VERIFY_PREFIX, goalContinuation, newGoalState, type SettledTurn } from "../../src/goal/index.js";
 import { fixtureCwd } from "./helpers.js";
 
 const SESSION = "s1";
@@ -53,10 +53,33 @@ describe("goal continuation on a settled turn", () => {
 		expect(met.load()?.active).toBe(false);
 	});
 
-	it("stops on a BLOCKED last line", () => {
+	it("challenges a first BLOCKED and waits for the user only when the check turn repeats it", () => {
 		const blocked = setup();
-		expect(goalContinuation(blocked, SESSION, turn({ answer: "x\nBLOCKED: needs the npm token" }), () => 0)).toEqual({ stopped: "BLOCKED: needs the npm token" });
-		expect(blocked.load()?.active).toBe(false);
+		// The live-studio roadmap stopped here with PRD-005 and PRD-010 still open.
+		const claim = goalContinuation(blocked, SESSION, turn({ answer: "x\nBLOCKED: PRD-003 needs João's decision" }), () => 0);
+		expect(claim && "continue" in claim && claim.continue.startsWith(GOAL_BLOCKED_PREFIX)).toBe(true);
+		expect(blocked.load()?.active).toBe(true);
+		const ask = (claim as { continue: string }).continue;
+		expect(goalContinuation(blocked, SESSION, turn({ ask, answer: "nothing else can move\nBLOCKED: needs the npm token" }), () => 0)).toMatchObject({ stopped: expect.stringMatching(/^BLOCKED: needs the npm token/) });
+		expect(blocked.load()).toMatchObject({ active: false, blocked: true });
+	});
+
+	it("resumes a goal blocked on the user when the user answers in the same session", () => {
+		const store = setup();
+		store.save({ ...store.load()!, active: false, blocked: true });
+		expect(goalContinuation(store, "other", turn({ ask: "keep going" }), () => 0)).toBeUndefined();
+		const next = goalContinuation(store, SESSION, turn({ ask: "keep going", answer: "GOAL_MET — no. PRD-003 onward remain." }), () => 0);
+		expect(next && "continue" in next && next.continue.startsWith(GOAL_CONTINUE_PREFIX)).toBe(true);
+		expect(store.load()).toMatchObject({ active: true });
+		expect(store.load()?.blocked).toBeUndefined();
+	});
+
+	it("lets /goal stop drop a goal that waits on the user", async () => {
+		const store = setup();
+		store.save({ ...store.load()!, active: false, blocked: true });
+		const result = await createGoalHandler({ cwd: "", store, sessionId: SESSION, costSoFar: () => 0 })("stop", { cwd: "" } as never);
+		expect(result.ok).toBe(true);
+		expect(goalContinuation(store, SESSION, turn({ ask: "hi" }), () => 0)).toBeUndefined();
 	});
 
 	it("does not stop on a marker that is not the last line", () => {

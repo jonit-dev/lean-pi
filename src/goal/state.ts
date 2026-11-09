@@ -36,6 +36,8 @@ export interface GoalState {
 	started_at: string;
 	turns_used: number;
 	session_id?: string;
+	/** Stopped on a confirmed `BLOCKED`: the user's next message in this session resumes it. */
+	blocked?: boolean;
 }
 
 export const GOAL_STATE_PATH_DEFAULT = ".leanpi/goal.json";
@@ -83,6 +85,7 @@ function toGoalState(raw: unknown): GoalState | null {
 		started_at: record.started_at,
 		turns_used: record.turns_used,
 		...(typeof record.session_id === "string" ? { session_id: record.session_id } : {}),
+		...(record.blocked === true ? { blocked: true } : {}),
 	};
 }
 
