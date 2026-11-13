@@ -14,7 +14,8 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SAFETY_LEVELS, isSafetyLevel, type SafetyLevel } from "../permissions/rules.js";
-import type { JevProvider } from "../core/types.js";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { isThinkingLevel, type JevProvider } from "../core/types.js";
 
 export interface LaunchPlan {
 	/** Pi's own CLI entry point, resolved out of this package's dependency. */
@@ -449,8 +450,28 @@ export function launchEnv(flags: LeanPiFlags, jevWarned: boolean, base: NodeJS.P
 		...(flags.provider === undefined ? {} : { LEANPI_LAYAY_PROVIDER: flags.provider }),
 		...(jevWarned ? { LEANPI_JEV_WARNED: "1" } : {}),
 		...(flags.safety === undefined ? {} : { LEANPI_SAFETY: flags.safety }),
+		...(explicitThinkingLevel(flags.rest) === undefined ? {} : { LEANPI_THINKING: explicitThinkingLevel(flags.rest) }),
 		...(sourceCheckout(root) ? {} : { PI_SKIP_VERSION_CHECK: "1" }),
 	};
+}
+
+/**
+ * The thinking level the operator named on the command line, read as Pi reads
+ * it: `--thinking <level>` wins over a `--model <ref>:<level>` suffix. The
+ * session treats it as a hand pick (`LEANPI_THINKING`), so the compiled effort
+ * never lowers it.
+ */
+export function explicitThinkingLevel(argv: readonly string[]): ThinkingLevel | undefined {
+	let fromFlag: string | undefined;
+	let fromModel: string | undefined;
+	for (let index = 0; index < argv.length; index += 1) {
+		const argument = argv[index] as string;
+		if (argument === "--thinking") fromFlag = argv[index + 1];
+		const model = argument === "--model" || argument === "-m" ? argv[index + 1] : argument.startsWith("--model=") ? argument.slice("--model=".length) : undefined;
+		if (model?.includes(":")) fromModel = model.slice(model.lastIndexOf(":") + 1);
+	}
+	const level = fromFlag ?? fromModel;
+	return isThinkingLevel(level) ? level : undefined;
 }
 
 export interface UpdateCheckEnv {

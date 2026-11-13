@@ -102,7 +102,7 @@ import { defaultLayaDeps, ensureLayaRuntime, layaProvider, layaStatus } from "./
 import { typesafeProvider, type ControlPlaneProvider } from "./jev/provider.js";
 import { createDecisionLog, decisionLogPath } from "./jev/log.js";
 import type { CredentialEnv } from "./jev/credentials.js";
-import { isModelRole, type BackendRef, type JevProvider, type LeanPiConfig, type ModelRole } from "./core/types.js";
+import { isModelRole, isThinkingLevel, type BackendRef, type JevProvider, type LeanPiConfig, type ModelRole } from "./core/types.js";
 import { traceChildStartup } from "./cli/startup-trace.js";
 import { SUBAGENT_ACTIVE_TOOL_NAMES, SUBAGENT_PARENT_TOOL_NAMES, prepareSubagents, subagentsFactory, type CapturedLimit } from "./subagents/index.js";
 import { registerSubagentRouting } from "./subagents/route.js";
@@ -563,6 +563,25 @@ function registerEffortAlias(pi: ExtensionAPI, onPick: (level: ThinkingLevel, ct
 	});
 }
 
+/** Whether Pi's clamp of a hand-picked level was already reported. */
+let clampReported = false;
+
+/**
+ * Install the operator's hand-picked level. Pi clamps a level the model cannot
+ * think at; that is fine, but the operator asked for this one, so it is said
+ * once rather than silently run lower.
+ */
+function installEffortPin(pi: Pick<ExtensionAPI, "getThinkingLevel" | "setThinkingLevel">, level: ThinkingLevel): void {
+	const before = pi.getThinkingLevel();
+	pi.setThinkingLevel(level);
+	const after = pi.getThinkingLevel();
+	noteInstalledThinkingLevel(before, after);
+	if (after !== level && !clampReported) {
+		clampReported = true;
+		process.stderr.write(`leanpi: the session model cannot think at "${level}"; Pi runs it at "${after}"\n`);
+	}
+}
+
 /**
  * Session-lifecycle hooks (F7): `session_start` → `session_shutdown`, in
  * registration order. Extracted from `activate()` with no behavior change;
@@ -636,11 +655,7 @@ function installSessionHooks(
 		// to the model's own default — so the first turn already thinks as the
 		// operator chose. The marker keeps that install from reading as a new pick.
 		const effortPin = routePins().effort;
-		if (effortPin !== undefined) {
-			const before = pi.getThinkingLevel();
-			pi.setThinkingLevel(effortPin);
-			noteInstalledThinkingLevel(before, pi.getThinkingLevel());
-		}
+		if (effortPin !== undefined) installEffortPin(pi, effortPin);
 		// An effort pin alone is Manual too: the model still routes, the level does not.
 		if (manualPin || effortPin !== undefined) {
 			const shown = manualPin ?? (ctx.model ? { backend: ctx.model.provider, model: ctx.model.id, type: "native" as const } : resolveRole(deps.config, "balanced"));
@@ -994,7 +1009,7 @@ function installTurnHooks(
 			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
 			if (routePins().effort !== undefined) {
 				// The operator's level is a pick, not a ceiling, and `setModel` reset it.
-				installThinkingLevel(routePins().effort!);
+				installEffortPin(pi, routePins().effort!);
 			} else if (context.contract) {
 				// Manual has no compiled effort to cap.
 				effort = thinkingLevelFor(deps.config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
@@ -1260,6 +1275,10 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 	// session-only. Restored once, here, not per session-start reload — a fresh
 	// activation is the only startup this session gets.
 	restoreRememberedModel(config, env);
+	// `--thinking <level>` or `--model <ref>:<level>` (the launcher's
+	// `LEANPI_THINKING`): a hand pick for this session, like `/effort`, so no
+	// compiled effort or `setModel` reset lowers it. Not remembered past it.
+	if (isThinkingLevel(env.LEANPI_THINKING)) setRoutePins({ effort: env.LEANPI_THINKING });
 	// Subscription role models are Pi models too: `strong: claude/opus` is an
 	// `external_harness` the native-only `registerBackends` leaves out, so without
 	// this the only `opus` a subagent planner can see is Pi's metered built-in
