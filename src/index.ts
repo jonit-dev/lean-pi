@@ -37,7 +37,7 @@ import { clearRoutePins, consumeInstalledThinkingLevel, noteInstalledThinkingLev
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
 import { createToolSurface, mcpRequestDefinition, mcpToolName, registerMcpCommand, registerMcpDisclosure, resolveVendorServers, MCP_REQUEST_TOOL_NAME } from "./mcp/index.js";
-import type { SelectedMcpTool } from "./mcp/index.js";
+import type { McpPool, SelectedMcpTool } from "./mcp/index.js";
 import { createSessionHost, registerCommandSurface, PRD_OWNED_COMMANDS, type CommandSurface } from "./commands/index.js";
 import { ensureGitIgnored, registerRuntimeVerifiers, worktreePermissionPrompt } from "./runtime/index.js";
 import type { WorktreePermissionRequest } from "./runtime/index.js";
@@ -573,6 +573,7 @@ function installSessionHooks(
 		surface: CommandSurface;
 		recap: RecapController;
 		jev: JevClient;
+		mcp: McpPool;
 		provider: () => ControlPlaneProvider | undefined;
 		config: LeanPiConfig;
 		env: NodeJS.ProcessEnv & CredentialEnv;
@@ -687,6 +688,9 @@ function installSessionHooks(
 		// `/resume`, `/fork`) rebinds the extension, so the old server must go with
 		// it or every switch leaks a multi-GB model. A no-op for TypeSafe.
 		await deps.jev.dispose();
+		// Every MCP server the session started is a child whose stdio holds the
+		// event loop open: `leanpi -p` would answer and then never exit.
+		await deps.mcp.disconnectAll();
 	});
 }
 
@@ -1639,6 +1643,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		surface,
 		recap,
 		jev,
+		mcp: mcpRuntime.pool,
 		provider: () => provider,
 		config,
 		env,

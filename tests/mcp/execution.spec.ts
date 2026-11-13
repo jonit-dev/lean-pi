@@ -116,6 +116,20 @@ describe("PRD-045 Phase 1 — JEV-selected MCP tools are callable (AC-1 to AC-4)
 		expect(conversation(f.backend)).toContain("stub/echo ok");
 	});
 
+	it("session_shutdown stops every server the session started, so `leanpi -p` exits after its answer", async () => {
+		const f = await fixture();
+		f.allow({ capabilities: ["mcp:stub/echo"] });
+		const session = await f.boot();
+		closers.push(() => session.session.dispose());
+		await session.session.prompt("echo the stub fixture");
+		expect(f.server.alive("stub")).toBe(true);
+
+		// What Pi's runtime emits when print mode returns (`AgentSessionRuntime.dispose`).
+		await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+
+		await expect.poll(() => f.server.alive("stub"), { timeout: 5000 }).toBe(false);
+	});
+
 	it("AC-2: a turn whose JEV selects nothing exposes no mcp__ tool, and no LSP tool either", async () => {
 		const f = await fixture({ jevResponders: [mcpResponder({ any: false })] });
 		const session = await f.boot();
