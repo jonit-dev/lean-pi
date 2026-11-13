@@ -228,6 +228,17 @@ describe("PRD-045 Phase 1 — JEV-selected MCP tools are callable (AC-1 to AC-4)
 			expect(f.servers.callsOf("zz")).toEqual([{ server: "zz", tool: "zeta_probe", arguments: { sentinel_zz_zeta_probe: "hi" } }]);
 		});
 
+		it("names every eligible tool up front in mcp_request's description, the last server's too", async () => {
+			const f = await many(drive([{ text: "done" }]));
+			await f.session.session.prompt("do the thing");
+			const tools = f.backend.requests[0]!.body.tools as Array<{ function?: { name?: string; description?: string } }>;
+			const description = tools.find((tool) => tool.function?.name === "mcp_request")?.function?.description ?? "";
+			// Not on the up-front surface (the cap took six other rows), yet named.
+			expect(toolNamesOf(f.backend.requests[0]!.body)).not.toContain("mcp__zz__zeta_other");
+			for (const name of ["zz/zeta_probe", "zz/zeta_other", "aa/aa_one"]) expect(description).toContain(name);
+			expect(description).toContain("zz/zeta_other: zz/zeta_other fixture tool");
+		});
+
 		it("mcp_request admits an exact name and lists the deferred names when nothing matches", async () => {
 			const f = await many(drive([call("mcp_request", { query: "nothing like this" }), call("mcp_request", { query: "zz/zeta_other" }), call("mcp__zz__zeta_other", {})]));
 			await f.session.session.prompt("do the thing");

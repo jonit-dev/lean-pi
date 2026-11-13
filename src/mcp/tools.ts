@@ -24,7 +24,7 @@ import { lspToolsForMode, LSP_TOOL_NAMES, setActiveLspTurn } from "../lsp/tools.
 import { resolve, type PermissionDecision, type PermissionsConfig } from "../permissions/rules.js";
 import type { McpCatalog, McpServerEntry } from "./catalog.js";
 import type { McpPool } from "./client.js";
-import { requestCapability, type JevSelector, type SelectedMcpTool } from "./select.js";
+import { fallbackServers, mcpToolId, requestCapability, type JevSelector, type SelectedMcpTool } from "./select.js";
 
 /** The mid-turn router's tool name (PRD-045 Phase 2). */
 export const MCP_REQUEST_TOOL_NAME = "mcp_request";
@@ -149,8 +149,21 @@ export function mcpRequestDefinition(deps: McpRequestDeps): ToolDefinition {
 	return {
 		name: MCP_REQUEST_TOOL_NAME,
 		label: MCP_REQUEST_TOOL_NAME,
-		description:
-			"Load one more MCP tool: describe what you need, or give its exact name (`server/tool`). Admits at most one tool; a refusal lists every name you can ask for.",
+		// The deferred catalog, as Claude Code lists deferred tools: every tool the
+		// request can admit, by exact name, so the first ask can name it. A getter,
+		// because Pi reads it per refresh and discovery fills the catalog after
+		// registration. With JEV off only the eligible servers are listed.
+		get description(): string {
+			const catalog = deps.catalog();
+			const eligible = !deps.client || deps.client.getMode?.() === "disabled" ? new Set(fallbackServers(catalog)) : undefined;
+			const rows = catalog.tools
+				.filter((record) => eligible === undefined || eligible.has(record.server))
+				.map((record) => `- ${mcpToolId(record.server, record.tool)}: ${record.summary.split("\n")[0]!.slice(0, 100)}`);
+			return [
+				"Load one more MCP tool: give its exact name (`server/tool`) from the list below, or describe what you need. Admits at most one tool per call.",
+				...(rows.length > 0 ? ["Available:", ...rows] : []),
+			].join("\n");
+		},
 		parameters: Type.Object({ query: Type.String({ description: "What capability you need, in one sentence." }) }),
 		execute: async (_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> => {
 			const query = typeof params.query === "string" ? params.query : "";
