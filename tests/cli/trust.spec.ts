@@ -15,7 +15,9 @@ import { nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 const BIN = join(process.cwd(), "bin", "leanpi.js");
 
 function run(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
-	return spawnSync(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, ...env, NO_COLOR: "1" }, encoding: "utf8", timeout: 30_000 });
+	// FORCE_COLOR beside NO_COLOR makes Node warn on stderr, so a FORCE_COLOR=1 shell failed the empty-stderr check.
+	const { FORCE_COLOR: _forceColor, ...base } = process.env;
+	return spawnSync(process.execPath, [BIN, ...args], { cwd, env: { ...base, ...env, NO_COLOR: "1" }, encoding: "utf8", timeout: 30_000 });
 }
 
 describe("leanpi trust [dir]", () => {
