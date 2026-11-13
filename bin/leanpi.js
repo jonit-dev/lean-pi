@@ -38,6 +38,38 @@ try {
 	process.exit(1);
 }
 
+// `leanpi trust [dir]`: `/permissions trust project` for a tool that creates a
+// project and then drives `leanpi -p` in it (bare first word, like `pi install`).
+// Same grant, same state file under XDG_CONFIG_HOME; no session, no model call.
+if (flags.rest[0] === "trust") {
+	const { grantTrust } = await import("../dist/permissions/trust.js");
+	const { existsSync, statSync } = await import("node:fs");
+	const { resolve } = await import("node:path");
+	if (flags.rest.length > 2) {
+		process.stderr.write("usage: leanpi trust [dir]\n");
+		process.exit(1);
+	}
+	const root = resolve(flags.rest[1] ?? process.cwd());
+	if (!existsSync(root) || !statSync(root).isDirectory()) {
+		process.stderr.write(`leanpi trust: ${root} is not a directory\n`);
+		process.exit(1);
+	}
+	// The surface the project's config declares, as the in-session command passes
+	// it; a machine with no usable config yet declares nothing.
+	let declared = {};
+	try {
+		const surface = loadConfig(root).permissions.trust.surface;
+		declared = { skillRoots: surface.skillRoots, mcpConfigPaths: surface.mcpConfigPaths };
+	} catch {}
+	const granted = grantTrust(root, process.env, declared);
+	if (!granted.trusted) {
+		process.stderr.write(`leanpi trust: ${granted.root}: ${granted.status} (${granted.reason})\n`);
+		process.exit(1);
+	}
+	process.stdout.write(`${granted.root}\n`);
+	process.exit(0);
+}
+
 let plan;
 // Whether this process told the user JEV is unconfigured. The extension inside
 // the child must not repeat it, so the fact travels in the child's environment.

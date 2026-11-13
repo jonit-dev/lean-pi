@@ -133,6 +133,13 @@ trusted), in the usual `mcpServers` shape:
 { "mcpServers": { "stub": { "transport": "stdio", "command": "node", "args": ["server.mjs"] } } }
 ```
 
+Trust is a one-time grant per project: `/permissions trust project` in a
+session, or `leanpi trust [dir]` from a script (the directory defaults to the
+current one). The command writes the same grant to the same state file under
+`XDG_CONFIG_HOME`, prints the trusted root and exits 0; it starts no session. A
+tool that creates a project and then runs `leanpi -p` in it trusts it this way.
+Editing the trusted files revokes the grant until it is given again.
+
 A trusted project's stdio servers are discovered by themselves, as in Claude
 Code: when the session starts, each one with no cached schema is connected in the
 background and its `tools/list` is cached. The first turn waits for that; a
