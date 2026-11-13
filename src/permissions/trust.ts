@@ -159,7 +159,7 @@ export interface SurfaceDeclaration {
 export interface ProjectSurface {
 	root: string;
 	extensionsDir: string;
-	/** Project-scope MCP config files, resolved; `.leanpi/mcp.json` when none declared. */
+	/** Project-scope MCP config files, resolved: `.mcp.json`, plus `.leanpi/mcp.json` when none declared. */
 	mcpConfigPaths: string[];
 	/** Project-local skill roots only: a root the user installed is user scope. */
 	skillRoots: string[];
@@ -252,7 +252,9 @@ export function projectSurface(root: string, declared: SurfaceDeclaration = {}):
 	return {
 		root: absolute,
 		extensionsDir: join(absolute, ".leanpi", "extensions"),
-		mcpConfigPaths: (declaredMcp.length > 0 ? declaredMcp : [".leanpi/mcp.json"]).map((entry) => (isAbsolute(entry) ? resolve(entry) : resolve(absolute, entry))),
+		// `.mcp.json` is read beside them (`resolveConfigPaths`) and its stdio servers
+		// start on their own (discovery), so an edit to it revokes trust as well.
+		mcpConfigPaths: [...new Set([".mcp.json", ...(declaredMcp.length > 0 ? declaredMcp : [".leanpi/mcp.json"])].map((entry) => (isAbsolute(entry) ? resolve(entry) : resolve(absolute, entry))))],
 		skillRoots,
 		...(configPath === undefined ? {} : { configPath }),
 	};

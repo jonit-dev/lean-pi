@@ -7,8 +7,10 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadConfig } from "../../src/core/config.js";
+import { buildCatalog } from "../../src/mcp/catalog.js";
 import { assertTrusted } from "../../src/permissions/trust.js";
-import { tempDir } from "../helpers/fixtures.js";
+import { nativeBackend, tempDir, writeConfig } from "../helpers/fixtures.js";
 
 const BIN = join(process.cwd(), "bin", "leanpi.js");
 
@@ -41,6 +43,25 @@ describe("leanpi trust [dir]", () => {
 
 		expect(result.status).toBe(0);
 		expect(assertTrusted(project, env).trusted).toBe(true);
+	});
+
+	it("an edit to `.mcp.json` revokes trust, so its new server is not discovered until trust is granted again", () => {
+		const project = tempDir("leanpi-trust-mcp-");
+		const home = tempDir("leanpi-trust-home-");
+		const env = { HOME: home, XDG_CONFIG_HOME: join(home, "xdg") };
+		writeConfig(project, { backends: { local: nativeBackend("http://127.0.0.1:9/v1") }, models: { balanced: { backend: "local", model: "m" } } });
+		const servers = (names: string[]) => `${JSON.stringify({ mcpServers: Object.fromEntries(names.map((name) => [name, { command: "node", args: [`${name}.mjs`] }])) })}\n`;
+		writeFileSync(join(project, ".mcp.json"), servers(["engine"]));
+		const projectServers = () => buildCatalog({ cwd: project, config: loadConfig(project, {}, env), home }).entries.filter((entry) => entry.scope === "project").map((entry) => entry.name);
+		expect(run(["trust", project], project, env).status).toBe(0);
+		expect(projectServers()).toEqual(["engine"]);
+
+		writeFileSync(join(project, ".mcp.json"), servers(["engine", "added"]));
+
+		expect(loadConfig(project, {}, env).permissions.trust.trusted).toBe(false);
+		expect(projectServers()).toEqual([]);
+		expect(run(["trust", project], project, env).status).toBe(0);
+		expect(projectServers()).toEqual(["added", "engine"]);
 	});
 
 	it("refuses a directory that does not exist, with the reason, and trusts nothing", () => {
