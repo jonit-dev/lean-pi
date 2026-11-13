@@ -7,8 +7,8 @@
  * into `ExecutionContract.capabilities.mcps`, capped by `mcp.maxTools`. A
  * server nobody selected contributes zero bytes and is never connected.
  *
- * With JEV off (§49) the same pipeline degrades to manually pinned plus
- * project-default servers — never the full catalog. `requestCapability()` is the
+ * With JEV off (§49) the same pipeline degrades to pinned, `default` and
+ * trusted-project servers — never a user-scope server nobody pinned. `requestCapability()` is the
  * §17 mid-task router and the only way a schema enters context after compile;
  * it admits at most one tool and returns a typed refusal otherwise.
  */
@@ -137,9 +137,15 @@ function hydrate(cache: Record<string, CachedTool[]>, records: McpToolRecord[], 
 	return tools;
 }
 
-/** Manually pinned plus project-default servers; the JEV-off eligibility set (§49). */
+/**
+ * The JEV-off eligibility set (§49): pinned and `default` servers, plus every
+ * enabled server of the trusted project, which needs no `default` flag (owner,
+ * 2026-11-13: discover project servers like Claude Code does). A user-scope
+ * server still needs `pinned` or `default`.
+ */
 export function fallbackServers(catalog: McpCatalog): string[] {
-	return [...new Set([...catalog.pinnedServers, ...catalog.projectDefaults])];
+	const project = catalog.servers.filter((server) => server.enabled && server.scope === "project").map((server) => server.name);
+	return [...new Set([...catalog.pinnedServers, ...catalog.projectDefaults, ...project])];
 }
 
 const SCORE_LEVELS = ["irrelevant", "tangential", "relevant", "essential"];
@@ -365,6 +371,8 @@ export interface McpDisclosureDeps {
 	/** Rebuilt per compile so a mid-session `/mcp disable` is honoured at once. */
 	catalog?: () => McpCatalog;
 	maxTools?: number;
+	/** Awaited before each selection: the project's server discovery. */
+	ready?: () => Promise<void>;
 }
 
 /** The `CapabilityProvider` that fills `ExecutionContract.capabilities.mcps`. */
@@ -373,6 +381,7 @@ export function mcpCapabilityProvider(deps: McpDisclosureDeps): CapabilityProvid
 	return {
 		kind: "mcps",
 		supply: async (draft: ExecutionContract, _packet: TaskPacket): Promise<SelectedMcpTool[]> => {
+			await deps.ready?.();
 			const selection = await selectMcpTools({
 				catalog: catalog(),
 				request: draft.task.user_request,

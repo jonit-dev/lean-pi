@@ -126,22 +126,26 @@ undercut would not be a level.
 ## MCP tools
 
 An MCP server is configured in `~/.leanpi/mcp.json` (user scope, always read) or
-`.leanpi/mcp.json` in the project (read only while the project is trusted), in
-the usual `mcpServers` shape:
+`.mcp.json` / `.leanpi/mcp.json` in the project (read only while the project is
+trusted), in the usual `mcpServers` shape:
 
 ```json
 { "mcpServers": { "stub": { "transport": "stdio", "command": "node", "args": ["server.mjs"] } } }
 ```
 
-A server contributes nothing until it has been connected once: `/mcp refresh
-[<server>]` connects, reads `tools/list`, writes the schema cache and
-disconnects. `/mcp` lists what each server offers — transport, scope, health and
-tool count. No server is spawned while a turn is compiled; the connection opens
-the first time a selected tool is actually called.
+A trusted project's stdio servers are discovered by themselves, as in Claude
+Code: when the session starts, each one with no cached schema is connected in the
+background and its `tools/list` is cached. The first turn waits for that; a
+server that fails or hangs (20 s request timeout) is reported once on stderr and
+left out. Any other server contributes nothing until it has been connected once:
+`/mcp refresh [<server>]` connects, reads `tools/list`, writes the schema cache
+and disconnects. `/mcp` lists what each server offers — transport, scope, health
+and tool count. Otherwise a connection opens the first time a selected tool is
+actually called.
 
 Each turn, the compiler asks JEV which of those tools the task needs and puts
-only those on the model's surface. With JEV off, the servers marked `pinned` or
-`default` are the eligible set. The model can ask for one more mid-turn with
+only those on the model's surface. With JEV off, the trusted project's servers
+and the user-scope servers marked `pinned` or `default` are the eligible set. The model can ask for one more mid-turn with
 `mcp_request { query }`, and only JEV (or the lexical fallback) admits it. Every
 MCP call is then an ordinary guarded tool call under the `mcp` scope, so
 `/permissions set mcp allow|ask|deny` decides whether it runs, prompts, or is

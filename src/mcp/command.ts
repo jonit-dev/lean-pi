@@ -13,7 +13,7 @@
  */
 import type { CommandRegistry, CommandResult } from "../commands/registry.js";
 import type { LeanPiConfig } from "../core/types.js";
-import { buildCatalog, mcpConfigOf, renderCatalog, writeMcpState, type McpCatalog, type McpStateEntry } from "./catalog.js";
+import { buildCatalog, mcpConfigOf, readSchemaCache, renderCatalog, writeMcpState, writeServerSchemas, type McpCatalog, type McpStateEntry } from "./catalog.js";
 import { createMcpPool, type McpPool } from "./client.js";
 
 export interface McpCommandDeps {
@@ -30,6 +30,13 @@ export interface McpRuntime {
 	/** Rebuilt per call, so a `/mcp disable` and a `/mcp refresh` are visible at once. */
 	catalog(): McpCatalog;
 	pool: McpPool;
+	/**
+	 * Discover the trusted project's stdio servers that have no cached schema:
+	 * connect, cache `tools/list`, keep the connection for the first call. Runs
+	 * once per runtime; a server that fails or hangs past the pool's request
+	 * timeout is reported once on stderr and left out, and never fails the session.
+	 */
+	discover(): Promise<void>;
 }
 
 const USAGE = "usage: /mcp [enable <server> | disable <server> | refresh [<server>]]";
@@ -89,5 +96,21 @@ export function registerMcpCommand(commands: CommandRegistry, deps: McpCommandDe
 		return { ok: false, text: USAGE };
 	});
 
-	return { pool, catalog };
+	let discovery: Promise<void> | undefined;
+	const discover = (): Promise<void> =>
+		(discovery ??= (async () => {
+			const cache = readSchemaCache(deps.cwd);
+			const cold = catalog().entries.filter((entry) => entry.enabled && entry.scope === "project" && entry.transport === "stdio" && !cache[entry.name]?.length);
+			await Promise.all(
+				cold.map(async (entry) => {
+					try {
+						writeServerSchemas(deps.cwd, entry.name, await pool.listTools(entry.name));
+					} catch (error) {
+						process.stderr.write(`leanpi: MCP server "${entry.name}" was not discovered: ${error instanceof Error ? error.message : String(error)}\n`);
+					}
+				}),
+			);
+		})());
+
+	return { pool, catalog, discover };
 }

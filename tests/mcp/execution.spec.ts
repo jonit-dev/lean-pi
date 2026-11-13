@@ -8,8 +8,9 @@
  * the assertions are made on the marker file it writes at startup and the call
  * log it appends to.
  */
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearLanes, grantTrust, type LeanPiSession } from "../../src/index.js";
 import { nativeBackend, bootSession, tempDir, toolNamesOf, writeConfig } from "../helpers/fixtures.js";
 import { startStubBackend, type StubBackend, type StubStep } from "../helpers/stub-backend.js";
@@ -41,6 +42,8 @@ interface FixtureOptions {
 	jevResponders?: StubJevResponder[];
 	pinned?: string[];
 	extraConfig?: Record<string, unknown>;
+	/** A cold project: the servers sit in `.mcp.json` only, with no schema cache. */
+	cold?: boolean;
 }
 
 /**
@@ -55,8 +58,12 @@ async function fixture(options: FixtureOptions = {}): Promise<Fixture> {
 		{ name: "stub", tools: toolsFor("stub", ["echo", "other"]), ...(options.pinned?.includes("stub") ? { pinned: true } : {}) },
 		{ name: "other", tools: toolsFor("other", ["ping"]), ...(options.pinned?.includes("other") ? { pinned: true } : {}) },
 	]);
-	writeProjectMcpConfig(cwd, server.entries);
-	seedSchemaCache(cwd, { stub: toolsFor("stub", ["echo", "other"]), other: toolsFor("other", ["ping"]) });
+	if (options.cold) {
+		writeFileSync(join(cwd, ".mcp.json"), `${JSON.stringify({ mcpServers: server.entries })}\n`);
+	} else {
+		writeProjectMcpConfig(cwd, server.entries);
+		seedSchemaCache(cwd, { stub: toolsFor("stub", ["echo", "other"]), other: toolsFor("other", ["ping"]) });
+	}
 	const backend = await startStubBackend(options.steps ?? drive([call("mcp__stub__echo", { sentinel_stub_echo: "hi" })]));
 	const jev = await startStubJev(options.jevResponders ?? [mcpResponder({ any: true, relevance: { stub: 3 }, tools: ["stub/echo"] })]);
 	closers.push(() => backend.close(), () => jev.close());
@@ -156,7 +163,7 @@ describe("PRD-045 Phase 1 — JEV-selected MCP tools are callable (AC-1 to AC-4)
 		expect(conversation(f.backend)).toContain("did not run");
 	});
 
-	it("AC-4: with JEV disabled only pinned or project-default servers become active", async () => {
+	it("AC-4: with JEV disabled every trusted project server becomes active, connected only on use", async () => {
 		const f = await fixture({ pinned: ["stub"], extraConfig: { jev: { endpoint: "http://127.0.0.1:1/v1", apiKey: null, mode: "disabled" } } });
 		// The config changed after the fixture wrote it, so trust is re-granted.
 		grantTrust(f.cwd, f.env);
@@ -165,10 +172,42 @@ describe("PRD-045 Phase 1 — JEV-selected MCP tools are callable (AC-1 to AC-4)
 
 		await session.session.prompt("do the thing");
 		const tools = activeTools(f.backend);
-		expect(tools).toContain("mcp__stub__echo");
-		expect(tools.some((name) => name.startsWith("mcp__other__"))).toBe(false);
+		// Owner, 2026-11-13: a project server needs no `default` flag (user-scope ones
+		// still do: select.test.ts AC-8).
+		expect(tools).toEqual(expect.arrayContaining(["mcp__stub__echo", "mcp__other__ping"]));
 		// Nothing connected: availability is not use.
 		expect(f.server.started("stub")).toBe(false);
+	});
+
+	it("a trusted cold project's `.mcp.json` server is discovered and offered with JEV off", async () => {
+		// No schema cache, no `default`, no `tools` hint, no `/mcp refresh`: the
+		// session finds the stub's tools by itself, as Claude Code does.
+		const f = await fixture({ cold: true, extraConfig: { jev: { endpoint: "http://127.0.0.1:1/v1", apiKey: null, mode: "disabled" } } });
+		f.allow({ capabilities: ["mcp:stub/echo"] });
+		const session = await f.boot(drive([call("mcp__stub__echo", { sentinel_stub_echo: "hi" })]));
+		closers.push(() => session.session.dispose());
+
+		await session.session.prompt("echo the stub fixture");
+
+		expect(toolNamesOf(f.backend.requests[0]!.body)).toContain("mcp__stub__echo");
+		expect(f.server.callsOf("stub")).toEqual([{ server: "stub", tool: "echo", arguments: { sentinel_stub_echo: "hi" } }]);
+		expect(conversation(f.backend)).toContain("stub/echo ok");
+	});
+
+	it("a cold project server that cannot start is reported once and the session still answers", async () => {
+		const f = await fixture({ cold: true, extraConfig: { jev: { endpoint: "http://127.0.0.1:1/v1", apiKey: null, mode: "disabled" } } });
+		writeFileSync(join(f.cwd, ".mcp.json"), `${JSON.stringify({ mcpServers: { broken: { command: process.execPath, args: ["-e", "process.exit(3)"] } } })}\n`);
+		grantTrust(f.cwd, f.env);
+		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		closers.push(() => stderr.mockRestore());
+		const session = await f.boot(drive([{ text: "done" }]));
+		closers.push(() => session.session.dispose());
+
+		await session.session.prompt("do the thing");
+
+		expect(conversation(f.backend)).toContain("do the thing");
+		const reports = stderr.mock.calls.filter(([text]) => String(text).includes('MCP server "broken" was not discovered'));
+		expect(reports).toHaveLength(1);
 	});
 
 	it("a machine with no MCP config gains no mcp_request tool", async () => {

@@ -175,6 +175,8 @@ export interface LeanPiActivation {
 	 * is not filtered out of Pi's registry.
 	 */
 	mcpToolNames(): string[];
+	/** Resolves when the project's MCP discovery has finished, so the names are complete. */
+	mcpReady(): Promise<void>;
 	/**
 	 * PRD-041: record the limit `subagentsFactory` captured for this session so
 	 * `/subagents-limit` shows the value this session attached with. Called by
@@ -1433,15 +1435,19 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 			return selection.skills;
 		},
 	});
-	registerMcpDisclosure({ cwd, config, home: homedir(), client: jev, catalog: () => mcpRuntime.catalog() });
+	// A cold project's servers are discovered in the background from activation,
+	// so startup does not wait; the first selection awaits whatever is left.
+	void mcpRuntime.discover();
+	registerMcpDisclosure({ cwd, config, home: homedir(), client: jev, catalog: () => mcpRuntime.catalog(), ready: mcpRuntime.discover });
 	// PRD-045: the per-turn tool surface. Created once per activation — the
 	// registered-name set must not leak into a second session — and shared by the
 	// tool-surface lane and the mid-turn `mcp_request` tool.
 	const toolSurface = createToolSurface(pi, mcpRuntime.pool);
 	/** Candidate MCP tool names from the live catalog; empty with no usable config. */
 	const mcpToolNames = (): string[] => mcpRuntime.catalog().tools.map((record) => mcpToolName(record.server, record.tool));
-	// A machine with no MCP config gains no extra tool.
-	if (mcpToolNames().length > 0) {
+	// A machine with no MCP config gains no extra tool; a project server that is
+	// still being discovered has no rows yet, but it will.
+	if (mcpToolNames().length > 0 || mcpRuntime.catalog().entries.some((entry) => entry.enabled && entry.scope === "project")) {
 		pi.registerTool(mcpRequestDefinition({ surface: toolSurface, catalog: () => mcpRuntime.catalog(), config, cwd, client: jev }));
 	}
 	registerCapabilityProvider(createLspProvider({ config, root: cwd, env }));
@@ -1699,6 +1705,7 @@ export function activate(pi: ExtensionAPI, options: ActivateOptions = {}): LeanP
 		todo: todoCarrier,
 		workingStateSources,
 		mcpToolNames,
+		mcpReady: mcpRuntime.discover,
 		registerLane(lane) {
 			registerTurnLane(lane);
 		},
@@ -1832,6 +1839,7 @@ export async function createLeanPiSession(options: CreateLeanPiSessionOptions = 
 	// PRD-045: the MCP tools are registered per turn, so the SDK allowlist has to
 	// name them up front or Pi's registry refresh filters them out. The mid-turn
 	// `mcp_request` rides the same condition as its registration.
+	await loaded.mcpReady();
 	const mcpToolNames = loaded.mcpToolNames();
 	const { session } = await createAgentSessionFromServices({
 		services,
