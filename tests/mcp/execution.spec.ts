@@ -194,6 +194,51 @@ describe("PRD-045 Phase 1 — JEV-selected MCP tools are callable (AC-1 to AC-4)
 		expect(conversation(f.backend)).toContain("stub/echo ok");
 	});
 
+	describe("with JEV off, every tool of a many-server project is reachable", () => {
+		// Six servers of two tools each overflow `mcp.maxTools` (6). The cap used to
+		// take the first six rows in server-name order, so `zz` was never offered.
+		const NAMES = ["aa", "bb", "cc", "dd", "ee", "zz"];
+		async function many(steps: StubStep[]) {
+			const cwd = tempDir("leanpi-mcp-many-");
+			const home = tempHome();
+			const env = mcpEnv(home);
+			const servers = stdioFixtures(
+				join(cwd, ".leanpi", "servers"),
+				NAMES.map((name) => ({ name, tools: name === "zz" ? toolsFor("zz", ["zeta_probe", "zeta_other"]) : toolsFor(name, [`${name}_one`, `${name}_two`]) })),
+			);
+			writeFileSync(join(cwd, ".mcp.json"), `${JSON.stringify({ mcpServers: servers.entries })}\n`);
+			const backend = await startStubBackend(steps);
+			closers.push(() => backend.close());
+			writeConfig(cwd, {
+				backends: { local: nativeBackend(backend.baseUrl) },
+				models: { balanced: { backend: "local", model: "cheap-fast" } },
+				jev: { endpoint: "http://127.0.0.1:1/v1", apiKey: null, mode: "disabled" },
+			});
+			grantTrust(cwd, env);
+			seedUserPermissions(env, { defaults: { mcp: "allow" } });
+			const session = await bootSession({ cwd, agentDir: tempDir("leanpi-agent-"), env });
+			closers.push(() => session.session.dispose());
+			return { servers, backend, session };
+		}
+
+		it("offers the tool the request names, even from the last-sorted server", async () => {
+			const f = await many(drive([call("mcp__zz__zeta_probe", { sentinel_zz_zeta_probe: "hi" })]));
+			await f.session.session.prompt("call the zeta probe tool");
+			expect(toolNamesOf(f.backend.requests[0]!.body)).toContain("mcp__zz__zeta_probe");
+			expect(f.servers.callsOf("zz")).toEqual([{ server: "zz", tool: "zeta_probe", arguments: { sentinel_zz_zeta_probe: "hi" } }]);
+		});
+
+		it("mcp_request admits an exact name and lists the deferred names when nothing matches", async () => {
+			const f = await many(drive([call("mcp_request", { query: "nothing like this" }), call("mcp_request", { query: "zz/zeta_other" }), call("mcp__zz__zeta_other", {})]));
+			await f.session.session.prompt("do the thing");
+			const said = conversation(f.backend);
+			// The refusal is the deferred catalog: it names tools nothing else mentioned.
+			expect(said).toContain("zz/zeta_probe");
+			expect(said).toContain("mcp__zz__zeta_other is now callable");
+			expect(f.servers.callsOf("zz").map((entry) => entry.tool)).toEqual(["zeta_other"]);
+		});
+	});
+
 	it("a cold project server that cannot start is reported once and the session still answers", async () => {
 		const f = await fixture({ cold: true, extraConfig: { jev: { endpoint: "http://127.0.0.1:1/v1", apiKey: null, mode: "disabled" } } });
 		writeFileSync(join(f.cwd, ".mcp.json"), `${JSON.stringify({ mcpServers: { broken: { command: process.execPath, args: ["-e", "process.exit(3)"] } } })}\n`);

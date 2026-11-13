@@ -180,11 +180,18 @@ function toolQuestions(records: McpToolRecord[]): JevQuestion[] {
 	);
 }
 
-/** The §49 branch: pinned/project-default servers' tools, never the whole catalog. */
+/**
+ * The §49 branch: eligible servers' tools, never the whole catalog. The tools the
+ * request names come first, so `mcp.maxTools` cuts the least relevant rows, not
+ * whichever servers sort last; the rest stay one `mcp_request` away.
+ */
 function deterministicSelection(input: McpSelectionInput, cache: Record<string, CachedTool[]>, maxTools: number, reason: string): McpSelectionResult {
 	const allowed = new Set(fallbackServers(input.catalog));
 	const records = input.catalog.tools.filter((record) => allowed.has(record.server));
-	const tools = hydrate(cache, records.slice(0, maxTools), () => 1);
+	const ranked = lexicalSelect(records, input.request, records.length);
+	const scores = new Map(ranked.map((entry) => [entry.record, entry.score]));
+	const ordered = [...new Set([...ranked.map((entry) => entry.record), ...records])];
+	const tools = hydrate(cache, ordered, (record) => scores.get(record) ?? 0).slice(0, maxTools);
 	return {
 		tools,
 		decision: { selected: tools.map((tool) => mcpToolId(tool.server, tool.tool)), servers: [...allowed], fallbackUsed: true, reason },
@@ -348,11 +355,18 @@ export async function requestCapability(input: CapabilityRequestInput): Promise<
 		}
 	}
 
-	// §49 deterministic path: lexical match within pinned/project-default servers.
+	// §49 deterministic path: an exact name (`server/tool`, `mcp__server__tool` or
+	// the bare tool), else a lexical match, within the eligible servers.
 	const allowed = new Set(fallbackServers(catalog));
 	const scoped = catalog.tools.filter((record) => allowed.has(record.server));
-	const [best] = lexicalSelect(scoped, input.query, 1);
-	if (!best) return refuse("no_match", `no pinned or project-default MCP tool matches "${input.query}"`, input.live, true);
+	const query = input.query.trim();
+	const exact = scoped.find((record) => [mcpToolId(record.server, record.tool), `mcp__${record.server}__${record.tool}`, record.tool].includes(query));
+	const best = exact ? { record: exact, score: Number.MAX_SAFE_INTEGER } : lexicalSelect(scoped, query, 1)[0];
+	if (!best) {
+		// The deferred catalog: every name the model can load by asking for it exactly.
+		const names = scoped.map((record) => mcpToolId(record.server, record.tool)).join(", ");
+		return refuse("no_match", `no MCP tool matches "${input.query}"; ask for one of these by exact name: ${names}`, input.live, true);
+	}
 	const [hydrated] = hydrate(cache, [best.record], () => best.score);
 	if (!hydrated) return refuse("not_available", `${mcpToolId(best.record.server, best.record.tool)} has no cached schema; run /mcp refresh ${best.record.server}`, input.live, true);
 	return { ...admit(hydrated, input.live, maxTools), fallbackUsed: true };

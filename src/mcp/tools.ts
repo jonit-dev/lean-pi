@@ -149,7 +149,8 @@ export function mcpRequestDefinition(deps: McpRequestDeps): ToolDefinition {
 	return {
 		name: MCP_REQUEST_TOOL_NAME,
 		label: MCP_REQUEST_TOOL_NAME,
-		description: "Ask for one more MCP capability by describing what you need. JEV admits at most one tool, or refuses.",
+		description:
+			"Load one more MCP tool: describe what you need, or give its exact name (`server/tool`). Admits at most one tool; a refusal lists every name you can ask for.",
 		parameters: Type.Object({ query: Type.String({ description: "What capability you need, in one sentence." }) }),
 		execute: async (_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> => {
 			const query = typeof params.query === "string" ? params.query : "";
