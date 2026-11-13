@@ -33,7 +33,7 @@ import { apiKeyFor, ConfigError, loadConfig, toPiConfigValue, writeSkillsState }
 import { buildStaticPrefix } from "./core/instructions/prefix.js";
 import { LEANPI_EXTENSION_NAME, LEANPI_VERSION } from "./core/package-info.js";
 import { clearCapabilityProviders, compileRecordOf, registerCapabilityProvider, setCompilerContext } from "./compiler/index.js";
-import { clearRoutePins, consumeInstalledThinkingLevel, noteInstalledThinkingLevel, routePins, setRoutePins } from "./compiler/pins.js";
+import { beginThinkingInstall, clearRoutePins, consumeInstalledThinkingLevel, endThinkingInstall, isThinkingInstall, noteInstalledThinkingLevel, routePins, setRoutePins } from "./compiler/pins.js";
 import { installPermissionGuard, loadPermissionState, registerPermissionsCommand } from "./permissions/index.js";
 import { registerCostCommand } from "./telemetry/index.js";
 import { createToolSurface, mcpRequestDefinition, mcpToolName, registerMcpCommand, registerMcpDisclosure, resolveVendorServers, MCP_REQUEST_TOOL_NAME } from "./mcp/index.js";
@@ -642,20 +642,29 @@ function installSessionHooks(
 		}
 		// A remembered or switched-to Manual pin is visible before the next turn.
 		const manualPin = routePins().model;
-		if (manualPin) {
-			// Pi's footer names Pi's model: switch to the pin now, not on the first turn —
-			// after keeping the model Pi started on, which `/model auto` restores.
-			if (routePins().previousModel === undefined && ctx.model) {
-				setRoutePins({ previousModel: { backend: ctx.model.provider, model: ctx.model.id, type: "native" } });
+		// Pi dispatches `thinking_level_select` from inside `setModel` and
+		// `setThinkingLevel`, before LeanPi can record what it installed. The window
+		// plus the marker keep this restore from being recorded as a fresh pick.
+		beginThinkingInstall();
+		try {
+			if (manualPin) {
+				// Pi's footer names Pi's model: switch to the pin now, not on the first turn —
+				// after keeping the model Pi started on, which `/model auto` restores.
+				if (routePins().previousModel === undefined && ctx.model) {
+					setRoutePins({ previousModel: { backend: ctx.model.provider, model: ctx.model.id, type: "native" } });
+				}
+				const found = ctx.modelRegistry.find(piProviderFor(manualPin), manualPin.model);
+				if (found) await pi.setModel(found);
 			}
-			const found = ctx.modelRegistry.find(piProviderFor(manualPin), manualPin.model);
-			if (found) await pi.setModel(found);
+			// The remembered effort, installed after `setModel` — which resets Pi's level
+			// to the model's own default — so the first turn already thinks as the
+			// operator chose.
+			const effortPin = routePins().effort;
+			if (effortPin !== undefined) installEffortPin(pi, effortPin);
+		} finally {
+			endThinkingInstall();
 		}
-		// The remembered effort, installed after `setModel` — which resets Pi's level
-		// to the model's own default — so the first turn already thinks as the
-		// operator chose. The marker keeps that install from reading as a new pick.
 		const effortPin = routePins().effort;
-		if (effortPin !== undefined) installEffortPin(pi, effortPin);
 		// An effort pin alone is Manual too: the model still routes, the level does not.
 		if (manualPin || effortPin !== undefined) {
 			const shown = manualPin ?? (ctx.model ? { backend: ctx.model.provider, model: ctx.model.id, type: "native" as const } : resolveRole(deps.config, "balanced"));
@@ -769,13 +778,19 @@ function installTurnHooks(
 	const modelKey = (model: { provider: string; id: string } | undefined): string | undefined => (model ? `${model.provider}/${model.id}` : undefined);
 
 	/**
-	 * Install a level LeanPi decided on. Pi emits `thinking_level_select` for every
-	 * change, its own and the operator's, so the marker is what keeps a compiled
-	 * effort from being pinned as a hand pick on the first turn.
+	 * Install a level LeanPi decided on. Pi dispatches `thinking_level_select`
+	 * from inside `setThinkingLevel`, so the window is what keeps the compiled
+	 * effort from being pinned as a hand pick; the marker covers an event Pi
+	 * delivers after the window closed.
 	 */
 	const installThinkingLevel = (level: ThinkingLevel): void => {
 		const before = pi.getThinkingLevel();
-		pi.setThinkingLevel(level);
+		beginThinkingInstall();
+		try {
+			pi.setThinkingLevel(level);
+		} finally {
+			endThinkingInstall();
+		}
 		noteInstalledThinkingLevel(before, pi.getThinkingLevel());
 	};
 
@@ -814,9 +829,9 @@ function installTurnHooks(
 	pi.on("thinking_level_select", (event, ctx) => {
 		// A pick before the first turn: the level it replaced is the baseline.
 		applied ??= { model: modelKey(ctx.model), level: event.previousLevel };
-		// Inside LeanPi's own turn the level is being reconfigured by the harness
-		// (the model's reset or the compiled effort), never picked by the operator.
-		if (isTurnInFlight() || consumeInstalledThinkingLevel(event.level)) return;
+		// Inside LeanPi's own turn, or its own `setModel`/effort install, the level
+		// is being reconfigured by the harness, never picked by the operator.
+		if (isTurnInFlight() || isThinkingInstall() || consumeInstalledThinkingLevel(event.level)) return;
 		// Pi resets the level inside `setModel`; a change that arrives with a new
 		// model is that model's default, not a pick.
 		if (applied.model !== modelKey(ctx.model)) {
@@ -949,11 +964,6 @@ function installTurnHooks(
 	pi.on("before_agent_start", async (event, ctx) => {
 		// Pi 1.2+ also fires this for extension-triggered runs, which carry no prompt to route.
 		if (event.messageType !== "user" || isTurnInFlight()) return;
-		const held = pi.getThinkingLevel();
-		if (applied !== undefined && applied.model === modelKey(ctx.model) && applied.level !== held) {
-			setRoutePins({ effort: held }, deps.sessionId());
-			rememberPins();
-		}
 		// PRD-015's accumulator is created before the lanes run, not after: the
 		// executor lane's backend calls are what the record has to carry, and they
 		// are spent while the lane runs.
@@ -1003,17 +1013,26 @@ function installTurnHooks(
 			if (chosen && chosen.from !== context.contract!.routing.executor_class) {
 				ctx.ui.notify(`session model fell back to ${ref.backend}/${ref.model}: ${context.contract!.routing.executor_class} backend was rate-limited`, "warning");
 			}
-			const model = ctx.modelRegistry.find(piProviderFor(ref), ref.model);
-			// `setModel` answers whether it took the model. Ignoring that answer
-			// let the footer name a model the session had refused.
-			if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
-			if (routePins().effort !== undefined) {
-				// The operator's level is a pick, not a ceiling, and `setModel` reset it.
-				installEffortPin(pi, routePins().effort!);
-			} else if (context.contract) {
-				// Manual has no compiled effort to cap.
-				effort = thinkingLevelFor(deps.config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
-				if (effort !== undefined) installThinkingLevel(effort);
+			// Pi dispatches `thinking_level_select` from inside `setModel` (its
+			// reset) and `setThinkingLevel` (the install) before LeanPi can record
+			// them, so the window is what keeps this turn's routing from being
+			// pinned as a hand pick.
+			beginThinkingInstall();
+			try {
+				const model = ctx.modelRegistry.find(piProviderFor(ref), ref.model);
+				// `setModel` answers whether it took the model. Ignoring that answer
+				// let the footer name a model the session had refused.
+				if (model && (await pi.setModel(model))) installed = `${ref.backend}/${ref.model}`;
+				if (routePins().effort !== undefined) {
+					// The operator's level is a pick, not a ceiling, and `setModel` reset it.
+					installEffortPin(pi, routePins().effort!);
+				} else if (context.contract) {
+					// Manual has no compiled effort to cap.
+					effort = thinkingLevelFor(deps.config, installed === undefined ? (ctx.model?.provider ?? ref.backend) : ref.backend, context.contract.reasoning.effort);
+					if (effort !== undefined) installThinkingLevel(effort);
+				}
+			} finally {
+				endThinkingInstall();
 			}
 		}
 		if (!owns) applied = { model: modelKey(ctx.model), level: pi.getThinkingLevel() };

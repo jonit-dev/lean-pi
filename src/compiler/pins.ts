@@ -58,12 +58,35 @@ let pins: RoutePins = {};
 let owner: string | undefined;
 /** The level LeanPi itself last installed; a select event naming it is not a pick. */
 let installedLevel: ThinkingLevel | undefined;
+/** How many of LeanPi's own session reconfigurations are in flight. */
+let reconfiguring = 0;
 
 /**
- * Record a level LeanPi just installed on the session. Pi emits
- * `thinking_level_select` for every change, its own and the operator's alike, so
- * without this the compiled effort would be pinned as a hand pick on the first
- * turn. A set that changed nothing emits no event, and leaves no marker behind.
+ * Mark the start of a Pi level change LeanPi is making itself (`setModel`'s
+ * reset or the compiled effort). Pi dispatches `thinking_level_select` from
+ * inside `setThinkingLevel`, before this module can record what it installed, so
+ * the window — not the installed level — is what keeps the event from reading
+ * as a hand pick. Nestable for `setModel` followed by an install.
+ */
+export function beginThinkingInstall(): void {
+	reconfiguring += 1;
+}
+
+/** Close the window opened by `beginThinkingInstall`. */
+export function endThinkingInstall(): void {
+	reconfiguring = Math.max(0, reconfiguring - 1);
+}
+
+/** Whether a select event arrives while LeanPi is setting the level itself. */
+export function isThinkingInstall(): boolean {
+	return reconfiguring > 0;
+}
+
+/**
+ * Record a level LeanPi just installed on the session, for an event that is
+ * delivered after the install window closed (Pi awaits extension handlers, so a
+ * slow one can outlive the synchronous call). A set that changed nothing emits
+ * no event, and leaves no marker behind.
  */
 export function noteInstalledThinkingLevel(before: ThinkingLevel | undefined, after: ThinkingLevel | undefined): void {
 	installedLevel = before !== undefined && after !== undefined && before !== after ? after : undefined;

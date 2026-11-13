@@ -1069,6 +1069,78 @@ describe("the status line reaches the footer", () => {
 		clearLanes();
 	});
 
+	it("does not pin the levels Pi sets while LeanPi configures the turn", async () => {
+		// Pi dispatches `thinking_level_select` from inside `setThinkingLevel` —
+		// before LeanPi records that the level was its own — so every compiled
+		// effort was read back as a hand pick: the first Auto turn flipped the
+		// footer to `Manual` and wrote the routed level to the remembered pins.
+		// `setModel` resets the level the same way, even when the model is the one
+		// already running, and that reset was pinned too.
+		const { cwd, home, env } = machine({ vendors: [] });
+		writeFileSync(
+			join(cwd, "leanpi.config.yaml"),
+			[
+				"backends:",
+				"  local: { type: native, baseUrl: https://example.test, apiKey: LOCAL_KEY }",
+				"models:",
+				"  quick: { backend: local, model: cheap }",
+				"  balanced: { backend: local, model: cheap }",
+				"  strong: { backend: local, model: cheap }",
+				"jev:",
+				"  mode: disabled",
+				"",
+			].join("\n"),
+		);
+		const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
+		const statuses: Array<string | undefined> = [];
+		let level = "medium";
+		let resetTo = "medium";
+		const turnCtx = {
+			model: { provider: "local", id: "cheap" },
+			modelRegistry: { find: () => ({ provider: "local", id: "cheap" }) },
+			getContextUsage: () => ({ tokens: 10, contextWindow: 100, percent: 10 }),
+			ui: { setStatus: (_key: string, text: string | undefined) => statuses.push(text) },
+		};
+		// Pi's own setThinkingLevel: a real change emits the select event.
+		const emit = (next: string): void => {
+			if (next === level) return;
+			const previousLevel = level;
+			level = next;
+			void handlers.get("thinking_level_select")?.({ level: next, previousLevel }, turnCtx);
+		};
+		const pi = {
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, handler),
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerProvider: () => {},
+			// Pi resets the level inside setModel, before the handler installs the
+			// compiled effort.
+			setModel: async () => {
+				emit(resetTo);
+				return true;
+			},
+			setThinkingLevel: (next: string) => emit(next),
+			getThinkingLevel: () => level,
+		};
+		clearRoutePins();
+		clearLanes();
+		activate(pi as never, { cwd, config: loadConfig(cwd, {}, env), env: { ...env, HOME: home } });
+		const handler = handlers.get("before_agent_start")!;
+		const prompt = { messageType: "user", prompt: "rename the helper", systemPrompt: "you are an assistant" };
+
+		// The first Auto turn installs the routed level; nothing is pinned.
+		await handler(prompt, turnCtx);
+		expect(routePins().effort).toBeUndefined();
+		// The next turn's setModel resets to a different configured default.
+		resetTo = level === "high" ? "low" : "high";
+		await handler(prompt, turnCtx);
+
+		expect(routePins().effort).toBeUndefined();
+		expect(statuses.at(-1) ?? "").not.toContain("Manual");
+		clearRoutePins();
+		clearLanes();
+	});
+
 	it("is installed by the turn handler, naming the model Pi was actually given", async () => {
 		// The renderer had tests; nothing asserted the extension ever calls
 		// `ctx.ui.setStatus`, so deleting the call would have been invisible.
